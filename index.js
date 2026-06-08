@@ -156,7 +156,7 @@ client.once('ready', async () => {
     });
     console.log(`Online as ${client.user.tag}`);
 
-    // --- РЕГИСТРАЦИЯ КОМАНД ---
+    // --- COMMAND REGISTRATION ---
     try {
         console.log('Started refreshing application (/) commands.');
         const rest = new REST({ version: '10' }).setToken(token);
@@ -168,7 +168,7 @@ client.once('ready', async () => {
     } catch (error) {
         console.error('Failed to reload commands:', error);
     }
-    // --- КОНЕЦ БЛОКА РЕГИСТРАЦИИ ---
+    // --- END OF REGISTRATION BLOCK ---
 
     try {
         const systemChannel = await client.channels.fetch(SYSTEM_CHANNEL_ID);
@@ -208,7 +208,7 @@ client.once('ready', async () => {
             const currentMonth = monthNames[currentDate.getMonth()];
             const currentYear = currentDate.getFullYear();
 
-            // Формируем прямую ссылку на закрепленное сообщение с правилами
+            // Generate a direct link to the pinned rules message
             const pinnedPostLink = `https://discord.com/channels/${SERVER_ID}/${GENERAL_CHANNEL_ID}/${RULES_MESSAGE_ID}`;
 
             const prompts = [
@@ -266,16 +266,16 @@ client.once('ready', async () => {
 
             const postText = prompts[Math.floor(Math.random() * prompts.length)];
 
-            // 1. Отправляем сообщение
+            // 1. Send the message
             const message = await channel.send(postText);
 
-            // 2. Создаем тред из этого сообщения (с добавлением года)
+            // 2. Create a thread from this message (appending the year)
             const thread = await message.startThread({
                 name: `Free Minis - ${currentYear}, ${currentMonth}`,
-                autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS, // Авто-архивация через 7 дней (максимум Discord)
+                autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS, // Auto-archive after 7 days (Discord maximum)
             });
 
-            // 3. Добавляем sneakyjoe в тред
+            // 3. Add sneakyjoe to the thread
             await thread.members.add(SNEAKYJOE_USER_ID);
 
             console.log(`Monthly free mini post created successfully for ${currentMonth}.`);
@@ -284,7 +284,7 @@ client.once('ready', async () => {
         }
     }, {
         scheduled: true,
-        timezone: TIMEZONE // Учет вашего локального часового пояса
+        timezone: TIMEZONE // Accounts for your local timezone
     });
 });
 
@@ -299,13 +299,13 @@ async function getLibrarianData(channel) {
 }
 
 client.on('channelUpdate', async (oldChannel, newChannel) => {
-    // Игнорируем события из других серверов
+    // Ignore events from other servers
     if (newChannel.guild?.id !== SERVER_ID) return;
 
-    // Реагируем только если изменилось именно имя канала
+    // Only react if the channel name actually changed
     if (oldChannel.name === newChannel.name) return;
 
-    // Проверяем, находится ли канал в категории активных игр
+    // Check if the channel is in the active games category
     if (newChannel.parentId === ACTIVE_CATEGORY_ID) {
         try {
             const metaData = await getLibrarianData(newChannel);
@@ -313,7 +313,7 @@ client.on('channelUpdate', async (oldChannel, newChannel) => {
             if (metaData && metaData.roleId) {
                 const role = newChannel.guild.roles.cache.get(metaData.roleId);
 
-                // Проверяем, нужно ли обновлять имя роли (защита от двойного обновления при использовании /update-players)
+                // Check if the role name needs to be updated (prevent double update when using /update-players)
                 if (role && role.name !== newChannel.name) {
                     await role.edit({
                         name: newChannel.name,
@@ -367,7 +367,7 @@ client.on('interactionCreate', async interaction => {
         const newText = interaction.options.getString('text');
         let metadataString = '';
 
-        // Поиск и извлечение существующего блока данных бота из текущего топика
+        // Find and extract the existing bot data block from the current topic
         if (interaction.channel.topic && interaction.channel.topic.includes('[LIBRARIAN_DATA|')) {
             const topicMatch = interaction.channel.topic.match(/(\[LIBRARIAN_DATA\|DM:\d+\|ROLE:\d+\])/);
             if (topicMatch) {
@@ -375,8 +375,8 @@ client.on('interactionCreate', async interaction => {
             }
         }
 
-        // Лимит Discord для описания текстового канала — 1024 символа. 
-        // Выделяем гарантированное место под метаданные в конце строки.
+        // Discord limit for channel description is 1024 characters.
+        // Allocate guaranteed space for metadata at the end of the string.
         const maxLimit = 1024;
         const metaSpace = metadataString ? metadataString.length + 1 : 0;
         const availableSpace = maxLimit - metaSpace;
@@ -503,7 +503,7 @@ client.on('interactionCreate', async interaction => {
         const question = interaction.options.getString('question');
         const optionsString = interaction.options.getString('options');
 
-        // Разбиваем строку по запятым, убираем пробелы по краям и пустые варианты
+        // Split the string by commas, trim spaces, and filter out empty options
         const optionsArray = optionsString.split(',').map(opt => opt.trim()).filter(opt => opt.length > 0);
 
         if (optionsArray.length < 2 || optionsArray.length > 10) {
@@ -517,7 +517,7 @@ client.on('interactionCreate', async interaction => {
         }
 
         const pollEmbed = {
-            color: EMBED_COLOR, // Темный цвет, хорошо смотрится в Discord
+            color: EMBED_COLOR, // Dark color, looks good in Discord
             title: `📊 ${question}`,
             description: descriptionText,
             footer: {
@@ -525,11 +525,11 @@ client.on('interactionCreate', async interaction => {
             }
         };
 
-        // Отправляем Embed и сохраняем объект сообщения, чтобы бот мог поставить реакции
+        // Send Embed and store the message object so the bot can react to it
         await interaction.reply({ embeds: [pollEmbed], fetchReply: true });
         const pollMessage = await interaction.fetchReply();
 
-        // Бот автоматически ставит реакции для голосования
+        // Bot automatically adds reactions for voting
         try {
             for (let i = 0; i < optionsArray.length; i++) {
                 await pollMessage.react(NUMBER_EMOJIS[i]);
@@ -661,7 +661,7 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({ content: 'Channel name format is invalid for this operation.', ephemeral: true });
         }
 
-        parts.pop(); // Удаляем старое число
+        parts.pop(); // Remove the old number
         const newName = [...parts, newCount].join('-');
 
         try {
@@ -860,7 +860,7 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        // Включаем индикатор и запускаем цикл поддержания статуса (Discord сбрасывает его каждые 10 секунд)
+        // Enable typing indicator and start a loop to maintain it (Discord resets it every 10 seconds)
         await message.channel.sendTyping();
         const typingInterval = setInterval(() => {
             message.channel.sendTyping().catch(() => { });
@@ -889,7 +889,7 @@ client.on('messageCreate', async (message) => {
                 console.error('SearXNG search failed, proceeding with LLM only:', searchErr.message);
             }
 
-            // --- СБОР ИСТОРИИ ЧАТА ---
+            // --- CHAT HISTORY COLLECTION ---
             let chatHistoryContext = 'No recent chat history available.';
             try {
                 const previousMessages = await message.channel.messages.fetch({ limit: RAG_HISTORY_LIMIT, before: message.id });
@@ -938,7 +938,7 @@ client.on('messageCreate', async (message) => {
                 answer = `*The Librarian shuffles through dusty shelves, muttering to himself. The arcane archives (AI backend) seem to be currently unreachable.* Let me assist you with the basic features instead!\n\n${helpText}`;
             }
 
-            // Остановка индикатора перед отправкой ответа
+            // Stop the typing indicator before sending the response
             clearInterval(typingInterval);
 
             if (answer.length > 2000) {
@@ -947,7 +947,7 @@ client.on('messageCreate', async (message) => {
                 await message.reply(answer);
             }
         } catch (err) {
-            // Остановка индикатора в случае ошибки
+            // Stop the typing indicator in case of error
             clearInterval(typingInterval);
             console.error('Ollama/RAG pipeline error:', err);
             await message.reply('*The connection to the arcane archives was disrupted. (LLM or Search Error)*');
@@ -966,7 +966,7 @@ client.on('messageCreate', async (message) => {
 
             const metaData = await getLibrarianData(message.channel);
 
-            // Проверка прав доступа
+            // Access permission check
             if (!metaData) {
                 const currentTopic = message.channel.topic || '';
                 if (currentTopic.startsWith('SETUP|')) {
@@ -991,15 +991,15 @@ client.on('messageCreate', async (message) => {
                 let targetMessage;
 
                 if (messageId) {
-                    // Если ID передан — находим конкретное сообщение
+                    // If ID is provided, find the specific message
                     targetMessage = await message.channel.messages.fetch(messageId).catch(() => null);
                 } else {
                     if (isPin) {
-                        // Для !pin без ID — берем последнее сообщение перед командой
+                        // For !pin without ID, get the last message before the command
                         const lastMessages = await message.channel.messages.fetch({ before: message.id, limit: 1 });
                         targetMessage = lastMessages.first();
                     } else {
-                        // Для !unpin без ID — берем самое свежее закрепленное сообщение в канале
+                        // For !unpin without ID, get the most recent pinned message in the channel
                         const pinnedMessages = await message.channel.messages.fetchPinned().catch(() => null);
                         targetMessage = pinnedMessages ? pinnedMessages.first() : null;
                     }
@@ -1013,7 +1013,7 @@ client.on('messageCreate', async (message) => {
                 if (isPin) {
                     await targetMessage.pin();
                 } else {
-                    // Защита от открепления OP-сообщения
+                    // Protection against unpinning the OP message
                     const firstMessages = await message.channel.messages.fetch({ after: DISCORD_START_SNOWFLAKE, limit: 1 });
                     const opMessage = firstMessages.first();
 
