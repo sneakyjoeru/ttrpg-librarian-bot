@@ -7,6 +7,7 @@ Librarian Bot is an automated assistant designed to manage tabletop gaming campa
 
 ## 2. Usage and Limitations
 - **Access**: You may use the Bot on any Discord server where you have the appropriate permissions to invite it.
+- **Commercial Restrictions**: You are not permitted to run, host, or use the Bot for profit, commercial gain, or monetization on Discord. The exclusive right to monetize or run the Bot for profit is reserved solely for sneakyjoeru as bot's developer and owner.
 - **Rules of Conduct**: You agree not to exploit the Bot to violate Discord’s Terms of Service or Developer Terms.
 - **Availability**: The Bot is provided "as is." We do not guarantee uninterrupted availability, uptime, or error-free responses from the local Large Language Model (LLM).
 
