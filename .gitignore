@@ -1,0 +1,4 @@
+secrets_discord.php
+node_modules/
+.env
+*.log
