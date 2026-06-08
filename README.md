@@ -43,29 +43,30 @@ Librarian Bot is an advanced Discord bot designed to automate and manage tableto
    - `ARCHIVED_CATEGORY_ID`
    - `DM_ROLE_ID`
 
-### Running the Bot
+### Running the Bot (Recommended: Docker)
 
-Install the dependencies:
-```bash
-npm install
-```
+The easiest way to build, run, and update the bot is using the provided Docker configuration. This ensures all dependencies are managed correctly inside the container.
 
-Start the bot:
-```bash
-npm start
-```
-
----
-
-## Docker Deployment
-
-This repository includes a `Dockerfile` and a `rebuild-run.sh` script to build and run the bot as a detached, self-restarting container.
-
-To deploy via Docker:
+To deploy or update the bot, simply run the helper script:
 ```bash
 chmod +x rebuild-run.sh
 ./rebuild-run.sh
 ```
+This script will automatically stop and remove any existing container named `campaign-bot`, rebuild the image, and start a new detached, self-restarting container.
+
+### Running Locally (Alternative: Node.js)
+
+If you prefer to run the bot directly on your host machine:
+
+1. Install the dependencies:
+   ```bash
+   npm install
+   ```
+
+2. Start the bot:
+   ```bash
+   npm start
+   ```
 
 ---
 
