@@ -15,12 +15,18 @@ Librarian Bot is an advanced Discord bot designed to automate and manage tableto
 
 ## Installation & Setup
 
-### Prerequisites
+### Requirements & Prerequisites
 
-- [Node.js](https://nodejs.org/) (version 18+ recommended)
-- Local or remote [Ollama](https://ollama.com/) instance running `llama3.1`
-- Local [SearXNG](https://github.com/searxng/searxng) instance (optional, for web RAG queries)
-- A Discord Bot Application Token (from the [Discord Developer Portal](https://discord.com/developers/applications))
+#### Core Requirements (Always Required)
+- **[Node.js](https://nodejs.org/)**: Version 18+ (if running locally without Docker)
+- **Discord Bot Application**: A valid token from the [Discord Developer Portal](https://discord.com/developers/applications).
+  * **Intents Needed**: Make sure to enable the **Message Content Intent** (privileged intent) under the "Bot" tab of your application settings, along with standard Server Members intents.
+
+#### Optional Requirements (For AI/RAG Features)
+- **[Ollama](https://ollama.com/)** (Running `llama3.1`): For dynamic AI QA responses and customized Natural 1 roasts.
+- **[SearXNG](https://github.com/searxng/searxng)**: For live web-search context inside the QA pipeline.
+
+*Note: If Ollama or SearXNG are offline or unreachable, the bot will gracefully degrade, falling back to static predefined roasts for Nat 1s and a standard interactive command reference when mentioned, leaving core TTRPG orchestration commands fully functional.*
 
 ### Configuration
 
