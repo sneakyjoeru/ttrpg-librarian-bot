@@ -48,6 +48,16 @@ const RAG_TYPING_INTERVAL = 120000;                   // Typing status keep-aliv
 
 const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
+const FALLBACK_ROASTS = [
+    "You swing your weapon, but it slips from your greasy hands and lands directly in your boot.",
+    "You attempt to look cool, but trip over a completely flat stone and faceplant in front of the tavern.",
+    "Your spell backfires, singeing your eyebrows off and making your voice two octaves higher for the next hour.",
+    "You confidently state your plan, only to immediately forget what you were doing and walk into a wall.",
+    "You look the monster in the eye to intimidate it, but accidentally sneeze directly on its face. It looks more disgusted than intimidated.",
+    "You try to pick the lock, but your lockpick breaks and jams the lock, also your pants rip.",
+    "You try to sneak, but your armor squeaks like a terrified mouse, alerting every guard within a mile."
+];
+
 let token = '';
 
 if (fs.existsSync(SECRETS_PATH)) {
@@ -784,7 +794,7 @@ client.on('interactionCreate', async interaction => {
                 - Be incredibly roasting, mocking, and sarcastic about their failure, but keep it PG-13/appropriate for a Discord server (no extreme hate speech, just good-natured but brutal D&D roleplay roasting).
                 - Do not include any meta-talk or introductory phrasing like "Here is your insult:". Just output the insult directly.`;
 
-            let insult = "*The winds of misfortune blow cold, and the archives are silent.*";
+            let insult = "";
             try {
                 // Post prompt to local Ollama instance running Llama 3.1
                 const ollamaResponse = await axios.post(OLLAMA_URL, {
@@ -800,8 +810,9 @@ client.on('interactionCreate', async interaction => {
                     insult = ollamaResponse.data.response.trim();
                 }
             } catch (ollamaErr) {
-                console.error('Ollama roast generation failed:', ollamaErr.message);
-                insult = `*You fumbled so hard that the fabric of reality itself groaned (Llama error: ${ollamaErr.message}).*`;
+                console.warn('Ollama roast generation failed, using fallback roast:', ollamaErr.message);
+                const randomRoast = FALLBACK_ROASTS[Math.floor(Math.random() * FALLBACK_ROASTS.length)];
+                insult = `*${randomRoast}* *(AI backend offline, using archived roast)*`;
             }
 
             responseContent += `\n\n**The Librarian roasts you:**\n> ${insult}`;
@@ -911,16 +922,21 @@ client.on('messageCreate', async (message) => {
 
             Answer:`;
 
-            const ollamaResponse = await axios.post(OLLAMA_URL, {
-                model: OLLAMA_MODEL,
-                prompt: systemPrompt,
-                stream: false,
-                options: {
-                    temperature: 0.7
-                }
-            }, { timeout: RAG_OLLAMA_TIMEOUT });
-
-            const answer = ollamaResponse.data.response;
+            let answer;
+            try {
+                const ollamaResponse = await axios.post(OLLAMA_URL, {
+                    model: OLLAMA_MODEL,
+                    prompt: systemPrompt,
+                    stream: false,
+                    options: {
+                        temperature: 0.7
+                    }
+                }, { timeout: RAG_OLLAMA_TIMEOUT });
+                answer = ollamaResponse.data.response;
+            } catch (ollamaErr) {
+                console.warn('Ollama query failed, falling back to help text:', ollamaErr.message);
+                answer = `*The Librarian shuffles through dusty shelves, muttering to himself. The arcane archives (AI backend) seem to be currently unreachable.* Let me assist you with the basic features instead!\n\n${helpText}`;
+            }
 
             // Остановка индикатора перед отправкой ответа
             clearInterval(typingInterval);
