@@ -19,4 +19,4 @@ The Bot is designed to be completely stateless regarding your personal data.
 The Bot only requests permissions necessary to perform its functions (such as managing campaign channels, deleting/pinning messages in campaign channels, and reacting to emojis). It will not read or scan messages outside of the specific campaign channels it is assigned to manage or when it is directly mentioned.
 
 ## 5. Contact
-If you have any questions about this Privacy Policy, please contact sneakyjoe at github.com
+If you have any questions about this Privacy Policy, please contact sneakyjoeru at github.com
