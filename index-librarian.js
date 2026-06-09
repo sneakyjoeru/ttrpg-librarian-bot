@@ -157,6 +157,20 @@ client.once('ready', async () => {
     });
     console.log(`Online as ${client.user.tag}`);
 
+    // Fetch all members at startup to populate client.guilds.cache member lists for name matching
+    try {
+        const guild = client.guilds.cache.get(SERVER_ID);
+        if (guild) {
+            console.log(`[Startup] Fetching members for guild ${guild.name} (${SERVER_ID}) to populate cache...`);
+            const fetchedMembers = await guild.members.fetch();
+            console.log(`[Startup] Successfully cached ${fetchedMembers.size} members.`);
+        } else {
+            console.warn(`[Startup] Guild with ID ${SERVER_ID} not found in client cache.`);
+        }
+    } catch (fetchErr) {
+        console.error('[Startup] Failed to fetch guild members on startup:', fetchErr);
+    }
+
     // --- COMMAND REGISTRATION ---
     try {
         console.log('Started refreshing application (/) commands.');
@@ -1028,7 +1042,8 @@ function isHistoryOrAnalysisQuery(query) {
 
     const keywords = [
         'history', 'analyze', 'analysis', 'summarize', 'summary', 'recap', 'what happened',
-        'what was said', 'who said', 'chat log', 'conversation', 'past messages', 'previously'
+        'what was said', 'who said', 'chat log', 'conversation', 'past messages', 'previously',
+        'recent', 'recently', 'posted', 'post', 'wrote', 'write', 'said', 'say', 'talked', 'talk'
     ];
 
     return keywords.some(kw => {
@@ -1107,6 +1122,8 @@ client.on('messageCreate', async (message) => {
                     if (!targetUser) {
                         const queryLower = query.toLowerCase();
                         const members = message.guild.members.cache;
+                        
+                        // First pass: try exact word-boundary matches to avoid false positives
                         for (const member of members.values()) {
                             const username = member.user.username.toLowerCase();
                             const displayName = member.displayName.toLowerCase();
@@ -1121,6 +1138,27 @@ client.on('messageCreate', async (message) => {
                             if (usernameRegex.test(queryLower) || displayNameRegex.test(queryLower) || (nickname && new RegExp(`\\b${nickname.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i').test(queryLower))) {
                                 targetUser = member.user;
                                 break;
+                            }
+                        }
+
+                        // Second pass: try matching query words against member names (handling suffixes like .live or _bot)
+                        if (!targetUser) {
+                            const queryWords = queryLower.split(/[^\w\d]+/).filter(w => w.length >= 3);
+                            const stopWords = ['what', 'did', 'post', 'recently', 'posted', 'said', 'wrote', 'about', 'who', 'how', 'the', 'you', 'was', 'were', 'has', 'have', 'say', 'saying', 'logs', 'chat', 'message', 'messages'];
+                            
+                            for (const member of members.values()) {
+                                const username = member.user.username.toLowerCase();
+                                const displayName = member.displayName.toLowerCase();
+                                const nickname = member.nickname ? member.nickname.toLowerCase() : '';
+
+                                for (const word of queryWords) {
+                                    if (stopWords.includes(word)) continue;
+                                    if (username.includes(word) || displayName.includes(word) || (nickname && nickname.includes(word))) {
+                                        targetUser = member.user;
+                                        break;
+                                    }
+                                }
+                                if (targetUser) break;
                             }
                         }
                     }
@@ -1165,15 +1203,22 @@ client.on('messageCreate', async (message) => {
                 if (messagesToParse.length > 0) {
                     if (targetUser) {
                         const targetUserMessages = messagesToParse.filter(m => m.author.id === targetUser.id);
+                        let formattedTargetMessages = '';
                         if (targetUserMessages.length > 0) {
-                            const formattedTargetMessages = targetUserMessages
+                            formattedTargetMessages = targetUserMessages
                                 .map(m => `[${new Date(m.createdTimestamp).toISOString().substring(0, 10)}] ${m.cleanContent || m.content}`)
                                 .reverse()
                                 .join('\n');
-                            targetUserContext = `Recent messages specifically by ${targetUser.username} (ID: ${targetUser.id}):\n${formattedTargetMessages}\n\n`;
-                        } else {
-                            targetUserContext = `No messages by ${targetUser.username} (ID: ${targetUser.id}) were found in the last 200 messages in this channel.\n\n`;
                         }
+                        const memberDetails = message.guild.members.cache.get(targetUser.id);
+                        const displayName = memberDetails ? memberDetails.displayName : targetUser.username;
+                        
+                        targetUserContext = `Target User Context:
+We resolved that the query is asking about the server member: ${targetUser.username} (ID: ${targetUser.id}, Display Name: ${displayName}).
+Recent messages by this user:
+${formattedTargetMessages || 'None found in the last 200 messages.'}
+
+`;
                     }
 
                     const baseSystemPromptText = `System Instructions:
@@ -1240,7 +1285,7 @@ client.on('messageCreate', async (message) => {
             Internet Search Context:
             ${searchContext}
 
-            Recent Channel Chat History (oldest to newest):
+            ${targetUserContext}Recent Channel Chat History (oldest to newest):
             ${chatHistoryContext}
 
             User Question: [${message.author.username}]: ${query}
