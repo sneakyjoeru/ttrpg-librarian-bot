@@ -146,7 +146,7 @@ const commands = [
         .addStringOption(opt => opt.setName('context').setDescription('What your character is attempting to do (for custom roast context)').setRequired(false)),
 ].map(command => command.toJSON());
 
-client.once('clientReady', async () => {
+client.once('ready', async () => {
     client.user.setPresence({
         activities: [{
             name: 'status',
@@ -1186,23 +1186,10 @@ client.on('messageCreate', async (message) => {
                 const isHistoryOrAnalysis = isHistoryOrAnalysisQuery(query) || targetUser !== null;
 
                 if (isHistoryOrAnalysis) {
-                    console.log(`[Librarian Bot] History/analysis/user query detected. Pulling up to 200 messages...`);
-                    const firstChunk = await message.channel.messages.fetch({ limit: 100, before: message.id });
-                    if (firstChunk && firstChunk.size > 0) {
-                        const firstChunkArray = Array.from(firstChunk.values());
-                        messagesToParse = messagesToParse.concat(firstChunkArray);
-
-                        if (firstChunkArray.length === 100) {
-                            const oldestMessageId = firstChunkArray[firstChunkArray.length - 1].id;
-                            try {
-                                const secondChunk = await message.channel.messages.fetch({ limit: 100, before: oldestMessageId });
-                                if (secondChunk && secondChunk.size > 0) {
-                                    messagesToParse = messagesToParse.concat(Array.from(secondChunk.values()));
-                                }
-                            } catch (secondErr) {
-                                console.error('Failed to fetch second chunk of message history:', secondErr.message);
-                            }
-                        }
+                    console.log(`[Librarian Bot] History/analysis/user query detected. Pulling up to 100 messages...`);
+                    const historyChunk = await message.channel.messages.fetch({ limit: 100, before: message.id });
+                    if (historyChunk && historyChunk.size > 0) {
+                        messagesToParse = Array.from(historyChunk.values());
                     }
                 } else {
                     const defaultChunk = await message.channel.messages.fetch({ limit: RAG_HISTORY_LIMIT, before: message.id });
@@ -1227,7 +1214,7 @@ client.on('messageCreate', async (message) => {
                         targetUserContext = `Target User Context:
 We resolved that the query is asking about the server member: ${targetUser.username} (ID: ${targetUser.id}, Display Name: ${displayName}).
 Recent messages by this user:
-${formattedTargetMessages || 'None found in the last 200 messages.'}
+${formattedTargetMessages || 'None found in the last 100 messages.'}
 
 `;
                     }
@@ -1254,8 +1241,9 @@ ${formattedTargetMessages || 'None found in the last 200 messages.'}
             Answer:`;
 
                     const baseTokens = estimateTokens(baseSystemPromptText);
-                    const CONTEXT_LIMIT_TOKENS = 8000;
-                    const historyTokenBudget = Math.max(1000, CONTEXT_LIMIT_TOKENS - baseTokens);
+                    const CONTEXT_LIMIT_TOKENS = 6000;
+                    const historyTokenBudget = Math.max(500, CONTEXT_LIMIT_TOKENS - baseTokens);
+                    console.log(`[Librarian Bot] Prompt base: ~${baseTokens} tokens, history budget: ~${historyTokenBudget} tokens, messages available: ${messagesToParse.length}`);
 
                     let acceptedHistoryLines = [];
                     let currentHistoryTokens = 0;
