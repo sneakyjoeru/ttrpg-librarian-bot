@@ -1094,14 +1094,50 @@ client.on('messageCreate', async (message) => {
                 console.error('SearXNG search failed, proceeding with LLM only:', searchErr.message);
             }
 
+            // --- TARGET USER RESOLUTION ---
+            let targetUser = null;
+            if (message.guild) {
+                try {
+                    const idMatch = query.match(/(?:<@!?)?(\d{17,20})>?/);
+                    if (idMatch) {
+                        const userId = idMatch[1];
+                        targetUser = await message.guild.members.fetch(userId).then(m => m.user).catch(() => null);
+                    }
+
+                    if (!targetUser) {
+                        const queryLower = query.toLowerCase();
+                        const members = await message.guild.members.fetch().catch(() => message.guild.members.cache);
+                        for (const member of members.values()) {
+                            const username = member.user.username.toLowerCase();
+                            const displayName = member.displayName.toLowerCase();
+                            const nickname = member.nickname ? member.nickname.toLowerCase() : '';
+
+                            const escapedUsername = username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                            const escapedDisplayName = displayName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                            
+                            const usernameRegex = new RegExp(`\\b${escapedUsername}\\b`, 'i');
+                            const displayNameRegex = new RegExp(`\\b${escapedDisplayName}\\b`, 'i');
+
+                            if (usernameRegex.test(queryLower) || displayNameRegex.test(queryLower) || (nickname && new RegExp(`\\b${nickname.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i').test(queryLower))) {
+                                targetUser = member.user;
+                                break;
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error('Error resolving target user:', err);
+                }
+            }
+
             // --- CHAT HISTORY COLLECTION ---
             let chatHistoryContext = 'No recent chat history available.';
+            let targetUserContext = '';
             try {
                 let messagesToParse = [];
-                const isHistoryOrAnalysis = isHistoryOrAnalysisQuery(query);
+                const isHistoryOrAnalysis = isHistoryOrAnalysisQuery(query) || targetUser !== null;
 
                 if (isHistoryOrAnalysis) {
-                    console.log(`[Librarian Bot] History/analysis query detected. Pulling up to 200 messages...`);
+                    console.log(`[Librarian Bot] History/analysis/user query detected. Pulling up to 200 messages...`);
                     const firstChunk = await message.channel.messages.fetch({ limit: 100, before: message.id });
                     if (firstChunk && firstChunk.size > 0) {
                         const firstChunkArray = Array.from(firstChunk.values());
@@ -1127,6 +1163,19 @@ client.on('messageCreate', async (message) => {
                 }
 
                 if (messagesToParse.length > 0) {
+                    if (targetUser) {
+                        const targetUserMessages = messagesToParse.filter(m => m.author.id === targetUser.id);
+                        if (targetUserMessages.length > 0) {
+                            const formattedTargetMessages = targetUserMessages
+                                .map(m => `[${new Date(m.createdTimestamp).toISOString().substring(0, 10)}] ${m.cleanContent || m.content}`)
+                                .reverse()
+                                .join('\n');
+                            targetUserContext = `Recent messages specifically by ${targetUser.username} (ID: ${targetUser.id}):\n${formattedTargetMessages}\n\n`;
+                        } else {
+                            targetUserContext = `No messages by ${targetUser.username} (ID: ${targetUser.id}) were found in the last 200 messages in this channel.\n\n`;
+                        }
+                    }
+
                     const baseSystemPromptText = `System Instructions:
             You are Librarian, a helpful and knowledgeable TTRPG Discord bot with a bit of marazm/dementia.
             - IMPORTANT! If user has "no bs" in his message - answer with as short as possible but not less than 10 words answer. Be straight to the point, don't roleplay.
@@ -1141,7 +1190,7 @@ client.on('messageCreate', async (message) => {
             Internet Search Context:
             ${searchContext}
 
-            Recent Channel Chat History (oldest to newest):
+            ${targetUserContext}Recent Channel Chat History (oldest to newest):
             
 
             User Question: [${message.author.username}]: ${query}
@@ -1156,7 +1205,8 @@ client.on('messageCreate', async (message) => {
                     let currentHistoryTokens = 0;
 
                     for (const m of messagesToParse) {
-                        const line = `[${m.author.username}]: ${m.cleanContent || m.content}`;
+                        const displayName = m.member?.displayName || m.author.username;
+                        const line = `[${displayName} (@${m.author.username}, ID: ${m.author.id})]: ${m.cleanContent || m.content}`;
                         const lineTokens = estimateTokens(line + '\n');
 
                         if (currentHistoryTokens + lineTokens > historyTokenBudget) {
