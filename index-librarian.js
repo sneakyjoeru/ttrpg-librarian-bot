@@ -1106,7 +1106,7 @@ client.on('messageCreate', async (message) => {
 
                     if (!targetUser) {
                         const queryLower = query.toLowerCase();
-                        const members = await message.guild.members.fetch().catch(() => message.guild.members.cache);
+                        const members = message.guild.members.cache;
                         for (const member of members.values()) {
                             const username = member.user.username.toLowerCase();
                             const displayName = member.displayName.toLowerCase();
@@ -1114,7 +1114,7 @@ client.on('messageCreate', async (message) => {
 
                             const escapedUsername = username.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
                             const escapedDisplayName = displayName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-                            
+
                             const usernameRegex = new RegExp(`\\b${escapedUsername}\\b`, 'i');
                             const displayNameRegex = new RegExp(`\\b${escapedDisplayName}\\b`, 'i');
 
