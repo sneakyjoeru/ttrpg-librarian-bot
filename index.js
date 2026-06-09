@@ -42,7 +42,7 @@ const DISCORD_START_SNOWFLAKE = '1';                  // Snowflake ID used as a 
 
 // RAG (Retrieval-Augmented Generation) & Ollama parameters
 const RAG_SEARCH_LIMIT = 5;                           // Number of search results to include in LLM context
-const RAG_HISTORY_LIMIT = 20;                         // Number of recent chat history messages to include in LLM context
+const RAG_HISTORY_LIMIT = 15;                         // Number of recent chat history messages to include in LLM context
 const RAG_SEARCH_TIMEOUT = 4000;                      // Timeout for meta-search requests (ms)
 const RAG_OLLAMA_TIMEOUT = 120000;                    // Timeout for local Ollama server generation (ms)
 const RAG_TYPING_INTERVAL = 120000;                   // Typing status keep-alive interval (ms)
@@ -1006,6 +1006,39 @@ async function handleInstagramMessage(message, instagramUrl, remadeContent) {
     }
 }
 
+function estimateTokens(str) {
+    let tokens = 0;
+    for (let i = 0; i < str.length; i++) {
+        const code = str.charCodeAt(i);
+        if (code > 127) {
+            tokens += 0.8;
+        } else {
+            tokens += 0.25;
+        }
+    }
+    return Math.ceil(tokens);
+}
+
+function isHistoryOrAnalysisQuery(query) {
+    const qLower = query.toLowerCase().trim();
+    const hasWord = (word) => {
+        const pattern = new RegExp(`\\b${word}\\b`, 'i');
+        return pattern.test(qLower);
+    };
+
+    const keywords = [
+        'history', 'analyze', 'analysis', 'summarize', 'summary', 'recap', 'what happened',
+        'what was said', 'who said', 'chat log', 'conversation', 'past messages', 'previously'
+    ];
+
+    return keywords.some(kw => {
+        if (kw.includes(' ')) {
+            return qLower.includes(kw);
+        }
+        return hasWord(kw);
+    });
+}
+
 client.on('messageCreate', async (message) => {
     if (message.guild?.id !== SERVER_ID || message.author.bot) return;
 
@@ -1064,10 +1097,80 @@ client.on('messageCreate', async (message) => {
             // --- CHAT HISTORY COLLECTION ---
             let chatHistoryContext = 'No recent chat history available.';
             try {
-                const previousMessages = await message.channel.messages.fetch({ limit: RAG_HISTORY_LIMIT, before: message.id });
-                if (previousMessages.size > 0) {
-                    const historyArray = previousMessages.map(m => `[${m.author.username}]: ${m.cleanContent}`).reverse();
-                    chatHistoryContext = historyArray.join('\n');
+                let messagesToParse = [];
+                const isHistoryOrAnalysis = isHistoryOrAnalysisQuery(query);
+
+                if (isHistoryOrAnalysis) {
+                    console.log(`[Librarian Bot] History/analysis query detected. Pulling up to 200 messages...`);
+                    const firstChunk = await message.channel.messages.fetch({ limit: 100, before: message.id });
+                    if (firstChunk && firstChunk.size > 0) {
+                        const firstChunkArray = Array.from(firstChunk.values());
+                        messagesToParse = messagesToParse.concat(firstChunkArray);
+
+                        if (firstChunkArray.length === 100) {
+                            const oldestMessageId = firstChunkArray[firstChunkArray.length - 1].id;
+                            try {
+                                const secondChunk = await message.channel.messages.fetch({ limit: 100, before: oldestMessageId });
+                                if (secondChunk && secondChunk.size > 0) {
+                                    messagesToParse = messagesToParse.concat(Array.from(secondChunk.values()));
+                                }
+                            } catch (secondErr) {
+                                console.error('Failed to fetch second chunk of message history:', secondErr.message);
+                            }
+                        }
+                    }
+                } else {
+                    const defaultChunk = await message.channel.messages.fetch({ limit: RAG_HISTORY_LIMIT, before: message.id });
+                    if (defaultChunk && defaultChunk.size > 0) {
+                        messagesToParse = Array.from(defaultChunk.values());
+                    }
+                }
+
+                if (messagesToParse.length > 0) {
+                    const baseSystemPromptText = `System Instructions:
+            You are Librarian, a helpful and knowledgeable TTRPG Discord bot with a bit of marazm/dementia.
+            - IMPORTANT! If user has "no bs" in his message - answer with as short as possible but not less than 10 words answer. Be straight to the point, don't roleplay.
+            - Keep marazm and dementia levels very low so you don't annoy players too much (fun but not overwhelming). Keep jabber to acceptable minimum.
+            - Your main goal is to keep communication around DnD when users ask questions, unless they specify a different topic (fact checking films, shows, rules is acceptable).
+            - Don't be too pedantic, but don't lie either - use search context to verify your claims.
+            - Answer the user's question accurately. Use the provided internet search context if it's relevant.
+            - If the context doesn't help, rely on your internal knowledge or sprinkle some recent news about Tallinn/TTRPG. Answer in English.
+            - If user uses profanity - don't be shy to mimic it.
+            
+
+            Internet Search Context:
+            ${searchContext}
+
+            Recent Channel Chat History (oldest to newest):
+            
+
+            User Question: [${message.author.username}]: ${query}
+
+            Answer:`;
+
+                    const baseTokens = estimateTokens(baseSystemPromptText);
+                    const CONTEXT_LIMIT_TOKENS = 8000;
+                    const historyTokenBudget = Math.max(1000, CONTEXT_LIMIT_TOKENS - baseTokens);
+
+                    let acceptedHistoryLines = [];
+                    let currentHistoryTokens = 0;
+
+                    for (const m of messagesToParse) {
+                        const line = `[${m.author.username}]: ${m.cleanContent || m.content}`;
+                        const lineTokens = estimateTokens(line + '\n');
+
+                        if (currentHistoryTokens + lineTokens > historyTokenBudget) {
+                            console.log(`[Librarian Bot] Context limit reached. Stopped adding history after ${acceptedHistoryLines.length} messages.`);
+                            break;
+                        }
+
+                        acceptedHistoryLines.push(line);
+                        currentHistoryTokens += lineTokens;
+                    }
+
+                    // Reverse the accepted lines to restore oldest-to-newest chronological order
+                    acceptedHistoryLines.reverse();
+                    chatHistoryContext = acceptedHistoryLines.join('\n');
                 }
             } catch (historyErr) {
                 console.error('Failed to fetch channel history:', historyErr);
@@ -1101,7 +1204,8 @@ client.on('messageCreate', async (message) => {
                     prompt: systemPrompt,
                     stream: false,
                     options: {
-                        temperature: 0.7
+                        temperature: 0.7,
+                        num_ctx: 8192
                     }
                 }, { timeout: RAG_OLLAMA_TIMEOUT });
                 answer = ollamaResponse.data.response;
