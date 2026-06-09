@@ -146,7 +146,7 @@ const commands = [
         .addStringOption(opt => opt.setName('context').setDescription('What your character is attempting to do (for custom roast context)').setRequired(false)),
 ].map(command => command.toJSON());
 
-client.once('ready', async () => {
+client.once('clientReady', async () => {
     client.user.setPresence({
         activities: [{
             name: 'status',
@@ -1122,7 +1122,7 @@ client.on('messageCreate', async (message) => {
                     if (!targetUser) {
                         const queryLower = query.toLowerCase();
                         const members = message.guild.members.cache;
-                        
+
                         // First pass: try exact word-boundary matches to avoid false positives
                         for (const member of members.values()) {
                             const username = member.user.username.toLowerCase();
@@ -1145,7 +1145,7 @@ client.on('messageCreate', async (message) => {
                         if (!targetUser) {
                             const queryWords = queryLower.split(/[^\w\d]+/).filter(w => w.length >= 3);
                             const stopWords = ['what', 'did', 'post', 'recently', 'posted', 'said', 'wrote', 'about', 'who', 'how', 'the', 'you', 'was', 'were', 'has', 'have', 'say', 'saying', 'logs', 'chat', 'message', 'messages'];
-                            
+
                             for (const member of members.values()) {
                                 const username = member.user.username.toLowerCase();
                                 const displayName = member.displayName.toLowerCase();
@@ -1165,6 +1165,17 @@ client.on('messageCreate', async (message) => {
                 } catch (err) {
                     console.error('Error resolving target user:', err);
                 }
+            }
+
+            // Replace raw user ID or mention in the query with resolved display name so the LLM understands who is being asked about
+            let llmQuery = query;
+            if (targetUser) {
+                const memberDetails = message.guild?.members.cache.get(targetUser.id);
+                const resolvedName = memberDetails ? memberDetails.displayName : targetUser.username;
+                // Replace <@ID>, <@!ID>, or bare numeric ID
+                llmQuery = llmQuery.replace(/<@!?\d{17,20}>/g, resolvedName);
+                llmQuery = llmQuery.replace(/\b\d{17,20}\b/g, resolvedName);
+                console.log(`[Librarian Bot] Resolved target user: ${resolvedName} (${targetUser.id}). LLM query: "${llmQuery}"`);
             }
 
             // --- CHAT HISTORY COLLECTION ---
@@ -1212,7 +1223,7 @@ client.on('messageCreate', async (message) => {
                         }
                         const memberDetails = message.guild.members.cache.get(targetUser.id);
                         const displayName = memberDetails ? memberDetails.displayName : targetUser.username;
-                        
+
                         targetUserContext = `Target User Context:
 We resolved that the query is asking about the server member: ${targetUser.username} (ID: ${targetUser.id}, Display Name: ${displayName}).
 Recent messages by this user:
@@ -1238,7 +1249,7 @@ ${formattedTargetMessages || 'None found in the last 200 messages.'}
             ${targetUserContext}Recent Channel Chat History (oldest to newest):
             
 
-            User Question: [${message.author.username}]: ${query}
+            User Question: [${message.author.username}]: ${llmQuery}
 
             Answer:`;
 
@@ -1280,6 +1291,7 @@ ${formattedTargetMessages || 'None found in the last 200 messages.'}
             - Answer the user's question accurately. Use the provided internet search context if it's relevant.
             - If the context doesn't help, rely on your internal knowledge or sprinkle some recent news about Tallinn/TTRPG. Answer in English.
             - If user uses profanity - don't be shy to mimic it.
+            - IMPORTANT: If a "Target User Context" section is provided below, the user is asking about a specific server member. Use the messages listed in that section to answer the question. Summarize what that person posted or said based on their actual messages. Do NOT say you cannot find them or that they haven't posted.
             
 
             Internet Search Context:
@@ -1288,7 +1300,7 @@ ${formattedTargetMessages || 'None found in the last 200 messages.'}
             ${targetUserContext}Recent Channel Chat History (oldest to newest):
             ${chatHistoryContext}
 
-            User Question: [${message.author.username}]: ${query}
+            User Question: [${message.author.username}]: ${llmQuery}
 
             Answer:`;
 
