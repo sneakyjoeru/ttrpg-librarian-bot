@@ -5,11 +5,22 @@ Librarian Bot is an advanced Discord bot designed to automate and manage tableto
 ## Features
 
 - **Campaign Management**: Automated creation of active text channels with synced permissions, automatic role creation, and automated sync on channel renames.
+- **System Message Updates**: Dynamically pulls the last 3 git updates (commit logs) and displays them in the global system help message on startup to keep users informed of the latest bot developments.
 - **Natural 1 Roasting**: Integrates with local Llama 3.1 model to generate snarky roasts when players roll a critical fail (Nat 1).
 - **RAG QA Mention Pipeline**: Answer player questions using web search context from local SearXNG instances and recent channel chat history via local LLM. Include `"no bs"` in mentions for short, direct responses.
 - **Monthly Scheduler**: Cron scheduling for monthly miniature queues with a randomized set of fantasy prompts.
 - **Administrative Utilities**: Includes tools like `/retro-setup` to configure old channels, interactive customized polling, pinning/unpinning, and topic overrides.
 - **Automatic Archival**: Clean parent transition to archived categories and role cleanup.
+
+## Codebase Layout
+
+The project follows a modular architecture for ease of maintenance:
+
+- **`index-librarian.js`**: Main entry point and orchestrator. Wires event listeners and schedules cron jobs.
+- **`src/config.js`**: Centralized configuration store for Discord IDs, API endpoints, fallback values, and slash command metadata.
+- **`src/utils/helpers.js`**: Shared utilities, token estimators, and the git log dynamic updates retriever.
+- **`src/services/`**: Contain external services like RAG LLM queries and Instagram link scrapers.
+- **`src/handlers/`**: Houses modules that process Discord events (`interactionCreate`, `messageCreate`, `channelUpdate`, `channelDelete`, `reactions`).
 
 ---
 
