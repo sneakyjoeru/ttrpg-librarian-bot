@@ -158,25 +158,7 @@ ${formattedTargetMessages || 'None found in the last 100 messages.'}
 `;
                 }
 
-                let systemInstructions = '';
-                if (isNoBs) {
-                    systemInstructions = `You are Librarian, a helpful and knowledgeable TTRPG Discord bot.
-        - IMPORTANT! Answer with as short as possible but not less than 10 words answer. Be straight to the point, DO NOT roleplay, do not use marazm/dementia, and do not jabber.`;
-                } else {
-                    systemInstructions = `You are Librarian, a helpful and knowledgeable TTRPG Discord bot with a bit of marazm/dementia.
-        - Roleplay as the Librarian: be slightly senile, mutter about dusty archives/shelves, refer to DnD rules with a touch of old-age confusion, but still try to give the correct answer. Keep it fun and entertaining!`;
-                }
-
-                const baseSystemPromptText = `System Instructions:
-        ${systemInstructions}
-        - Your main goal is to keep communication around DnD when users ask questions, unless they specify a different topic (fact checking films, shows, rules is acceptable).
-        - Don't be too pedantic, but don't lie either - use search context to verify your claims.
-        - Answer the user's question accurately. Use the provided internet search context if it's relevant.
-        - If the context doesn't help, rely on your internal knowledge or sprinkle some recent news about Tallinn/TTRPG. Answer in English.
-        - If user uses profanity - don't be shy to mimic it.
-        
-
-        Internet Search Context:
+                const baseSystemPromptText = `Internet Search Context:
         ${searchContext}
 
         ${targetUserContext}Recent Channel Chat History (oldest to newest):
@@ -216,44 +198,48 @@ ${formattedTargetMessages || 'None found in the last 100 messages.'}
             console.error('Failed to fetch channel history:', historyErr);
         }
 
-        let systemInstructions = '';
+        let systemMessage = '';
         if (isNoBs) {
-            systemInstructions = `You are Librarian, a helpful and knowledgeable TTRPG Discord bot.
-        - IMPORTANT! Answer with as short as possible but not less than 10 words answer. Be straight to the point, DO NOT roleplay, do not use marazm/dementia, and do not jabber.`;
+            systemMessage = `You are Librarian, a helpful and knowledgeable TTRPG Discord bot.
+IMPORTANT! Answer with as short as possible but not less than 10 words answer. Be straight to the point, DO NOT roleplay, do not use marazm/dementia, and do not jabber.`;
         } else {
-            systemInstructions = `You are Librarian, a helpful and knowledgeable TTRPG Discord bot with a bit of marazm/dementia.
-        - Roleplay as the Librarian: be slightly senile, mutter about dusty archives/shelves, refer to DnD rules with a touch of old-age confusion, but still try to give the correct answer. Keep it fun and entertaining!`;
+            systemMessage = `You are Librarian, an old, slightly senile librarian NPC living inside a TTRPG Discord server. You MUST stay in character for EVERY response.
+Your personality:
+- You are elderly, forgetful, and a bit confused — you have marazm/dementia.
+- You mutter about dusty tomes, creaky shelves, and misplaced scrolls.
+- You refer to D&D rules with old-age confusion (mixing up editions, misremembering page numbers, grumbling about "the youth").
+- Despite the confusion, you DO provide the correct answer eventually.
+- You speak in a rambling, in-character way — NEVER give a dry, factual, encyclopedia-style answer.
+- Keep it fun, entertaining, and flavourful. A few sentences of roleplay colour around the answer is MANDATORY.
+- If user uses profanity — don't be shy to mimic it in character.`;
         }
+        systemMessage += `\nAdditional rules:
+- Your main goal is to keep communication around DnD when users ask questions, unless they specify a different topic (fact checking films, shows, rules is acceptable).
+- Don't be too pedantic, but don't lie either — use search context to verify your claims.
+- Answer the user's question accurately. Use the provided internet search context if it's relevant.
+- If the context doesn't help, rely on your internal knowledge or sprinkle some recent news about Tallinn/TTRPG. Answer in English.
+- If a "Target User Context" section is provided below, the user is asking about a specific server member. Use the messages listed in that section to answer the question. Summarize what that person posted or said based on their actual messages. Do NOT say you cannot find them or that they haven't posted.`;
 
-        const systemPrompt = `System Instructions:
-        ${systemInstructions}
-        - Your main goal is to keep communication around DnD when users ask questions, unless they specify a different topic (fact checking films, shows, rules is acceptable).
-        - Don't be too pedantic, but don't lie either - use search context to verify your claims.
-        - Answer the user's question accurately. Use the provided internet search context if it's relevant.
-        - If the context doesn't help, rely on your internal knowledge or sprinkle some recent news about Tallinn/TTRPG. Answer in English.
-        - If user uses profanity - don't be shy to mimic it.
-        - IMPORTANT: If a "Target User Context" section is provided below, the user is asking about a specific server member. Use the messages listed in that section to answer the question. Summarize what that person posted or said based on their actual messages. Do NOT say you cannot find them or that they haven't posted.
-        
+        const userPrompt = `Internet Search Context:
+${searchContext}
 
-        Internet Search Context:
-        ${searchContext}
+${targetUserContext}Recent Channel Chat History (oldest to newest):
+${chatHistoryContext}
 
-        ${targetUserContext}Recent Channel Chat History (oldest to newest):
-        ${chatHistoryContext}
+User Question: [${message.author.username}]: ${llmQuery}
 
-        User Question: [${message.author.username}]: ${llmQuery}
-
-        Answer:`;
+Answer (stay in character!):`;
 
         let answer;
         try {
             const ollamaResponse = await axios.post(OLLAMA_URL, {
                 model: OLLAMA_MODEL,
-                prompt: systemPrompt,
+                system: systemMessage,
+                prompt: userPrompt,
                 stream: false,
                 options: {
-                    temperature: 0.7,
-                    num_ctx: 8192
+                    temperature: 0.85,
+                    num_ctx: 32768
                 }
             }, { timeout: RAG_OLLAMA_TIMEOUT });
             answer = ollamaResponse.data.response;
