@@ -1,0 +1,5 @@
+# Repository Rules for AI Agents
+
+- **No Local Debugging:** Do not attempt to run or debug the bot on this host using Docker, Node, or other execution commands. The bot is hosted and executed on a different machine instance.
+- **Git Branching Strategy:** If you are performing a significant number of changes, you must create and work in a separate branch, then commit, push, and squash (squish) them before merging to the main branch.
+- **Clear Commit Messages:** Write clean, descriptive, and concise messages for all Git commits.
