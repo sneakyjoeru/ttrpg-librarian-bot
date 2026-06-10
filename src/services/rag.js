@@ -20,12 +20,18 @@ async function handleRagQuery(client, message, query) {
     }, RAG_TYPING_INTERVAL);
 
     try {
+        const isNoBs = /no\s+bs/i.test(query);
+        let cleanedQuery = query.replace(/no\s+bs/i, '').replace(/\s+/g, ' ').trim();
+        if (!cleanedQuery) {
+            cleanedQuery = query;
+        }
+
         let searchContext = 'No external internet context available.';
 
         try {
             const searchResponse = await axios.get(SEARXNG_URL, {
                 params: {
-                    q: query,
+                    q: cleanedQuery,
                     format: 'json',
                     engines: 'duckduckgo,google,wikipedia',
                     language: 'en'
@@ -46,14 +52,14 @@ async function handleRagQuery(client, message, query) {
         let targetUser = null;
         if (message.guild) {
             try {
-                const idMatch = query.match(/(?:<@!?)?(\d{17,20})>?/);
+                const idMatch = cleanedQuery.match(/(?:<@!?)?(\d{17,20})>?/);
                 if (idMatch) {
                     const userId = idMatch[1];
                     targetUser = await message.guild.members.fetch(userId).then(m => m.user).catch(() => null);
                 }
 
                 if (!targetUser) {
-                    const queryLower = query.toLowerCase();
+                    const queryLower = cleanedQuery.toLowerCase();
                     const members = message.guild.members.cache;
 
                     // First pass: try exact word-boundary matches to avoid false positives
@@ -101,7 +107,7 @@ async function handleRagQuery(client, message, query) {
         }
 
         // Replace raw user ID or mention in the query with resolved display name so the LLM understands who is being asked about
-        let llmQuery = query;
+        let llmQuery = cleanedQuery;
         if (targetUser) {
             const memberDetails = message.guild?.members.cache.get(targetUser.id);
             const resolvedName = memberDetails ? memberDetails.displayName : targetUser.username;
@@ -116,7 +122,7 @@ async function handleRagQuery(client, message, query) {
         let targetUserContext = '';
         try {
             let messagesToParse = [];
-            const isHistoryOrAnalysis = isHistoryOrAnalysisQuery(query) || targetUser !== null;
+            const isHistoryOrAnalysis = isHistoryOrAnalysisQuery(cleanedQuery) || targetUser !== null;
 
             if (isHistoryOrAnalysis) {
                 console.log(`[Librarian Bot] History/analysis/user query detected. Pulling up to 100 messages...`);
@@ -152,10 +158,17 @@ ${formattedTargetMessages || 'None found in the last 100 messages.'}
 `;
                 }
 
+                let systemInstructions = '';
+                if (isNoBs) {
+                    systemInstructions = `You are Librarian, a helpful and knowledgeable TTRPG Discord bot.
+        - IMPORTANT! Answer with as short as possible but not less than 10 words answer. Be straight to the point, DO NOT roleplay, do not use marazm/dementia, and do not jabber.`;
+                } else {
+                    systemInstructions = `You are Librarian, a helpful and knowledgeable TTRPG Discord bot with a bit of marazm/dementia.
+        - Roleplay as the Librarian: be slightly senile, mutter about dusty archives/shelves, refer to DnD rules with a touch of old-age confusion, but still try to give the correct answer. Keep it fun and entertaining!`;
+                }
+
                 const baseSystemPromptText = `System Instructions:
-        You are Librarian, a helpful and knowledgeable TTRPG Discord bot with a bit of marazm/dementia.
-        - IMPORTANT! If user has "no bs" in his message - answer with as short as possible but not less than 10 words answer. Be straight to the point, don't roleplay.
-        - Keep marazm and dementia levels very low so you don't annoy players too much (fun but not overwhelming). Keep jabber to acceptable minimum.
+        ${systemInstructions}
         - Your main goal is to keep communication around DnD when users ask questions, unless they specify a different topic (fact checking films, shows, rules is acceptable).
         - Don't be too pedantic, but don't lie either - use search context to verify your claims.
         - Answer the user's question accurately. Use the provided internet search context if it's relevant.
@@ -203,10 +216,17 @@ ${formattedTargetMessages || 'None found in the last 100 messages.'}
             console.error('Failed to fetch channel history:', historyErr);
         }
 
+        let systemInstructions = '';
+        if (isNoBs) {
+            systemInstructions = `You are Librarian, a helpful and knowledgeable TTRPG Discord bot.
+        - IMPORTANT! Answer with as short as possible but not less than 10 words answer. Be straight to the point, DO NOT roleplay, do not use marazm/dementia, and do not jabber.`;
+        } else {
+            systemInstructions = `You are Librarian, a helpful and knowledgeable TTRPG Discord bot with a bit of marazm/dementia.
+        - Roleplay as the Librarian: be slightly senile, mutter about dusty archives/shelves, refer to DnD rules with a touch of old-age confusion, but still try to give the correct answer. Keep it fun and entertaining!`;
+        }
+
         const systemPrompt = `System Instructions:
-        You are Librarian, a helpful and knowledgeable TTRPG Discord bot with a bit of marazm/dementia.
-        - IMPORTANT! If user has "no bs" in his message - answer with as short as possible but not less than 10 words answer. Be straight to the point, don't roleplay.
-        - Keep marazm and dementia levels very low so you don't annoy players too much (fun but not overwhelming). Keep jabber to acceptable minimum.
+        ${systemInstructions}
         - Your main goal is to keep communication around DnD when users ask questions, unless they specify a different topic (fact checking films, shows, rules is acceptable).
         - Don't be too pedantic, but don't lie either - use search context to verify your claims.
         - Answer the user's question accurately. Use the provided internet search context if it's relevant.
