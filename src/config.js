@@ -34,7 +34,7 @@ const RAG_SEARCH_LIMIT = 5;                           // Number of search result
 const RAG_HISTORY_LIMIT = 15;                         // Number of recent chat history messages to include in LLM context
 const RAG_SEARCH_TIMEOUT = 4000;                      // Timeout for meta-search requests (ms)
 const RAG_OLLAMA_TIMEOUT = 120000;                    // Timeout for local Ollama server generation (ms)
-const RAG_TYPING_INTERVAL = 120000;                   // Typing status keep-alive interval (ms)
+const RAG_TYPING_INTERVAL = 4000;                     // Typing status keep-alive interval (ms)
 
 const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 

@@ -2,7 +2,7 @@ const { AttachmentBuilder } = require('discord.js');
 const { instagramGetUrl } = require('instagram-url-direct');
 const axios = require('axios');
 
-const INSTAGRAM_TYPING_INTERVAL = 10000;
+const INSTAGRAM_TYPING_INTERVAL = 4000;
 
 async function sendRepostedMessage(client, message, content, attachments) {
     const DISCORD_MAX_ATTACHMENTS = 10;
