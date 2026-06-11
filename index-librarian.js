@@ -1,5 +1,6 @@
 const { Client, GatewayIntentBits, Partials, REST, Routes, ActivityType, Events } = require('discord.js');
 const cron = require('node-cron');
+const axios = require('axios');
 const {
     token,
     commands,
@@ -11,7 +12,10 @@ const {
     SNEAKYJOE_USER_ID,
     TIMEZONE,
     CRON_SCHEDULE_MONTHLY_MINI,
-    THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS
+    THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS,
+    OLLAMA_URL,
+    OLLAMA_MODEL,
+    RAG_OLLAMA_TIMEOUT
 } = require('./src/config');
 const { getLastUpdates } = require('./src/utils/helpers');
 const handleInteraction = require('./src/handlers/interactions');
@@ -167,6 +171,12 @@ client.once(Events.ClientReady, async () => {
     // --- CRON SCHEDULER FOR 3D PRINTING QUEUE ---
     cron.schedule(CRON_SCHEDULE_MONTHLY_MINI, async () => {
         try {
+            const guild = client.guilds.cache.get(SERVER_ID);
+            if (!guild) {
+                console.log(`[Monthly Mini Cron] Target server ${SERVER_ID} not found in client guilds cache. Skipping monthly mini flow.`);
+                return;
+            }
+
             const channel = await client.channels.fetch(GENERAL_CHANNEL_ID);
 
             if (!channel) {
@@ -192,50 +202,66 @@ client.once(Events.ClientReady, async () => {
                 `Roll for initiative! The monthly free mini slots have reset. 🎲 New players, don't be shy—this is for you too! Guidelines: ${pinnedPostLink}. Drop your model in the thread, and <@221722372145676288> will handle the print.`,
                 `Welcome to a new month! Free miniature printing is now available. 🛡️ We highly encourage newbies to grab a slot! Read up on the requirements here: ${pinnedPostLink}. Leave your request in the thread below for <@221722372145676288>.`,
                 `The forge is lit! 1st of the month means free minis. 🔥 If you're new to the community, join the fun! Current instructions: ${pinnedPostLink}. Share your model or link in the thread and <@221722372145676288> will print it free of charge.`,
-                `Monthly mini slots are officially refreshed today! 🗺️ Don't be shy if you're new, grab your character in physical form. Rules: ${pinnedPostLink}. Drop the file in the thread and let <@221722372145676288> fire up the printer.`,
-                `Happy 1st! The free mini giveaway is active again. ⚔️ Newcomers, don't hesitate to claim yours! Details on what can be printed here: ${pinnedPostLink}. Post in the thread below and <@221722372145676288> will take care of the printing.`,
-                `Time to expand your tabletop collection! Free slots are refreshed. 🎒 If you just joined us, don't be shy, claim a print! Read this first: ${pinnedPostLink}. Put your model in the thread and <@221722372145676288> will print it.`,
-                `The 1st of the month brings fresh free minis! 🧚‍♀️ We want to see our newer members getting in on this too! Check the pinned rules for the latest updates: ${pinnedPostLink}. Drop your mini in the thread and <@221722372145676288> will handle it.`,
-                `Level up! Free miniature slots have reset for the month. 🆙 New to the server? Step up and get yours! Current instructions: ${pinnedPostLink}. Link your file in the thread below and <@221722372145676288> will print it for free.`,
-                `New month, fresh prints! The free mini slots are open. 🧪 Newcomers are especially welcome, don't be shy! Read the guide to see what's supported: ${pinnedPostLink}. Drop your model in the thread and <@221722372145676288> will print it for you.`,
-                `Need a new monster or hero? 1st of the month free slots are here! 🧟‍♂️ If you're new, jump right in and claim one. Rules: ${pinnedPostLink}. Post your request in the thread and <@221722372145676288> will get to work.`,
-                `The monthly free 3D printing slots are officially back! 🖨️ We'd love to see new faces requesting minis! Please read the current parameters: ${pinnedPostLink}. Leave your file in the thread and <@221722372145676288> will print it.`,
-                `It's the 1st! Time to claim your monthly free miniature. 🦄 Don't be shy, newcomers—this perk is for everyone! Check the updated rules: ${pinnedPostLink}. Drop your mini in the thread and let <@221722372145676288> print it.`,
-                `Free mini slots are refreshed for the month! 🏹 If you've never asked for one before, today is the day! Guidelines: ${pinnedPostLink}. Put your model in the thread below and <@221722372145676288> will provide the print.`,
-                `A new month means the 3D printer is ready for your free requests! ⚙️ New members, don't hesitate to join in! Instructions on what to send: ${pinnedPostLink}. Drop your file in the thread, and <@221722372145676288> will print it completely free.`,
-                `Happy 1st! The queue for free minis is officially wiped clean. 🧹 We invite all newbies to grab a print! Current rules: ${pinnedPostLink}. Post your model in the thread and <@221722372145676288> will handle the rest.`,
-                `It's that time of the month—free miniatures! 🧝‍♂️ If you're a new face around here, don't be shy. Check the pinned post for latest printing details: ${pinnedPostLink}. Leave your link in the thread and <@221722372145676288> will print it for you.`,
-                `The monthly refresh is here! Claim your free 3D print. 🎨 Newcomers, we highly encourage you to participate! Read how: ${pinnedPostLink}. Drop your mini in the thread and <@221722372145676288> will make it happen.`,
-                `Free minis are back on the menu! 🥩 1st of the month is here. New to the server? Get your first print today! Guidelines: ${pinnedPostLink}. Toss your file in the thread below and <@221722372145676288> will print it.`,
-                `Time to spawn some new models! Monthly slots are refreshed. 🪄 Don't be shy if you're a newcomer, claim your mini! Rules here: ${pinnedPostLink}. Link your file in the thread and let <@221722372145676288> do the printing.`,
-                `Welcome to the 1st! Our free mini slots are wide open. 🌌 If you just joined, this is the perfect time to get a free figure! Instructions: ${pinnedPostLink}. Drop it in the thread and <@221722372145676288> will print it.`,
-                `Another month, another batch of free minis! 🛡️ New players, don't hold back—get your character printed! Read this first to see what's allowed: ${pinnedPostLink}. Post in the thread below and <@221722372145676288> will print it for free.`,
-                `The free print slots have been reset for the new month! 📆 We'd love to print something for our newest members. Check the rules: ${pinnedPostLink}. Leave your model in the thread, and <@221722372145676288> will take care of it.`,
-                `Happy new month! Time to claim your free miniature. 🎭 Never requested one? Don't be shy, it's easy! Details on accepted formats: ${pinnedPostLink}. Put your link or file in the thread and <@221722372145676288> will print it at zero cost.`,
-                `Free mini slots are officially refreshed today! ⚔️ Calling all newcomers—don't hesitate to jump in the queue! Guidelines: ${pinnedPostLink}. Drop your file in the thread and <@221722372145676288> will bring it to the physical world.`,
-                `The 1st is here, and so are the free minis! 🐉 If you're new, this is your sign to ask for a print. Current rules are pinned: ${pinnedPostLink}. Link your model in the thread and <@221722372145676288> will handle the production.`,
-                `Monthly reset complete! Free mini slots are open. 🔓 New to the community? Step right up and claim yours! Read up: ${pinnedPostLink}. Drop your mini in the thread and let <@221722372145676288> print it for you.`,
-                `Time for free tabletop minis! The monthly refresh is active. 🎲 We strongly encourage newbies to get involved. Check the updated instructions: ${pinnedPostLink}. Post your file in the thread and <@221722372145676288> will print it.`,
-                `It's the 1st! The 3D printer is hungry for your free requests. 🦖 Don't be shy, new folks, feed the printer! Rules: ${pinnedPostLink}. Leave your file or link in the thread below for <@221722372145676288>.`,
-                `New month, new heroes! Free slots are refreshed. 🦸‍♂️ If you haven't used this perk yet, now is the time! Guidelines: ${pinnedPostLink}. Drop your request in the thread and <@221722372145676288> will print it completely free.`,
-                `The free miniature queue is officially open for the month! 🏰 Newcomers, grab a slot before they fill up! Details on our current process: ${pinnedPostLink}. Toss your model in the thread and <@221722372145676288> will get it printed.`,
-                `Happy 1st! Time to grow your mini collection for free. 🌲 Never asked for one? Don't be shy, we love printing for new members! Rules: ${pinnedPostLink}. Link your file in the thread and <@221722372145676288> will do the rest.`,
-                `Free print slots are back for the 1st of the month! 🖨️ We invite all new members to claim a miniature. Read how to prep your file: ${pinnedPostLink}. Drop your mini in the thread and <@221722372145676288> will handle it.`,
-                `Monthly mini refresh! ⚔️ If you're a new arrival, don't hesitate to grab a free print for your next game. Instructions: ${pinnedPostLink}. Post your model in the thread below and <@221722372145676288> will print it.`,
-                `The forge is open! Free minis for the 1st of the month. 🌋 Newbies, this is your chance to get a physical character! Current guidelines: ${pinnedPostLink}. Leave your file in the thread, and <@221722372145676288> will print it free.`,
-                `It's that time! The monthly free miniature slots are refreshed. 🧚‍♂️ Don't be shy if you just joined us, claim a spot! Rules: ${pinnedPostLink}. Drop your model in the thread and let <@221722372145676288> work the magic.`,
-                `Welcome to the 1st! Free 3D prints are available now. 🛠️ We highly encourage new members to make a request! Check the pinned post for the latest specs: ${pinnedPostLink}. Put your file in the thread and <@221722372145676288> will print it.`,
-                `New month, fresh mini queue! 📆 If you've never snagged a free print, don't hold back today! Details here: ${pinnedPostLink}. Link your mini in the thread and <@221722372145676288> will handle the rest.`,
-                `The free mini slots have reset! 🎲 Calling all new members to jump in and get a free figure. Instructions on how to share: ${pinnedPostLink}. Drop your file in the thread below and <@221722372145676288> will print it.`,
-                `Happy new month! Claim your free 3D printed miniature today. 🦸‍♀️ If you're new here, don't be shy—everyone gets a turn! Rules: ${pinnedPostLink}. Post your model in the thread and <@221722372145676288> will print it.`,
-                `Free miniature printing is officially open for the month! 🐉 We love printing for newcomers, so grab a slot! Guidelines: ${pinnedPostLink}. Leave your model in the thread, and <@221722372145676288> will take care of it.`,
-                `It's the 1st! Time to request your free monthly mini. 🗺️ Never requested before? Now is the perfect time! Read the current rules: ${pinnedPostLink}. Drop your mini in the thread and <@221722372145676288> will print it at no cost.`,
-                `The monthly free print slots are officially active! 🛡️ If you are a new face, don't hesitate to claim your miniature. Check this for our latest capabilities: ${pinnedPostLink}. Toss your model in the thread and <@221722372145676288> will do the rest.`,
-                `Level up your tabletop! Free minis for the 1st of the month. 🆙 New players, step right up and claim yours! Instructions: ${pinnedPostLink}. Link your file in the thread below and <@221722372145676288> will print it for free.`,
-                `Monthly slots are refreshed! Time for some new models. 🪄 Don't be shy if you're new, we want to print your heroes! Rules here: ${pinnedPostLink}. Drop your file in the thread and let <@221722372145676288> fire up the printer.`
+                `Monthly mini slots are officially refreshed today! 🗺️ Don't be shy if you're new, grab your character in physical form. Rules: ${pinnedPostLink}. Drop the file in the thread and let <@221722372145676288> fire up the printer.`
             ].map(prompt => prompt.replace('221722372145676288', SNEAKYJOE_USER_ID));
 
-            const postText = prompts[Math.floor(Math.random() * prompts.length)];
+            let postText = null;
+            let attempts = 0;
+            const maxAttempts = 4;
+
+            while (attempts < maxAttempts) {
+                attempts++;
+                try {
+                    console.log(`[Monthly Mini Cron] Attempting to generate announcement via Ollama (attempt ${attempts}/${maxAttempts})...`);
+                    const systemMessage = `You are Librarian, a senile but helpful TTRPG librarian bot living inside a Discord server. 
+Today is the 1st of the month, and the monthly free 3D printing queue for miniatures has reset.
+Generate a friendly, fun, and flavor-filled community announcement in character.
+
+CRITICAL REQUIREMENTS:
+- You must exactly include the rules link: ${pinnedPostLink}
+- You must exactly mention the printer host: <@${SNEAKYJOE_USER_ID}>
+- The text must be in English.
+- Do NOT use markdown code blocks, do NOT write surrounding explanations or metadata, just output the announcement text itself.`;
+
+                    const userPrompt = `Write a short, engaging announcement (2-4 sentences) in your senile librarian character voice, welcoming people (especially newcomers) to claim their free mini printing slot for the month, pointing them to the rules here: ${pinnedPostLink}, and letting them know that <@${SNEAKYJOE_USER_ID}> will print it for free.`;
+
+                    const response = await axios.post(OLLAMA_URL, {
+                        model: OLLAMA_MODEL,
+                        system: systemMessage,
+                        prompt: userPrompt,
+                        stream: false,
+                        options: {
+                            temperature: 0.85,
+                            num_ctx: 2048,
+                            seed: Math.floor(Math.random() * 1000000)
+                        }
+                    }, { timeout: RAG_OLLAMA_TIMEOUT });
+
+                    if (response.data && response.data.response) {
+                        const generatedText = response.data.response.trim();
+                        // Validate requirements:
+                        const hasRulesLink = generatedText.includes(pinnedPostLink);
+                        const hasHostMention = generatedText.includes(`<@${SNEAKYJOE_USER_ID}>`);
+
+                        if (generatedText.length > 0 && hasRulesLink && hasHostMention) {
+                            console.log(`[Monthly Mini Cron] Successfully generated announcement: "${generatedText}"`);
+                            postText = generatedText;
+                            break;
+                        } else {
+                            console.warn(`[Monthly Mini Cron] Validation failed for attempt ${attempts}. rulesLink: ${hasRulesLink}, hostMention: ${hasHostMention}`);
+                        }
+                    } else {
+                        console.warn(`[Monthly Mini Cron] Empty response from Ollama on attempt ${attempts}`);
+                    }
+                } catch (err) {
+                    console.error(`[Monthly Mini Cron] Ollama generation failed on attempt ${attempts}:`, err.message);
+                }
+            }
+
+            if (!postText) {
+                console.log(`[Monthly Mini Cron] Ollama generation failed or was invalid after ${maxAttempts} attempts. Falling back to static prompt.`);
+                postText = prompts[Math.floor(Math.random() * prompts.length)];
+            }
 
             // 1. Send the message
             const message = await channel.send(postText);
