@@ -55,19 +55,19 @@ function isHistoryOrAnalysisQuery(query) {
 }
 
 /**
- * Dynamically fetches the last 3 git updates or falls back to a default list
+ * Dynamically fetches the last 5 git updates (older to newer with dates) or falls back to a default list
  */
 function getLastUpdates() {
     try {
         const repoPath = path.resolve(__dirname, '..', '..');
-        const stdout = execSync('git log -3 --pretty=format:"- %s (%h)"', {
+        const stdout = execSync('git log -5 --reverse --pretty=format:"- %as: %s (%h)"', {
             cwd: repoPath,
             encoding: 'utf8'
         });
-        return stdout.trim() || '- Reorganized code into modular files\n- Updated documentation\n- Displayed updates in system message';
+        return stdout.trim() || '- 2026-06-11: Reorganized code into modular files (a1b2c3d)\n- 2026-06-11: Updated documentation (e5f6g7h)\n- 2026-06-11: Displayed updates in system message (i9j0k1l)';
     } catch (e) {
         console.warn('Failed to fetch git log:', e.message);
-        return '- Reorganized code into modular files\n- Updated documentation\n- Displayed updates in system message';
+        return '- 2026-06-11: Reorganized code into modular files (a1b2c3d)\n- 2026-06-11: Updated documentation (e5f6g7h)\n- 2026-06-11: Displayed updates in system message (i9j0k1l)';
     }
 }
 

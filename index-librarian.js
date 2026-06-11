@@ -2,7 +2,6 @@ const { Client, GatewayIntentBits, Partials, REST, Routes, ActivityType } = requ
 const cron = require('node-cron');
 const {
     token,
-    helpText,
     commands,
     SERVER_ID,
     SYSTEM_CHANNEL_ID,
@@ -83,14 +82,14 @@ client.once('ready', async () => {
                 timeStyle: 'long'
             });
 
-            // Retrieve the last 3 updates from git (or fallback)
+            // Retrieve the last 5 updates from git (or fallback)
             const updatesList = getLastUpdates();
 
-            const contentWithTime = `${helpText}\n\n**Last 3 Updates:**\n${updatesList}\n\n*Last updated: ${tallinnTime}*`;
+            const contentWithTime = `Use \`/librarian-bot\` for showing instructions for bot.\n\n**Last 5 Updates:**\n${updatesList}\n\n*Last updated: ${tallinnTime}*`;
 
             if (systemMessage) {
                 await systemMessage.edit({ content: contentWithTime });
-                console.log('System help message successfully updated with timestamp and last 3 updates.');
+                console.log('System help message successfully updated with timestamp and last 5 updates.');
             } else {
                 const newMessage = await systemChannel.send({ content: contentWithTime });
                 console.log(`[WARNING] System help message was deleted. Created a new one.`);
