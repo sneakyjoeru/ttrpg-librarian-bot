@@ -177,43 +177,49 @@ client.once(Events.ClientReady, async () => {
                 return;
             }
 
-            const channel = await client.channels.fetch(GENERAL_CHANNEL_ID);
+            const maxDelayMs = 4 * 60 * 60 * 1000; // 4 hours in ms
+            const randomDelay = Math.floor(Math.random() * maxDelayMs);
+            console.log(`[Monthly Mini Cron] Scheduling monthly mini post with a random delay of ${(randomDelay / (60 * 1000)).toFixed(1)} minutes (targeting 11:00 AM +- 2 hours).`);
 
-            if (!channel) {
-                console.error('General channel not found for monthly mini post.');
-                return;
-            }
-
-            const currentDate = new Date();
-            const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-            const currentMonth = monthNames[currentDate.getMonth()];
-            const currentYear = currentDate.getFullYear();
-
-            // Generate a direct link to the pinned rules message
-            const pinnedPostLink = `https://discord.com/channels/${SERVER_ID}/${GENERAL_CHANNEL_ID}/${RULES_MESSAGE_ID}`;
-
-            const prompts = [
-                `It's the 1st of the month, which means free mini slots are refreshed! 🎲 New to the server? Don't be shy, everyone is welcome! Check the current rules and supported formats here: ${pinnedPostLink}. Drop your model or link in the thread below and <@221722372145676288> will print it for free!`,
-                `A new month brings new free minis! 🐉 If you've just joined us, don't hesitate to jump in. Read the latest guidelines: ${pinnedPostLink}. Post your file or link in the thread below and let <@221722372145676288> work their printing magic!`,
-                `Happy 1st of the month! The free miniature queue is officially open. 🏰 Newcomers, this means you too—grab a slot! Rules are pinned here: ${pinnedPostLink}. Leave your model in the thread, and <@221722372145676288> will print it at no cost.`,
-                `The monthly mini refresh is here! ⚔️ Never requested one before? Now is the perfect time, don't be shy! See the current instructions right here: ${pinnedPostLink}. Drop your files in the thread and <@221722372145676288> will bring them to life.`,
-                `New month, new loot! 💰 Free mini slots are back. We love seeing newcomers participate, so don't hold back! Read how it currently works: ${pinnedPostLink}. Share your mini in the thread and <@221722372145676288> will get it printed.`,
-                `It's that time again! Free 3D prints for the 1st of the month. 🧙‍♂️ If you are new here, step right up and claim your mini! Check the up-to-date rules: ${pinnedPostLink}. Toss your file in the thread and <@221722372145676288> will do the rest.`,
-                `Roll for initiative! The monthly free mini slots have reset. 🎲 New players, don't be shy—this is for you too! Guidelines: ${pinnedPostLink}. Drop your model in the thread, and <@221722372145676288> will handle the print.`,
-                `Welcome to a new month! Free miniature printing is now available. 🛡️ We highly encourage newbies to grab a slot! Read up on the requirements here: ${pinnedPostLink}. Leave your request in the thread below for <@221722372145676288>.`,
-                `The forge is lit! 1st of the month means free minis. 🔥 If you're new to the community, join the fun! Current instructions: ${pinnedPostLink}. Share your model or link in the thread and <@221722372145676288> will print it free of charge.`,
-                `Monthly mini slots are officially refreshed today! 🗺️ Don't be shy if you're new, grab your character in physical form. Rules: ${pinnedPostLink}. Drop the file in the thread and let <@221722372145676288> fire up the printer.`
-            ].map(prompt => prompt.replace('221722372145676288', SNEAKYJOE_USER_ID));
-
-            let postText = null;
-            let attempts = 0;
-            const maxAttempts = 4;
-
-            while (attempts < maxAttempts) {
-                attempts++;
+            setTimeout(async () => {
                 try {
-                    console.log(`[Monthly Mini Cron] Attempting to generate announcement via Ollama (attempt ${attempts}/${maxAttempts})...`);
-                    const systemMessage = `You are Librarian, a senile but helpful TTRPG librarian bot living inside a Discord server. 
+                    const channel = await client.channels.fetch(GENERAL_CHANNEL_ID);
+
+                    if (!channel) {
+                        console.error('General channel not found for monthly mini post.');
+                        return;
+                    }
+
+                    const currentDate = new Date();
+                    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+                    const currentMonth = monthNames[currentDate.getMonth()];
+                    const currentYear = currentDate.getFullYear();
+
+                    // Generate a direct link to the pinned rules message
+                    const pinnedPostLink = `https://discord.com/channels/${SERVER_ID}/${GENERAL_CHANNEL_ID}/${RULES_MESSAGE_ID}`;
+
+                    const prompts = [
+                        `It's the 1st of the month, which means free mini slots are refreshed! 🎲 New to the server? Don't be shy, everyone is welcome! Check the current rules and supported formats here: ${pinnedPostLink}. Drop your model or link in the thread below and <@221722372145676288> will print it for free!`,
+                        `A new month brings new free minis! 🐉 If you've just joined us, don't hesitate to jump in. Read the latest guidelines: ${pinnedPostLink}. Post your file or link in the thread below and let <@221722372145676288> work their printing magic!`,
+                        `Happy 1st of the month! The free miniature queue is officially open. 🏰 Newcomers, this means you too—grab a slot! Rules are pinned here: ${pinnedPostLink}. Leave your model in the thread, and <@221722372145676288> will print it at no cost.`,
+                        `The monthly mini refresh is here! ⚔️ Never requested one before? Now is the perfect time, don't be shy! See the current instructions right here: ${pinnedPostLink}. Drop your files in the thread and <@221722372145676288> will bring them to life.`,
+                        `New month, new loot! 💰 Free mini slots are back. We love seeing newcomers participate, so don't hold back! Read how it currently works: ${pinnedPostLink}. Share your mini in the thread and <@221722372145676288> will get it printed.`,
+                        `It's that time again! Free 3D prints for the 1st of the month. 🧙‍♂️ If you are new here, step right up and claim your mini! Check the up-to-date rules: ${pinnedPostLink}. Toss your file in the thread and <@221722372145676288> will do the rest.`,
+                        `Roll for initiative! The monthly free mini slots have reset. 🎲 New players, don't be shy—this is for you too! Guidelines: ${pinnedPostLink}. Drop your model in the thread, and <@221722372145676288> will handle the print.`,
+                        `Welcome to a new month! Free miniature printing is now available. 🛡️ We highly encourage newbies to grab a slot! Read up on the requirements here: ${pinnedPostLink}. Leave your request in the thread below for <@221722372145676288>.`,
+                        `The forge is lit! 1st of the month means free minis. 🔥 If you're new to the community, join the fun! Current instructions: ${pinnedPostLink}. Share your model or link in the thread and <@221722372145676288> will print it free of charge.`,
+                        `Monthly mini slots are officially refreshed today! 🗺️ Don't be shy if you're new, grab your character in physical form. Rules: ${pinnedPostLink}. Drop the file in the thread and let <@221722372145676288> fire up the printer.`
+                    ].map(prompt => prompt.replace('221722372145676288', SNEAKYJOE_USER_ID));
+
+                    let postText = null;
+                    let attempts = 0;
+                    const maxAttempts = 4;
+
+                    while (attempts < maxAttempts) {
+                        attempts++;
+                        try {
+                            console.log(`[Monthly Mini Cron] Attempting to generate announcement via Ollama (attempt ${attempts}/${maxAttempts})...`);
+                            const systemMessage = `You are Librarian, a senile but helpful TTRPG librarian bot living inside a Discord server. 
 Today is the 1st of the month, and the monthly free 3D printing queue for miniatures has reset.
 Generate a friendly, fun, and flavor-filled community announcement in character.
 
@@ -223,61 +229,65 @@ CRITICAL REQUIREMENTS:
 - The text must be in English.
 - Do NOT use markdown code blocks, do NOT write surrounding explanations or metadata, just output the announcement text itself.`;
 
-                    const userPrompt = `Write a short, engaging announcement (2-4 sentences) in your senile librarian character voice, welcoming people (especially newcomers) to claim their free mini printing slot for the month, pointing them to the rules here: ${pinnedPostLink}, and letting them know that <@${SNEAKYJOE_USER_ID}> will print it for free.`;
+                            const userPrompt = `Write a short, engaging announcement (2-4 sentences) in your senile librarian character voice, welcoming people (especially newcomers) to claim their free mini printing slot for the month, pointing them to the rules here: ${pinnedPostLink}, and letting them know that <@${SNEAKYJOE_USER_ID}> will print it for free.`;
 
-                    const response = await axios.post(OLLAMA_URL, {
-                        model: OLLAMA_MODEL,
-                        system: systemMessage,
-                        prompt: userPrompt,
-                        stream: false,
-                        options: {
-                            temperature: 0.85,
-                            num_ctx: 2048,
-                            seed: Math.floor(Math.random() * 1000000)
+                            const response = await axios.post(OLLAMA_URL, {
+                                model: OLLAMA_MODEL,
+                                system: systemMessage,
+                                prompt: userPrompt,
+                                stream: false,
+                                options: {
+                                    temperature: 0.85,
+                                    num_ctx: 2048,
+                                    seed: Math.floor(Math.random() * 1000000)
+                                }
+                            }, { timeout: RAG_OLLAMA_TIMEOUT });
+
+                            if (response.data && response.data.response) {
+                                const generatedText = response.data.response.trim();
+                                // Validate requirements:
+                                const hasRulesLink = generatedText.includes(pinnedPostLink);
+                                const hasHostMention = generatedText.includes(`<@${SNEAKYJOE_USER_ID}>`);
+
+                                if (generatedText.length > 0 && hasRulesLink && hasHostMention) {
+                                    console.log(`[Monthly Mini Cron] Successfully generated announcement: "${generatedText}"`);
+                                    postText = generatedText;
+                                    break;
+                                } else {
+                                    console.warn(`[Monthly Mini Cron] Validation failed for attempt ${attempts}. rulesLink: ${hasRulesLink}, hostMention: ${hasHostMention}`);
+                                }
+                            } else {
+                                console.warn(`[Monthly Mini Cron] Empty response from Ollama on attempt ${attempts}`);
+                            }
+                        } catch (err) {
+                            console.error(`[Monthly Mini Cron] Ollama generation failed on attempt ${attempts}:`, err.message);
                         }
-                    }, { timeout: RAG_OLLAMA_TIMEOUT });
-
-                    if (response.data && response.data.response) {
-                        const generatedText = response.data.response.trim();
-                        // Validate requirements:
-                        const hasRulesLink = generatedText.includes(pinnedPostLink);
-                        const hasHostMention = generatedText.includes(`<@${SNEAKYJOE_USER_ID}>`);
-
-                        if (generatedText.length > 0 && hasRulesLink && hasHostMention) {
-                            console.log(`[Monthly Mini Cron] Successfully generated announcement: "${generatedText}"`);
-                            postText = generatedText;
-                            break;
-                        } else {
-                            console.warn(`[Monthly Mini Cron] Validation failed for attempt ${attempts}. rulesLink: ${hasRulesLink}, hostMention: ${hasHostMention}`);
-                        }
-                    } else {
-                        console.warn(`[Monthly Mini Cron] Empty response from Ollama on attempt ${attempts}`);
                     }
-                } catch (err) {
-                    console.error(`[Monthly Mini Cron] Ollama generation failed on attempt ${attempts}:`, err.message);
+
+                    if (!postText) {
+                        console.log(`[Monthly Mini Cron] Ollama generation failed or was invalid after ${maxAttempts} attempts. Falling back to static prompt.`);
+                        postText = prompts[Math.floor(Math.random() * prompts.length)];
+                    }
+
+                    // 1. Send the message
+                    const message = await channel.send(postText);
+
+                    // 2. Create a thread from this message (appending the year)
+                    const thread = await message.startThread({
+                        name: `Free Minis - ${currentYear}, ${currentMonth}`,
+                        autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS, // Auto-archive after 7 days (Discord maximum)
+                    });
+
+                    // 3. Add sneakyjoe to the thread
+                    await thread.members.add(SNEAKYJOE_USER_ID);
+
+                    console.log(`Monthly free mini post created successfully for ${currentMonth}.`);
+                } catch (error) {
+                    console.error('Failed to post monthly mini update inside timeout:', error);
                 }
-            }
-
-            if (!postText) {
-                console.log(`[Monthly Mini Cron] Ollama generation failed or was invalid after ${maxAttempts} attempts. Falling back to static prompt.`);
-                postText = prompts[Math.floor(Math.random() * prompts.length)];
-            }
-
-            // 1. Send the message
-            const message = await channel.send(postText);
-
-            // 2. Create a thread from this message (appending the year)
-            const thread = await message.startThread({
-                name: `Free Minis - ${currentYear}, ${currentMonth}`,
-                autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS, // Auto-archive after 7 days (Discord maximum)
-            });
-
-            // 3. Add sneakyjoe to the thread
-            await thread.members.add(SNEAKYJOE_USER_ID);
-
-            console.log(`Monthly free mini post created successfully for ${currentMonth}.`);
+            }, randomDelay);
         } catch (error) {
-            console.error('Failed to post monthly mini update:', error);
+            console.error('Failed to schedule monthly mini update:', error);
         }
     }, {
         scheduled: true,

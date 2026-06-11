@@ -19,7 +19,7 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://192.168.0.101:11434/api/gen
 const OLLAMA_MODEL = 'qwen2.5:7b';                                  // Local LLM model name run in Ollama
 
 const TIMEZONE = 'Europe/Tallinn';                    // Local timezone used to schedule cron jobs & timestamps
-const CRON_SCHEDULE_MONTHLY_MINI = '0 11 1 * *';      // Cron schedule for monthly announcements (1st of every month at 11:00 AM)
+const CRON_SCHEDULE_MONTHLY_MINI = '0 9 1 * *';       // Cron schedule for monthly announcements (1st of every month at 9:00 AM for +-2h randomization)
 
 const EMOJI_ROBOT = '🤖';                             // Reacted emoji on campaign OP posts
 const EMOJI_HAND = '✋';                              // Emoji that players click to self-assign campaign player roles
