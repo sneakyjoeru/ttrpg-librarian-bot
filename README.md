@@ -5,11 +5,11 @@ Librarian Bot is an advanced Discord bot designed to automate and manage tableto
 ## Features
 
 - **Campaign Management**: Automated creation of active text channels with synced permissions, automatic role creation, and automated sync on channel renames.
-- **System Message Updates**: Dynamically pulls the last 3 git updates (commit logs) and displays them in the global system help message on startup to keep users informed of the latest bot developments.
-- **Natural 1 Roasting**: Integrates with local Llama 3.1 model to generate snarky roasts when players roll a critical fail (Nat 1).
+- **System Message Updates**: Dynamically pulls the last 5 git updates (commit logs) and displays them as clickable GitHub links in the global system help message on startup to keep users informed of the latest bot developments.
+- **Natural 1 Roasting**: Integrates with local Ollama LLM (`qwen2.5:7b` by default) to generate snarky roasts when players roll a critical fail (Nat 1).
 - **RAG QA Mention Pipeline**: Answer player questions using web search context from local SearXNG instances and recent channel chat history via local LLM. Include `"no bs"` in mentions for short, direct responses.
 - **Monthly Scheduler**: Cron scheduling for monthly miniature queues with a randomized set of fantasy prompts.
-- **Administrative Utilities**: Includes tools like `/retro-setup` to configure old channels, interactive customized polling, pinning/unpinning, and topic overrides.
+- **Administrative Utilities**: Includes tools like `/retro-setup` to configure old channels, `/restart` to rebuild/restart the bot via Docker socket, interactive customized polling, pinning/unpinning, and topic overrides.
 - **Automatic Archival**: Clean parent transition to archived categories and role cleanup.
 
 ## Codebase Layout
@@ -34,7 +34,7 @@ The project follows a modular architecture for ease of maintenance:
   * **Intents Needed**: Make sure to enable the **Message Content Intent** (privileged intent) under the "Bot" tab of your application settings, along with standard Server Members intents.
 
 #### Optional Requirements (For AI/RAG Features)
-- **[Ollama](https://ollama.com/)** (Running `llama3.1`): For dynamic AI QA responses and customized Natural 1 roasts.
+- **[Ollama](https://ollama.com/)** (Running `qwen2.5:7b` by default): For dynamic AI QA responses and customized Natural 1 roasts.
 - **[SearXNG](https://github.com/searxng/searxng)**: For live web-search context inside the QA pipeline.
 
 *Note: If Ollama or SearXNG are offline or unreachable, the bot will gracefully degrade, falling back to static predefined roasts for Nat 1s and a standard interactive command reference when mentioned, leaving core TTRPG orchestration commands fully functional.*
@@ -54,7 +54,7 @@ The project follows a modular architecture for ease of maintenance:
    $client_secret = 'YOUR_CLIENT_SECRET';
    ```
 
-3. Update the server and category IDs in the top section of `index.js`, or configure them through environment variables:
+3. Update the server and category IDs in `src/config.js`, or configure them through environment variables:
    - `SERVER_ID`
    - `ACTIVE_CATEGORY_ID`
    - `ARCHIVED_CATEGORY_ID`
@@ -69,7 +69,7 @@ To deploy or update the bot, simply run the helper script:
 chmod +x rebuild-run.sh
 ./rebuild-run.sh
 ```
-This script will automatically stop and remove any existing container named `campaign-bot`, rebuild the image, and start a new detached, self-restarting container.
+This script will automatically stop and remove any existing container named `librarian-bot`, rebuild the image, and start a new detached, self-restarting container. The script mounts the host's Docker socket (`/var/run/docker.sock`) and code volume dynamically so that the bot can perform administrative rebuilds and self-restarts via the `/restart` slash command.
 
 ### Running Locally (Alternative: Node.js)
 

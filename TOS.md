@@ -12,7 +12,7 @@ Librarian Bot is an automated assistant designed to manage tabletop gaming campa
 - **Availability**: The Bot is provided "as is." We do not guarantee uninterrupted availability, uptime, or error-free responses from the local Large Language Model (LLM).
 
 ## 3. Local AI Processing & "No BS" Mode
-- The Bot processes user queries using a local, self-hosted Ollama instance running Llama 3.1. 
+- The Bot processes user queries using a local, self-hosted Ollama instance. 
 - The generated responses are produced in real-time. By invoking the Bot (e.g. via server mentions or commands), you acknowledge that the outputs are generated dynamically by artificial intelligence and do not reflect any human opinion.
 - A "no bs" command modifier is supported for generating shortened, direct answers.
 

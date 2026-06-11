@@ -532,7 +532,7 @@ async function handleInteraction(client, interaction) {
         const { exec } = require('child_process');
 
         console.log('[Restart Command] Starting docker build...');
-        exec('docker build --provenance=false -t discord-librarian-bot /usr/src/app', (buildErr, stdout, stderr) => {
+        exec('docker build -t discord-librarian-bot /usr/src/app', (buildErr, stdout, stderr) => {
             if (buildErr) {
                 console.error('[Restart Command] Build failed:', buildErr);
                 return interaction.followUp({ content: `❌ Rebuild failed:\n\`\`\`\n${buildErr.message}\n\`\`\``, ephemeral: true });
