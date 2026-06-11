@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const fs = require('fs');
 
 // --- CONFIGURATION CONSTANTS ---
@@ -122,6 +122,10 @@ const commands = [
         .addStringOption(opt => opt.setName('formula').setDescription('Dice formula to roll (e.g., 1d20+5, 2d6, d20)').setRequired(true))
         .addStringOption(opt => opt.setName('class').setDescription('Character class (e.g., Wizard, Rogue) for custom roast context').setRequired(false))
         .addStringOption(opt => opt.setName('context').setDescription('What your character is attempting to do (for custom roast context)').setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('restart')
+        .setDescription('Rebuild and restart the bot container (Admin only)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(command => command.toJSON());
 
 module.exports = {

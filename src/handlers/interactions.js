@@ -514,6 +514,45 @@ async function handleInteraction(client, interaction) {
 
         return await interaction.reply({ embeds: [rollEmbed] });
     }
+
+    if (commandName === 'restart') {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return interaction.reply({ content: 'Only Administrators can trigger a restart.', ephemeral: true });
+        }
+
+        await interaction.reply({ content: '🔄 Rebuilding bot image and restarting container... Please wait.', ephemeral: true });
+
+        const hostPath = process.env.HOST_PATH;
+        if (!hostPath) {
+            console.error('[Restart Command] HOST_PATH environment variable is not defined.');
+            return interaction.followUp({ content: '❌ Error: `HOST_PATH` environment variable is not set. Cannot restart.', ephemeral: true });
+        }
+
+        const normalizedHostPath = hostPath.replace(/\\/g, '/');
+        const { exec } = require('child_process');
+
+        console.log('[Restart Command] Starting docker build...');
+        exec('docker build --provenance=false -t discord-librarian-bot /usr/src/app', (buildErr, stdout, stderr) => {
+            if (buildErr) {
+                console.error('[Restart Command] Build failed:', buildErr);
+                return interaction.followUp({ content: `❌ Rebuild failed:\n\`\`\`\n${buildErr.message}\n\`\`\``, ephemeral: true });
+            }
+
+            console.log('[Restart Command] Build successful. Launching helper container to restart...');
+
+            // Start a detached helper container to stop, remove, and run the new container
+            const restartCmd = `docker run -d --rm -v /var/run/docker.sock:/var/run/docker.sock alpine sh -c "sleep 2 && docker stop librarian-bot && docker rm librarian-bot && docker run -d --name librarian-bot --restart unless-stopped -e HOST_PATH=\\"${normalizedHostPath}\\" -v /var/run/docker.sock:/var/run/docker.sock -v \\"${normalizedHostPath}:/usr/src/app\\" -v /usr/src/app/node_modules discord-librarian-bot"`;
+
+            exec(restartCmd, (restartErr, rStdout, rStderr) => {
+                if (restartErr) {
+                    console.error('[Restart Command] Failed to start helper container:', restartErr);
+                    return interaction.followUp({ content: `❌ Restart failed: failed to start helper container.\n\`\`\`\n${restartErr.message}\n\`\`\``, ephemeral: true });
+                }
+                console.log('[Restart Command] Helper container started successfully.');
+            });
+        });
+        return;
+    }
 }
 
 module.exports = handleInteraction;

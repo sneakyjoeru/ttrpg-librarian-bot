@@ -1,6 +1,6 @@
 FROM node:18-alpine
 
-RUN apk add --no-cache git
+RUN apk add --no-cache git docker-cli
 
 WORKDIR /usr/src/app
 
