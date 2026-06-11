@@ -12,7 +12,22 @@ const {
     RAG_TYPING_INTERVAL
 } = require('../config');
 
+const LIBRARIAN_QUIRKS = [
+    "You are currently searching for your lost spectacles, grumbling that they might be in a soup bowl.",
+    "You are complaining about a cold draft coming from the library floorboards.",
+    "You are holding a dusty tome about ancient dragons and keep coughing from the dust.",
+    "You are convinced the user is your long-lost nephew or assistant named Barnaby.",
+    "You are trying to wipe off a sticky blue ink stain from your fingers.",
+    "You keep hearing non-existent loud whispering and try to shush the empty corners of the room.",
+    "You are convinced it is half-past tea time and mutter about needing a dry biscuit.",
+    "You are struggling to open a stubborn scroll container that seems stuck with age.",
+    "You keep forgetting what you were saying mid-sentence and muttering 'what was I about...?'",
+    "You are complaining about the youth of today using shiny magic items instead of proper ink and parchment."
+];
+
 async function handleRagQuery(client, message, query) {
+    const seed = Math.floor(Math.random() * 1000000);
+    const randomQuirk = LIBRARIAN_QUIRKS[seed % LIBRARIAN_QUIRKS.length];
     // Enable typing indicator and start a loop to maintain it (Discord resets it every 10 seconds)
     await message.channel.sendTyping();
     const typingInterval = setInterval(() => {
@@ -211,7 +226,8 @@ Your personality:
 - Despite the confusion, you DO provide the correct answer eventually.
 - You speak in a rambling, in-character way — NEVER give a dry, factual, encyclopedia-style answer.
 - Keep it fun, entertaining, and flavourful. A few sentences of roleplay colour around the answer is MANDATORY.
-- If user uses profanity — don't be shy to mimic it in character.`;
+- If user uses profanity — don't be shy to mimic it in character.
+- Current senile quirk to guide your response mood/action: ${randomQuirk}`;
         }
         systemMessage += `\nAdditional rules:
 - Your main goal is to keep communication around DnD when users ask questions, unless they specify a different topic (fact checking films, shows, rules is acceptable).
@@ -219,7 +235,8 @@ Your personality:
 - Answer the user's question accurately. Use the provided internet search context if it's relevant.
 - If the context doesn't help, rely on your internal knowledge or sprinkle some recent news about Tallinn/TTRPG. Answer in English.
 - If a "Target User Context" section is provided below, the user is asking about a specific server member. Use the messages listed in that section to answer the question. Summarize what that person posted or said based on their actual messages. Do NOT say you cannot find them or that they haven't posted.
-- Generate ONLY the final answer in character. Do NOT append, repeat, or continue any chat history, dialogue turns, or conversation logs.`;
+- Generate ONLY the final answer in character. Do NOT append, repeat, or continue any chat history, dialogue turns, or conversation logs.
+- Seed value: ${seed}. Use this seed to make your roleplay unique, and do NOT repeat the exact same greetings, endings, or comments as those in the chat history.`;
 
         const userPrompt = `Internet Search Context:
 ${searchContext}
@@ -241,6 +258,7 @@ Answer (stay in character!):`;
                 options: {
                     temperature: 0.85,
                     num_ctx: 32768,
+                    seed: seed,
                     stop: ["\n[", "\nUser Question:", "\nRecent Channel Chat History", "\nInternet Search Context:"]
                 }
             }, { timeout: RAG_OLLAMA_TIMEOUT });
