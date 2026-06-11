@@ -42,6 +42,40 @@ client.once(Events.ClientReady, async () => {
     });
     console.log(`Online as ${client.user.tag}`);
 
+    // --- POST-RESTART MESSAGE UPDATE ---
+    const restartChannelId = process.env.RESTART_CHANNEL_ID;
+    const restartMessageId = process.env.RESTART_MESSAGE_ID;
+    if (restartChannelId && restartMessageId) {
+        try {
+            console.log(`[Restart System] Detected active restart sequence. Updating message ${restartMessageId} in channel ${restartChannelId}...`);
+            const channel = await client.channels.fetch(restartChannelId);
+            if (channel) {
+                const msg = await channel.messages.fetch(restartMessageId).catch(() => null);
+                if (msg) {
+                    const tallinnTime = new Date().toLocaleString('en-GB', {
+                        timeZone: TIMEZONE,
+                        dateStyle: 'medium',
+                        timeStyle: 'long'
+                    });
+                    await msg.edit({ content: `✅ Restart successful! (Completed at: ${tallinnTime})` });
+                    console.log('[Restart System] Successfully updated restart message.');
+ 
+                    // Delete the message after 20 seconds
+                    setTimeout(async () => {
+                        try {
+                            await msg.delete();
+                            console.log('[Restart System] Cleaned up restart message.');
+                        } catch (delErr) {
+                            console.error('[Restart System] Failed to delete restart message:', delErr.message);
+                        }
+                    }, 20000);
+                }
+            }
+        } catch (err) {
+            console.error('[Restart System] Failed to update restart message:', err.message);
+        }
+    }
+
     // Fetch all members at startup to populate client.guilds.cache member lists for name matching
     try {
         const guild = client.guilds.cache.get(SERVER_ID);
