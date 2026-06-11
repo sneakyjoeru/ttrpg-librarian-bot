@@ -43,9 +43,39 @@ client.once(Events.ClientReady, async () => {
     console.log(`Online as ${client.user.tag}`);
 
     // --- POST-RESTART MESSAGE UPDATE ---
+    const restartToken = process.env.RESTART_TOKEN;
     const restartChannelId = process.env.RESTART_CHANNEL_ID;
     const restartMessageId = process.env.RESTART_MESSAGE_ID;
-    if (restartChannelId && restartMessageId) {
+    if (restartToken) {
+        try {
+            console.log(`[Restart System] Detected active restart sequence with interaction token. Updating ephemeral message...`);
+            const rest = new REST({ version: '10' }).setToken(token);
+            const tallinnTime = new Date().toLocaleString('en-GB', {
+                timeZone: TIMEZONE,
+                dateStyle: 'medium',
+                timeStyle: 'long'
+            });
+            await rest.patch(
+                Routes.webhookMessage(client.user.id, restartToken, '@original'),
+                { body: { content: `✅ Restart successful! (Completed at: ${tallinnTime})` } }
+            );
+            console.log('[Restart System] Successfully updated ephemeral restart message.');
+
+            // Delete the message after 20 seconds
+            setTimeout(async () => {
+                try {
+                    await rest.delete(
+                        Routes.webhookMessage(client.user.id, restartToken, '@original')
+                    );
+                    console.log('[Restart System] Cleaned up ephemeral restart message.');
+                } catch (delErr) {
+                    console.error('[Restart System] Failed to delete ephemeral restart message:', delErr.message);
+                }
+            }, 20000);
+        } catch (err) {
+            console.error('[Restart System] Failed to update ephemeral restart message:', err.message);
+        }
+    } else if (restartChannelId && restartMessageId) {
         try {
             console.log(`[Restart System] Detected active restart sequence. Updating message ${restartMessageId} in channel ${restartChannelId}...`);
             const channel = await client.channels.fetch(restartChannelId);

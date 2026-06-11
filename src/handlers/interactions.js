@@ -520,9 +520,8 @@ async function handleInteraction(client, interaction) {
             return interaction.reply({ content: 'Only Administrators can trigger a restart.', ephemeral: true });
         }
 
-        const replyMessage = await interaction.reply({ content: '🔄 Rebuilding bot image and restarting container... Please wait.', fetchReply: true });
-        const channelId = replyMessage.channelId;
-        const messageId = replyMessage.id;
+        await interaction.reply({ content: '🔄 Rebuilding bot image and restarting container... Please wait.', ephemeral: true });
+        const interactionToken = interaction.token;
 
         const hostPath = process.env.HOST_PATH;
         if (!hostPath) {
@@ -543,7 +542,7 @@ async function handleInteraction(client, interaction) {
             console.log('[Restart Command] Build successful. Launching helper container to restart...');
 
             // Start a detached helper container to stop, remove, and run the new container
-            const restartCmd = `docker run -d --rm -v /var/run/docker.sock:/var/run/docker.sock docker sh -c "sleep 2 && docker rm -f librarian-bot && docker run -d --name librarian-bot --restart unless-stopped -e HOST_PATH=\\"${normalizedHostPath}\\" -e RESTART_CHANNEL_ID=\\"${channelId}\\" -e RESTART_MESSAGE_ID=\\"${messageId}\\" -v /var/run/docker.sock:/var/run/docker.sock -v \\"${normalizedHostPath}:/usr/src/app\\" -v /usr/src/app/node_modules discord-librarian-bot"`;
+            const restartCmd = `docker run -d --rm -v /var/run/docker.sock:/var/run/docker.sock docker sh -c "sleep 2 && docker rm -f librarian-bot && docker run -d --name librarian-bot --restart unless-stopped -e HOST_PATH=\\"${normalizedHostPath}\\" -e RESTART_TOKEN=\\"${interactionToken}\\" -v /var/run/docker.sock:/var/run/docker.sock -v \\"${normalizedHostPath}:/usr/src/app\\" -v /usr/src/app/node_modules discord-librarian-bot"`;
 
             exec(restartCmd, (restartErr, rStdout, rStderr) => {
                 if (restartErr) {
