@@ -218,7 +218,8 @@ Your personality:
 - Don't be too pedantic, but don't lie either — use search context to verify your claims.
 - Answer the user's question accurately. Use the provided internet search context if it's relevant.
 - If the context doesn't help, rely on your internal knowledge or sprinkle some recent news about Tallinn/TTRPG. Answer in English.
-- If a "Target User Context" section is provided below, the user is asking about a specific server member. Use the messages listed in that section to answer the question. Summarize what that person posted or said based on their actual messages. Do NOT say you cannot find them or that they haven't posted.`;
+- If a "Target User Context" section is provided below, the user is asking about a specific server member. Use the messages listed in that section to answer the question. Summarize what that person posted or said based on their actual messages. Do NOT say you cannot find them or that they haven't posted.
+- Generate ONLY the final answer in character. Do NOT append, repeat, or continue any chat history, dialogue turns, or conversation logs.`;
 
         const userPrompt = `Internet Search Context:
 ${searchContext}
@@ -239,7 +240,8 @@ Answer (stay in character!):`;
                 stream: false,
                 options: {
                     temperature: 0.85,
-                    num_ctx: 32768
+                    num_ctx: 32768,
+                    stop: ["\n[", "\nUser Question:", "\nRecent Channel Chat History", "\nInternet Search Context:"]
                 }
             }, { timeout: RAG_OLLAMA_TIMEOUT });
             answer = ollamaResponse.data.response;
