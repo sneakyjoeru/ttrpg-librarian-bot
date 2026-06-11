@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials, REST, Routes, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, REST, Routes, ActivityType, Events } = require('discord.js');
 const cron = require('node-cron');
 const {
     token,
@@ -31,7 +31,7 @@ const client = new Client({
     partials: [Partials.Message, Partials.Reaction, Partials.User]
 });
 
-client.once('ready', async () => {
+client.once(Events.ClientReady, async () => {
     client.user.setPresence({
         activities: [{
             name: 'status',
