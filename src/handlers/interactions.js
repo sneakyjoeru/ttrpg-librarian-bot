@@ -541,7 +541,7 @@ async function handleInteraction(client, interaction) {
             console.log('[Restart Command] Build successful. Launching helper container to restart...');
 
             // Start a detached helper container to stop, remove, and run the new container
-            const restartCmd = `docker run -d --rm -v /var/run/docker.sock:/var/run/docker.sock alpine sh -c "sleep 2 && docker stop librarian-bot && docker rm librarian-bot && docker run -d --name librarian-bot --restart unless-stopped -e HOST_PATH=\\"${normalizedHostPath}\\" -v /var/run/docker.sock:/var/run/docker.sock -v \\"${normalizedHostPath}:/usr/src/app\\" -v /usr/src/app/node_modules discord-librarian-bot"`;
+            const restartCmd = `docker run -d --rm -v /var/run/docker.sock:/var/run/docker.sock docker sh -c "sleep 2 && docker rm -f librarian-bot && docker run -d --name librarian-bot --restart unless-stopped -e HOST_PATH=\\"${normalizedHostPath}\\" -v /var/run/docker.sock:/var/run/docker.sock -v \\"${normalizedHostPath}:/usr/src/app\\" -v /usr/src/app/node_modules discord-librarian-bot"`;
 
             exec(restartCmd, (restartErr, rStdout, rStderr) => {
                 if (restartErr) {
