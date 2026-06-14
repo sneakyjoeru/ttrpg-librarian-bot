@@ -8,7 +8,7 @@ Librarian Bot is an advanced Discord bot designed to automate and manage tableto
 - **Instagram Media Interceptor**: Automatically intercepts Instagram posts, stories, and Reels. It retrieves images and videos using a multi-layered downloading system: proxy fixers (`eeinstagram`, `kkinstagram`), parallel scrapers (`instagram-url-direct`, `snapinsta`), and `yt-dlp` using authentication cookies. It also supports slide-selection modifiers (e.g. `1,2` or `-1` to filter specific slides).
 - **iGPU & Local CPU Media Compressor**: Automatically compresses oversized video attachments to fit Discord's file size limits. Attempts remote network transcoding using VAAPI hardware acceleration on a local NAS iGPU (if `SHARE_PASS` or SSH keys are set), falling back to local CPU-based compression (`libx264 ultrafast`) on the host Orange Pi hardware.
 - **System Message Updates**: Dynamically pulls the last 5 git updates (commit logs) and displays them as clickable GitHub links in the global system help message on startup to keep users informed of the latest bot developments.
-- **Natural 1 Roasting**: Integrates with local Ollama LLM (`qwen2.5:7b` by default) to generate snarky roasts when players roll a critical fail (Nat 1).
+- **Natural 1 Roasting**: Integrates with local Ollama LLM (`qwen3.5:9b` by default) to generate snarky roasts when players roll a critical fail (Nat 1).
 - **RAG QA Mention Pipeline**: Answer player questions using web search context from local SearXNG instances and recent channel chat history via local LLM. Include `"no bs"` in mentions for short, direct responses.
 - **Monthly Scheduler**: Cron scheduling for monthly miniature queues with a randomized set of fantasy prompts.
 - **Administrative Utilities**: Includes tools like `/retro-setup` to configure old channels, `/restart` to rebuild/restart the bot via Docker socket, interactive customized polling, pinning/unpinning, and topic overrides.
@@ -31,15 +31,17 @@ The project follows a modular architecture for ease of maintenance:
 ### Requirements & Prerequisites
 
 #### Core Requirements (Always Required)
+
 - **[Node.js](https://nodejs.org/)**: Version 18+ (if running locally without Docker)
 - **Discord Bot Application**: A valid token from the [Discord Developer Portal](https://discord.com/developers/applications).
-  * **Intents Needed**: Make sure to enable the **Message Content Intent** (privileged intent) under the "Bot" tab of your application settings, along with standard Server Members intents.
+  - **Intents Needed**: Make sure to enable the **Message Content Intent** (privileged intent) under the "Bot" tab of your application settings, along with standard Server Members intents.
 
 #### Optional Requirements (For AI/RAG Features)
-- **[Ollama](https://ollama.com/)** (Running `qwen2.5:7b` by default): For dynamic AI QA responses and customized Natural 1 roasts.
+
+- **[Ollama](https://ollama.com/)** (Running `qwen3.5:9b` by default): For dynamic AI QA responses and customized Natural 1 roasts.
 - **[SearXNG](https://github.com/searxng/searxng)**: For live web-search context inside the QA pipeline.
 
-*Note: If Ollama or SearXNG are offline or unreachable, the bot will gracefully degrade, falling back to static predefined roasts for Nat 1s and a standard interactive command reference when mentioned, leaving core TTRPG orchestration commands fully functional.*
+_Note: If Ollama or SearXNG are offline or unreachable, the bot will gracefully degrade, falling back to static predefined roasts for Nat 1s and a standard interactive command reference when mentioned, leaving core TTRPG orchestration commands fully functional._
 
 ### Configuration
 
@@ -48,6 +50,7 @@ The project follows a modular architecture for ease of maintenance:
    cp secrets_discord_example.php secrets_discord.php
    ```
 2. Open `secrets_discord.php` and fill in your Discord credentials:
+
    ```php
    $app_id        = 'YOUR_APP_ID';
    $public_key    = 'YOUR_PUBLIC_KEY';
@@ -67,10 +70,12 @@ The project follows a modular architecture for ease of maintenance:
 The easiest way to build, run, and update the bot is using the provided Docker configuration. This ensures all dependencies are managed correctly inside the container.
 
 To deploy or update the bot, simply run the helper script:
+
 ```bash
 chmod +x rebuild-run.sh
 ./rebuild-run.sh
 ```
+
 This script will automatically stop and remove any existing container named `librarian-bot`, rebuild the image, and start a new detached, self-restarting container. The script mounts the host's Docker socket (`/var/run/docker.sock`) and code volume dynamically so that the bot can perform administrative rebuilds and self-restarts via the `/restart` slash command.
 
 ### Running Locally (Alternative: Node.js)
@@ -78,6 +83,7 @@ This script will automatically stop and remove any existing container named `lib
 If you prefer to run the bot directly on your host machine:
 
 1. Install the dependencies:
+
    ```bash
    npm install
    ```
