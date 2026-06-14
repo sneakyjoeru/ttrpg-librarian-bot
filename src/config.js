@@ -31,10 +31,10 @@ const THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS = 10080; // Auto-archive threads a
 const DISCORD_START_SNOWFLAKE = '1';                  // Snowflake ID used as a baseline to retrieve the first messages in a channel
 
 const RAG_SEARCH_LIMIT = 5;                           // Number of search results to include in LLM context
-const RAG_HISTORY_LIMIT = 15;                         // Number of recent chat history messages to include in LLM context
-const RAG_SEARCH_TIMEOUT = 4000;                      // Timeout for meta-search requests (ms)
+const RAG_HISTORY_LIMIT = 100;                        // Number of recent chat history messages to include in LLM context
+const RAG_SEARCH_TIMEOUT = 5000;                      // Timeout for meta-search requests (ms)
 const RAG_OLLAMA_TIMEOUT = 120000;                    // Timeout for local Ollama server generation (ms)
-const RAG_TYPING_INTERVAL = 4000;                     // Typing status keep-alive interval (ms)
+const RAG_TYPING_INTERVAL = 10000;                     // Typing status keep-alive interval (ms)
 
 const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
