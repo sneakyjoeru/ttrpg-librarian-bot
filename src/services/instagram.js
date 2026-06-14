@@ -1,108 +1,204 @@
-const { AttachmentBuilder } = require('discord.js');
-const { instagramGetUrl } = require('instagram-url-direct');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const axios = require('axios');
+const { instagramGetUrl } = require('instagram-url-direct');
+const snapinsta = require('snapinsta');
+const { AttachmentBuilder } = require('discord.js');
+const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT } = require('../config');
+const { sendRepostedMessage, sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage } = require('../utils/webhook');
+const { runCommand, findYtDlpPath } = require('../utils/shell');
+const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
+const mediaQueue = require('../utils/mediaQueue');
 
-const INSTAGRAM_TYPING_INTERVAL = 4000;
+async function downloadWithYtDlp(url) {
+    const ytDlp = findYtDlpPath();
+    const tempDir = os.tmpdir();
+    const prefix = `insta_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    const outputPattern = path.join(tempDir, `${prefix}.%(ext)s`);
 
-async function sendRepostedMessage(client, message, content, attachments) {
-    const DISCORD_MAX_ATTACHMENTS = 10;
-    const allFiles = attachments || [];
+    // Detect if cookies.txt or instagram-cookies.txt exists
+    let cookiesFlag = '';
+    const pathsToCheck = [
+        path.join(process.cwd(), 'instagram-cookies.txt'),
+        path.join(process.cwd(), 'cookies.txt'),
+        path.join(process.cwd(), 'data', 'instagram-cookies.txt'),
+        path.join(process.cwd(), 'data', 'cookies.txt'),
+        path.join(__dirname, '../../instagram-cookies.txt'),
+        path.join(__dirname, '../../cookies.txt'),
+        path.join(__dirname, '../../data/instagram-cookies.txt'),
+        path.join(__dirname, '../../data/cookies.txt'),
+        '/usr/src/app/instagram-cookies.txt',
+        '/usr/src/app/cookies.txt',
+        '/usr/src/app/data/instagram-cookies.txt',
+        '/usr/src/app/data/cookies.txt',
+        '/tmp/instagram-cookies.txt',
+        '/tmp/cookies.txt'
+    ];
 
-    // Split attachments into chunks of 10 (Discord API limit)
-    const fileChunks = [];
-    for (let i = 0; i < allFiles.length; i += DISCORD_MAX_ATTACHMENTS) {
-        fileChunks.push(allFiles.slice(i, i + DISCORD_MAX_ATTACHMENTS));
-    }
-    if (fileChunks.length === 0) fileChunks.push([]);
-
-    let reposted = false;
-    if (message.guild) {
-        try {
-            const webhookChannel = message.channel.isThread() ? message.channel.parent : message.channel;
-            if (webhookChannel && webhookChannel.fetchWebhooks) {
-                const webhooks = await webhookChannel.fetchWebhooks();
-                let webhook = webhooks.find(wh => wh.owner && wh.owner.id === client.user.id);
-                if (!webhook) {
-                    webhook = await webhookChannel.createWebhook({
-                        name: 'Librarian Bot',
-                        avatar: client.user.displayAvatarURL()
-                    });
-                }
-
-                const username = message.member ? message.member.displayName : message.author.username;
-                const avatarURL = message.author.displayAvatarURL({ forceStatic: true });
-                const threadId = message.channel.isThread() ? message.channel.id : undefined;
-
-                for (let i = 0; i < fileChunks.length; i++) {
-                    const options = {
-                        content: i === 0 ? (content || '') : '',
-                        username,
-                        avatarURL,
-                        files: fileChunks[i]
-                    };
-                    if (threadId) options.threadId = threadId;
-                    await webhook.send(options);
-                }
-                reposted = true;
-            }
-        } catch (err) {
-            console.error('[Instagram] Failed to send webhook repost:', err);
+    let found = false;
+    for (const p of pathsToCheck) {
+        if (fs.existsSync(p)) {
+            console.log(`[Instagram Interceptor] Found cookies file: ${p}. Passing to yt-dlp.`);
+            cookiesFlag = `--cookies "${p}"`;
+            found = true;
+            break;
         }
     }
 
-    if (!reposted) {
-        try {
-            const displayName = message.member ? message.member.displayName : message.author.username;
-            const prefix = `**${displayName}**: `;
+    if (!found) {
+        console.log(`[Instagram Interceptor] WARNING: No cookies file found for yt-dlp auth. Checked: \n- ${pathsToCheck.join('\n- ')}`);
+    }
 
-            for (let i = 0; i < fileChunks.length; i++) {
-                const msgContent = i === 0
-                    ? (content ? `${prefix}${content}` : prefix)
-                    : '';
-                await message.channel.send({
-                    content: msgContent.substring(0, 2000),
-                    files: fileChunks[i]
-                });
-            }
-        } catch (sendErr) {
-            console.error('[Instagram] Fallback send failed:', sendErr);
+    console.log(`[Instagram Interceptor] Attempting yt-dlp download for: ${url}`);
+    const cmd = `"${ytDlp}" ${cookiesFlag} --no-playlist --merge-output-format mp4 -o "${outputPattern}" "${url}"`;
+
+    try {
+        await runCommand(cmd, 30000); // 30s timeout
+
+        const files = fs.readdirSync(tempDir);
+        const matchingFiles = files.filter(f => f.startsWith(prefix));
+
+        if (matchingFiles.length === 0) {
+            console.log('[Instagram Interceptor] yt-dlp completed but no files were found.');
+            return null;
         }
+
+        const attachments = [];
+        for (const file of matchingFiles) {
+            const filePath = path.join(tempDir, file);
+
+            const buffer = fs.readFileSync(filePath);
+            try { fs.unlinkSync(filePath); } catch (e) {}
+
+            const ext = path.extname(file).substring(1) || 'mp4';
+            attachments.push(new AttachmentBuilder(buffer, { name: `instagram_media_${attachments.length}.${ext}` }));
+        }
+
+        return attachments.length > 0 ? attachments : null;
+    } catch (err) {
+        console.error('[Instagram Interceptor] yt-dlp download failed:', err.message);
+        if (err.stderr) {
+            console.error('[Instagram Interceptor] yt-dlp stderr:', err.stderr.trim());
+        }
+        if (err.stdout) {
+            console.log('[Instagram Interceptor] yt-dlp stdout:', err.stdout.trim());
+        }
+        // Clean up any partially downloaded files
+        try {
+            const files = fs.readdirSync(tempDir);
+            for (const file of files) {
+                if (file.startsWith(prefix)) {
+                    fs.unlinkSync(path.join(tempDir, file));
+                }
+            }
+        } catch (cleanupErr) {
+            console.error('[Instagram Interceptor] Failed to clean up temp files:', cleanupErr.message);
+        }
+        return null;
     }
 }
 
-async function handleInstagramMessage(client, message, instagramUrl, remadeContent) {
-    await message.channel.sendTyping().catch(() => { });
-    const typingInterval = setInterval(() => {
-        message.channel.sendTyping().catch(() => { });
-    }, INSTAGRAM_TYPING_INTERVAL);
+function raceToBestSuccess(promises) {
+    return new Promise((resolve) => {
+        let completedCount = 0;
+        let resolved = false;
+        let fallbackRes = null;
 
-    let downloadSuccess = false;
-    const attachments = [];
+        if (promises.length === 0) {
+            resolve(null);
+            return;
+        }
 
-    const isKK = instagramUrl.includes('kkinstagram.com');
-    const downloadUrl = isKK ? instagramUrl.replace(/(www\.)?kkinstagram\.com/, 'instagram.com') : instagramUrl;
+        promises.forEach(p => {
+            Promise.resolve(p).then(res => {
+                completedCount++;
+                if (res && res.length > 0 && !resolved) {
+                    if (res.isRestrictedVideoFallback) {
+                        if (!fallbackRes) {
+                            fallbackRes = res;
+                        }
+                    } else {
+                        resolved = true;
+                        resolve(res);
+                        return;
+                    }
+                }
+                if (completedCount === promises.length && !resolved) {
+                    resolved = true;
+                    resolve(fallbackRes || null);
+                }
+            }).catch(err => {
+                completedCount++;
+                if (completedCount === promises.length && !resolved) {
+                    resolved = true;
+                    resolve(fallbackRes || null);
+                }
+            });
+        });
+    });
+}
 
+async function downloadWithScrapers(downloadUrl) {
+    let mediaUrls = [];
+
+    // A. Try primary scraper (instagram-url-direct)
     try {
-        console.log(`[Instagram] URL detected: ${instagramUrl} (downloading from ${downloadUrl})`);
+        console.log(`[Instagram Interceptor] Trying primary scraper for: ${downloadUrl}`);
         const scraperPromise = instagramGetUrl(downloadUrl);
         const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Scraper timeout (10s)')), 10000)
         );
         const scrapeRes = await Promise.race([scraperPromise, timeoutPromise]);
 
-        let mediaUrls = [];
-        if (scrapeRes && scrapeRes.url_list && Array.isArray(scrapeRes.url_list)) {
-            mediaUrls = scrapeRes.url_list;
-        } else if (scrapeRes && Array.isArray(scrapeRes)) {
-            mediaUrls = scrapeRes;
-        } else if (scrapeRes && typeof scrapeRes === 'object' && scrapeRes.url) {
-            mediaUrls = [scrapeRes.url];
+        if (scrapeRes) {
+            if (scrapeRes.url_list && Array.isArray(scrapeRes.url_list)) {
+                mediaUrls = scrapeRes.url_list.map(item => typeof item === 'object' && item.url ? item.url : item);
+            } else if (Array.isArray(scrapeRes)) {
+                mediaUrls = scrapeRes.map(item => typeof item === 'object' && item.url ? item.url : item);
+            } else if (typeof scrapeRes === 'object' && scrapeRes.url) {
+                mediaUrls = [scrapeRes.url];
+            } else if (typeof scrapeRes === 'string') {
+                mediaUrls = [scrapeRes];
+            }
         }
+    } catch (err) {
+        console.error('[Instagram Interceptor] Primary scraper failed:', err.message);
+    }
 
-        if (mediaUrls.length > 0) {
-            console.log(`[Instagram] Downloading ${mediaUrls.length} media items...`);
-            for (let i = 0; i < mediaUrls.length; i++) {
-                const mUrl = mediaUrls[i];
+    // B. Try fallback scraper (snapinsta) if primary scraper found nothing
+    if (mediaUrls.length === 0) {
+        try {
+            console.log(`[Instagram Interceptor] Trying snapinsta fallback for: ${downloadUrl}`);
+            const snapPromise = snapinsta.getLinks(downloadUrl);
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Snapinsta timeout (10s)')), 10000)
+            );
+            const scrapeRes = await Promise.race([snapPromise, timeoutPromise]);
+
+            if (scrapeRes) {
+                if (Array.isArray(scrapeRes)) {
+                    mediaUrls = scrapeRes.map(item => typeof item === 'object' && item.url ? item.url : item);
+                } else if (typeof scrapeRes === 'object' && scrapeRes.url) {
+                    mediaUrls = [scrapeRes.url];
+                } else if (typeof scrapeRes === 'string') {
+                    mediaUrls = [scrapeRes];
+                }
+            }
+        } catch (snapErr) {
+            console.error('[Instagram Interceptor] Snapinsta fallback failed:', snapErr.message);
+        }
+    }
+
+    // C. Download media from resolved URLs
+    if (mediaUrls.length > 0) {
+        console.log(`[Instagram Interceptor] Downloading ${mediaUrls.length} media items via scrapers...`);
+        const attachments = [];
+        for (let i = 0; i < mediaUrls.length; i++) {
+            const mUrl = mediaUrls[i];
+            if (!mUrl || typeof mUrl !== 'string') continue;
+
+            try {
                 const response = await axios.get(mUrl, {
                     responseType: 'arraybuffer',
                     timeout: 15000,
@@ -111,9 +207,6 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                     }
                 });
                 const buffer = Buffer.from(response.data);
-                if (buffer.length > 10 * 1024 * 1024) {
-                    throw new Error(`File size ${buffer.length} bytes exceeds 10MB limit`);
-                }
                 const contentType = response.headers['content-type'] || '';
                 let ext = 'jpg';
                 if (contentType.includes('video/mp4')) ext = 'mp4';
@@ -123,42 +216,365 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                 else if (mUrl.includes('.mp4')) ext = 'mp4';
 
                 attachments.push(new AttachmentBuilder(buffer, { name: `instagram_media_${i}.${ext}` }));
+            } catch (dlErr) {
+                console.error(`[Instagram Interceptor] Failed to download media item ${i}:`, dlErr.message);
             }
-            downloadSuccess = true;
         }
-    } catch (err) {
-        console.error('[Instagram] Scraping/Download failed:', err.message);
-        downloadSuccess = false;
+        
+        if (attachments.length > 0) {
+            const isReelOrTv = /\/(?:reel|tv)\//i.test(downloadUrl);
+            const hasVideo = attachments.some(att => att.name.endsWith('.mp4'));
+            if (isReelOrTv && !hasVideo) {
+                console.log(`[Instagram Interceptor] Scrapers resolved only images for a Reel/TV video. Marking as restricted fallback.`);
+                attachments.isRestrictedVideoFallback = true;
+            }
+            return attachments;
+        }
     }
+    return null;
+}
 
+async function downloadWithFixer(instagramUrl, domain) {
+    const fixerUrl = instagramUrl.replace(/(www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com/, domain);
+    console.log(`[Instagram Interceptor] Attempting prioritized ${domain} fetch: ${fixerUrl}`);
     try {
-        let replacedText = remadeContent;
-        let suppressedText = remadeContent;
+        const response = await axios.get(fixerUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)'
+            },
+            timeout: 5000 // 5s timeout
+        });
 
-        if (!isKK) {
-            const kkUrl = instagramUrl.replace(/(www\.)?instagram\.com/, 'kkinstagram.com');
-            replacedText = remadeContent.replace(instagramUrl, kkUrl);
-            suppressedText = remadeContent.replace(instagramUrl, `<${kkUrl}>`);
+        if (response.status !== 200) {
+            throw new Error(`${domain} returned status ${response.status}`);
+        }
+
+        const html = response.data;
+        if (html.includes('Post not found') || html.includes('Post not found (404)')) {
+            console.log(`[Instagram Interceptor] ${domain} returned "Post not found" page.`);
+            return null;
+        }
+
+        let mediaUrl = null;
+        let isVideo = false;
+
+        const videoMatch = html.match(/<meta [^>]*property="og:video(?::secure_url|:url)?"[^>]*content="([^"]+)"/) ||
+                           html.match(/<meta [^>]*content="([^"]+)"[^>]*property="og:video(?::secure_url|:url)?"/) ||
+                           html.match(/<meta [^>]*name="twitter:player:stream"[^>]*content="([^"]+)"/) ||
+                           html.match(/<source[^>]+src="([^"]+)"[^>]*type="video\//) ||
+                           html.match(/<video[^>]+src="([^"]+)"/);
+        if (videoMatch) {
+            mediaUrl = videoMatch[1];
+            isVideo = true;
         } else {
-            suppressedText = remadeContent.replace(instagramUrl, `<${instagramUrl}>`);
+            const imageMatch = html.match(/<meta [^>]*property="og:image"[^>]*content="([^"]+)"/) ||
+                               html.match(/<meta [^>]*content="([^"]+)"[^>]*property="og:image"/);
+            if (imageMatch) {
+                mediaUrl = imageMatch[1];
+            }
         }
 
-        if (downloadSuccess && attachments.length > 0) {
-            await sendRepostedMessage(client, message, suppressedText, attachments);
+        const isReelOrTv = /\/(?:reel|tv)\//i.test(instagramUrl);
+        let isRestrictedVideoFallback = false;
+        if (isReelOrTv && !isVideo && mediaUrl) {
+            console.log(`[Instagram Interceptor] ${domain} resolved only an image for a Reel/TV video. Marking as restricted fallback.`);
+            isRestrictedVideoFallback = true;
+        } else if (isReelOrTv && !isVideo && !mediaUrl) {
+            console.log(`[Instagram Interceptor] ${domain} found neither video nor image for this Reel.`);
+        }
+
+        if (!mediaUrl) {
+            console.log(`[Instagram Interceptor] No og:video or og:image found in ${domain} response.`);
+            return null;
+        }
+
+        if (mediaUrl.startsWith('/')) {
+            mediaUrl = `https://${domain}${mediaUrl}`;
+        }
+
+        const cleanMediaUrl = mediaUrl.replace(/&amp;/g, '&');
+        console.log(`[Instagram Interceptor] ${domain} resolved media URL: ${cleanMediaUrl}`);
+
+        const mediaRes = await axios.get(cleanMediaUrl, {
+            responseType: 'arraybuffer',
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+        });
+
+        const buffer = Buffer.from(mediaRes.data);
+
+        const contentType = mediaRes.headers['content-type'] || '';
+        let ext = 'jpg';
+        if (isVideo) {
+            ext = 'mp4';
         } else {
-            await sendRepostedMessage(client, message, replacedText, []);
+            if (contentType.includes('image/png')) ext = 'png';
+            else if (contentType.includes('image/gif')) ext = 'gif';
+            else if (contentType.includes('image/jpeg')) ext = 'jpg';
         }
 
-        if (message.guild) {
-            await message.delete().catch(delErr => {
-                console.error('[Instagram] Failed to delete original message:', delErr.message);
-            });
+        const attachments = [new AttachmentBuilder(buffer, { name: `instagram_media_0.${ext}` })];
+        if (isRestrictedVideoFallback) {
+            attachments.isRestrictedVideoFallback = true;
         }
-    } catch (sendErr) {
-        console.error('[Instagram] Failed to send reposted message:', sendErr.message);
-    } finally {
-        clearInterval(typingInterval);
+        return attachments;
+    } catch (err) {
+        console.error(`[Instagram Interceptor] ${domain} downloader failed:`, err.message);
+        return null;
     }
+}
+
+async function handleInstagramMessage(client, message, instagramUrl, remadeContent) {
+    // Instantly create the "working" message and delete the original message
+    const placeholder = await sendWorkingPlaceholder(client, message, instagramUrl);
+    if (message.guild) {
+        await message.delete().catch(delErr => {
+            console.error('[Instagram Interceptor] Failed to delete original message:', delErr.message);
+        });
+    }
+
+    // Start typing indicator
+    await message.channel.sendTyping().catch(() => { });
+    const typingInterval = setInterval(() => {
+        message.channel.sendTyping().catch(() => { });
+    }, RAG_TYPING_INTERVAL);
+
+    mediaQueue.enqueue(async () => {
+        try {
+            // Determine the file size limit for this guild
+            const fileLimit = getGuildFileLimit(message.guild);
+            console.log(`[Instagram Interceptor] Guild file limit: ${(fileLimit / 1024 / 1024).toFixed(0)}MB`);
+
+            let downloadSuccess = false;
+            let attachments = [];
+            let chosenFixerDomain = 'kkinstagram.com';
+            let lastRespondingDomain = null;
+            let fallbackAttachments = null;
+
+            const isFixer = /(?:dd|kk|ee|uu|rx)instagram\.com/.test(instagramUrl);
+            const downloadUrl = isFixer ? instagramUrl.replace(/(www\.)?(dd|kk|ee|uu|rx)instagram\.com/, 'instagram.com') : instagramUrl;
+            const isReelOrTv = /\/(?:reel|tv)\//i.test(downloadUrl);
+
+            const runFixers = async () => {
+                const domainsToTry = ['eeinstagram.com', 'kkinstagram.com', 'uuinstagram.com'];
+                for (const domain of domainsToTry) {
+                    try {
+                        await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: ${domain} fast fetch`);
+                        const fixerAttachments = await downloadWithFixer(downloadUrl, domain);
+                        if (fixerAttachments && fixerAttachments.length > 0) {
+                            lastRespondingDomain = domain;
+                            if (fixerAttachments.isRestrictedVideoFallback) {
+                                console.log(`[Instagram Interceptor] ${domain} resolved only restricted fallback for Reel/TV.`);
+                                if (!fallbackAttachments) {
+                                    fallbackAttachments = fixerAttachments;
+                                    chosenFixerDomain = domain;
+                                }
+                            } else {
+                                attachments = fixerAttachments;
+                                chosenFixerDomain = domain;
+                                downloadSuccess = true;
+                                console.log(`[Instagram Interceptor] ${domain} successfully resolved and downloaded ${attachments.length} items`);
+                                break;
+                            }
+                        }
+                    } catch (fixerErr) {
+                        console.error(`[Instagram Interceptor] ${domain} prioritized downloader failed:`, fixerErr.message);
+                    }
+                }
+            };
+
+            const runParallelScrapers = async () => {
+                console.log(`[Instagram Interceptor] Trying parallel download options...`);
+                await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: trying parallel scraper`);
+                const timeoutPromise = new Promise((resolve) => {
+                    setTimeout(() => {
+                        console.log(`[Instagram Interceptor] Parallel scrapers timed out after 35s`);
+                        resolve(null);
+                    }, 35000);
+                });
+
+                const parallelResults = await Promise.race([
+                    raceToBestSuccess([
+                        downloadWithYtDlp(downloadUrl),
+                        downloadWithScrapers(downloadUrl)
+                    ]),
+                    timeoutPromise
+                ]);
+
+                if (parallelResults && parallelResults.length > 0) {
+                    if (parallelResults.isRestrictedVideoFallback) {
+                        console.log(`[Instagram Interceptor] Parallel scrapers resolved only restricted fallback.`);
+                        if (!fallbackAttachments) {
+                            fallbackAttachments = parallelResults;
+                        }
+                    } else {
+                        attachments = parallelResults;
+                        downloadSuccess = true;
+                        console.log(`[Instagram Interceptor] Successfully downloaded ${attachments.length} items using parallel strategy`);
+                    }
+                }
+            };
+
+            try {
+                console.log(`[Instagram Interceptor] Instagram URL detected: ${instagramUrl} (downloading from ${downloadUrl})`);
+
+                if (isReelOrTv) {
+                    await runFixers();
+                    if (!downloadSuccess) {
+                        console.log(`[Instagram Interceptor] Fixers failed or returned restricted fallback. Trying parallel scrapers...`);
+                        await runParallelScrapers();
+                    }
+                } else {
+                    await runParallelScrapers();
+                    if (!downloadSuccess) {
+                        console.log(`[Instagram Interceptor] Parallel scrapers failed. Falling back to fixers...`);
+                        await runFixers();
+                    }
+                }
+
+                if (!downloadSuccess && fallbackAttachments) {
+                    attachments = fallbackAttachments;
+                    downloadSuccess = true;
+                    console.log(`[Instagram Interceptor] Using restricted fallback attachments.`);
+                }
+            } catch (err) {
+                console.error('[Instagram Interceptor] Scraping/Download failed:', err.message);
+                downloadSuccess = false;
+            }
+
+            // --- Post-download: compress oversized videos with ffmpeg ---
+            const effectiveFileLimit = Math.floor(fileLimit * 0.97);
+            if (downloadSuccess && attachments.length > 0) {
+                const needsCompression = attachments.some(att => {
+                    const buf = att.attachment;
+                    return buf && buf.length > effectiveFileLimit;
+                });
+
+                if (needsCompression) {
+                    await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: compressing media (ffmpeg)`);
+                    const compressedAttachments = [];
+                    for (let i = 0; i < attachments.length; i++) {
+                        const att = attachments[i];
+                        const buf = att.attachment;
+                        const name = att.name || `instagram_media_${i}`;
+                        const isVideo = name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mov');
+
+                        if (buf && buf.length > effectiveFileLimit && isVideo) {
+                            console.log(`[Instagram Interceptor] Attachment ${i} (${name}) is ${(buf.length / 1024 / 1024).toFixed(1)}MB, exceeds ${(effectiveFileLimit / 1024 / 1024).toFixed(1)}MB effective limit. Compressing...`);
+                            const ext = path.extname(name).substring(1) || 'mp4';
+                            
+                            let lastUpdate = 0;
+                            const onProgress = (info) => {
+                                const now = Date.now();
+                                if (now - lastUpdate >= 5000) {
+                                    lastUpdate = now;
+                                    const methodStr = info.stage === 'network' ? 'NAS iGPU' : 'local CPU';
+                                    const percentStr = info.percent !== undefined ? ` - ${info.percent}%` : '';
+                                    updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: compressing media (${methodStr})${percentStr}`).catch(()=>{});
+                                }
+                            };
+
+                            const result = await compressVideoToFit(buf, ext, effectiveFileLimit, FFMPEG_TIMEOUT, onProgress);
+                            if (result) {
+                                compressedAttachments.push(new AttachmentBuilder(result.buffer, { name: `instagram_media_${i}.${result.ext}` }));
+                            } else {
+                                console.log(`[Instagram Interceptor] Compression failed for attachment ${i}. Dropping oversized file.`);
+                            }
+                        } else {
+                            compressedAttachments.push(att);
+                        }
+                    }
+                    attachments = compressedAttachments;
+                    if (attachments.length === 0) {
+                        downloadSuccess = false;
+                        console.log('[Instagram Interceptor] All attachments were too large even after compression.');
+                    }
+                }
+            }
+
+            try {
+                // Parse numbers from message content (excluding the Instagram URL)
+                const urlIndex = remadeContent.indexOf(instagramUrl);
+                let beforeUrl = remadeContent.substring(0, urlIndex);
+                let afterUrl = remadeContent.substring(urlIndex + instagramUrl.length);
+
+                const parseMatches = (matches) => {
+                    const result = [];
+                    for (const m of matches) {
+                        const str = m[0];
+                        const val = Math.abs(parseInt(str, 10));
+                        const isNegative = str.startsWith('-');
+                        result.push({ val, isNegative });
+                    }
+                    return result;
+                };
+
+                const beforeNumbers = parseMatches([...beforeUrl.matchAll(/(?:^|(?<=[\s,]))-?\d+\b/g)]);
+                const afterNumbers = parseMatches([...afterUrl.matchAll(/(?:^|(?<=[\s,]))-?\d+\b/g)]);
+                const numbers = [...beforeNumbers, ...afterNumbers];
+
+                let cleanedRemadeContent = remadeContent;
+                if (downloadSuccess && numbers.length > 0) {
+                    const positiveIndices = numbers.filter(n => !n.isNegative).map(n => n.val);
+                    const negativeNumbers = numbers.filter(n => n.isNegative);
+
+                    if (positiveIndices.length > 0) {
+                        attachments = attachments.filter((_, idx) => positiveIndices.includes(idx + 1));
+                    }
+
+                    if (negativeNumbers.length === 1) {
+                        const count = negativeNumbers[0].val;
+                        if (count < attachments.length) {
+                            attachments = attachments.slice(0, attachments.length - count);
+                        } else {
+                            attachments = [];
+                        }
+                    } else if (negativeNumbers.length > 1) {
+                        const excludeIndices = new Set(negativeNumbers.map(n => n.val));
+                        attachments = attachments.filter((_, idx) => !excludeIndices.has(idx + 1));
+                    }
+
+                    const cleanSection = (text) => {
+                        return text
+                            .replace(/(?:^|(?<=[\s,]))-?\d+\b/g, '')
+                            .replace(/[,\s]+/g, ' ')
+                            .trim();
+                    };
+                    beforeUrl = cleanSection(beforeUrl);
+                    afterUrl = cleanSection(afterUrl);
+                    cleanedRemadeContent = (beforeUrl ? beforeUrl + ' ' : '') + instagramUrl + (afterUrl ? ' ' + afterUrl : '');
+                }
+
+                // Generate standard/original link and modified fallback link
+                const standardUrl = instagramUrl.replace(/(www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com/i, 'instagram.com');
+                const fallbackDomain = lastRespondingDomain || 'ddinstagram.com';
+                const fallbackUrl = instagramUrl.replace(/(www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com/i, fallbackDomain);
+                const displayUrl = standardUrl.replace(/^https?:\/\//i, '');
+                const fallbackContent = cleanedRemadeContent.replace(instagramUrl, `[${displayUrl}](${fallbackUrl})`);
+
+                if (downloadSuccess) {
+                    const successText = cleanedRemadeContent.replace(instagramUrl, `<${standardUrl}>`);
+                    if (attachments.isRestrictedVideoFallback) {
+                        const privateSuppressedText = cleanedRemadeContent.replace(instagramUrl, `[PRIVATE VIDEO, ACCESS ONLY VIA LINK]\n<${standardUrl}>`);
+                        await updateWorkingPlaceholder(placeholder, privateSuppressedText, attachments, true, effectiveFileLimit, fallbackContent);
+                    } else {
+                        await updateWorkingPlaceholder(placeholder, successText, attachments, true, effectiveFileLimit, fallbackContent);
+                    }
+                } else {
+                    console.log(`[Instagram Interceptor] All downloads failed. Posting markdown hyperlink for Discord embed: [${displayUrl}](${fallbackUrl})`);
+                    await updateWorkingPlaceholder(placeholder, fallbackContent, [], false, 0, fallbackContent);
+                }
+            } catch (sendErr) {
+                console.error('[Instagram Interceptor] Failed to send reposted message:', sendErr.message);
+            }
+        } catch (outerErr) {
+            console.error('[Instagram Interceptor] Critical error in handler:', outerErr);
+        } finally {
+            clearInterval(typingInterval);
+        }
+    });
 }
 
 module.exports = {

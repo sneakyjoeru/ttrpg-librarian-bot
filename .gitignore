@@ -2,3 +2,14 @@ secrets_discord.php
 node_modules/
 .env
 *.log
+cookies.txt
+instagram-cookies.txt
+id_rsa
+id_ed25519
+id_ed25519_bot
+rebuild.lock
+watch.pid
+git-info.json
+message_counts.json
+scratch/
+scratch

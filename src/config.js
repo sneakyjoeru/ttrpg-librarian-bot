@@ -36,6 +36,10 @@ const RAG_SEARCH_TIMEOUT = 5000;                      // Timeout for meta-search
 const RAG_OLLAMA_TIMEOUT = 120000;                    // Timeout for local Ollama server generation (ms)
 const RAG_TYPING_INTERVAL = 10000;                     // Typing status keep-alive interval (ms)
 
+// Media compression settings
+const FFMPEG_TIMEOUT = 180000; // 180s timeout for ffmpeg compression on ARM
+const DISCORD_FILE_LIMIT_DEFAULT = 10 * 1024 * 1024; // 10MB default (no boosts)
+
 const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
 const FALLBACK_ROASTS = [
@@ -158,5 +162,7 @@ module.exports = {
     RAG_OLLAMA_TIMEOUT,
     RAG_TYPING_INTERVAL,
     NUMBER_EMOJIS,
-    FALLBACK_ROASTS
+    FALLBACK_ROASTS,
+    FFMPEG_TIMEOUT,
+    DISCORD_FILE_LIMIT_DEFAULT
 };

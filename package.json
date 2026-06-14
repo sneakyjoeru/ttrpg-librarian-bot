@@ -10,6 +10,7 @@
     "axios": "^1.6.8",
     "discord.js": "^14.14.1",
     "instagram-url-direct": "^2.0.6",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "snapinsta": "^1.0.5"
   }
 }

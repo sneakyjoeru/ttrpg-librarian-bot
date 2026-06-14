@@ -5,6 +5,8 @@ Librarian Bot is an advanced Discord bot designed to automate and manage tableto
 ## Features
 
 - **Campaign Management**: Automated creation of active text channels with synced permissions, automatic role creation, and automated sync on channel renames.
+- **Instagram Media Interceptor**: Automatically intercepts Instagram posts, stories, and Reels. It retrieves images and videos using a multi-layered downloading system: proxy fixers (`eeinstagram`, `kkinstagram`), parallel scrapers (`instagram-url-direct`, `snapinsta`), and `yt-dlp` using authentication cookies. It also supports slide-selection modifiers (e.g. `1,2` or `-1` to filter specific slides).
+- **iGPU & Local CPU Media Compressor**: Automatically compresses oversized video attachments to fit Discord's file size limits. Attempts remote network transcoding using VAAPI hardware acceleration on a local NAS iGPU (if `SHARE_PASS` or SSH keys are set), falling back to local CPU-based compression (`libx264 ultrafast`) on the host Orange Pi hardware.
 - **System Message Updates**: Dynamically pulls the last 5 git updates (commit logs) and displays them as clickable GitHub links in the global system help message on startup to keep users informed of the latest bot developments.
 - **Natural 1 Roasting**: Integrates with local Ollama LLM (`qwen2.5:7b` by default) to generate snarky roasts when players roll a critical fail (Nat 1).
 - **RAG QA Mention Pipeline**: Answer player questions using web search context from local SearXNG instances and recent channel chat history via local LLM. Include `"no bs"` in mentions for short, direct responses.
