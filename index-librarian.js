@@ -22,9 +22,10 @@ const { cleanOrphanedTempFiles, recoverOrphanedPlaceholders } = require('./src/u
 const { IN_PROGRESS_REGEX, removeInProgressStatus } = require('./src/utils/webhook');
 const handleInteraction = require('./src/handlers/interactions');
 const handleMessageCreate = require('./src/handlers/messageCreate');
-const handleChannelUpdate = require('./src/handlers/channelUpdate');
-const handleChannelDelete = require('./src/handlers/channelDelete');
+const { handleChannelUpdate } = require('./src/handlers/channelUpdate');
+const { handleChannelDelete } = require('./src/handlers/channelDelete');
 const { handleReactionAdd, handleReactionRemove } = require('./src/handlers/reactions');
+const { startTwitterScanner } = require('./src/handlers/twitterHandler');
 
 const client = new Client({
     intents: [
@@ -140,6 +141,14 @@ client.once(Events.ClientReady, async () => {
     recoverOrphanedPlaceholders(client).catch(err => {
         console.error('[Startup Recovery] Recovery task failed:', err.message);
     });
+
+    // --- TWITTER SCANNER ---
+    // Background cron that polls the target Twitter user via Nitter RSS /
+    // SearXNG every 10 minutes and posts fresh tweets (with media) to the
+    // configured channel. Transcoding flows through the same NAS iGPU VAAPI
+    // path as Facebook/Instagram because it shares the mediaCompressor
+    // pipeline.
+    startTwitterScanner(client);
 
     // --- POST-RESTART MESSAGE UPDATE ---
     const restartToken = process.env.RESTART_TOKEN;

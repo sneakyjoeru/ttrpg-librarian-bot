@@ -51,6 +51,12 @@ const ADMIN_USER_ID = SNEAKYJOE_USER_ID;
 // Media compression settings
 const FFMPEG_TIMEOUT = 180000; // 180s timeout for ffmpeg compression on ARM
 const DISCORD_FILE_LIMIT_DEFAULT = 10 * 1024 * 1024; // 10MB default (no boosts)
+// Twitter-specific limits: bumped above guild tier because videos can be huge even at low bitrates.
+const DISCORD_FILE_LIMIT_TWITTER = 25 * 1024 * 1024; // 25MB default cap for Twitter media
+const DISCORD_FILE_LIMIT_TWITTER_HARD = 150 * 1024 * 1024; // 150MB hard ceiling before we drop the file outright
+
+// Persistent cache of seen tweet IDs (scanner dedupe state). Lives in the working directory.
+const TWEETS_CACHE_PATH = './tweets_cache.json';
 
 const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
@@ -181,5 +187,8 @@ module.exports = {
     NUMBER_EMOJIS,
     FALLBACK_ROASTS,
     FFMPEG_TIMEOUT,
-    DISCORD_FILE_LIMIT_DEFAULT
+    DISCORD_FILE_LIMIT_DEFAULT,
+    DISCORD_FILE_LIMIT_TWITTER,
+    DISCORD_FILE_LIMIT_TWITTER_HARD,
+    TWEETS_CACHE_PATH
 };

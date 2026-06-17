@@ -2,6 +2,7 @@ const { PermissionFlagsBits } = require('discord.js');
 const { getLibrarianData } = require('../utils/helpers');
 const { handleInstagramMessage } = require('./instagramHandler');
 const { handleFacebookMessage } = require('./facebookHandler');
+const { handleTwitterMessage } = require('./twitterHandler');
 const { handleRagQuery } = require('../services/rag');
 const {
     SERVER_ID,
@@ -32,6 +33,20 @@ async function handleMessageCreate(client, message) {
 
         const remadeNormalized = message.content.replace(originalMatch, facebookUrl);
         await handleFacebookMessage(client, message, facebookUrl, remadeNormalized);
+        return;
+    }
+
+    // --- Twitter / X Link Interceptor ---
+    // Twitter URLs always contain /<handle>/status/<numeric-id> which is a
+    // very specific shape, so this regex is safe to put after the Facebook
+    // interceptor without false positives.
+    const twitterRegex = /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[a-zA-Z0-9_]+\/status\/\d+[^\s]*/i;
+    const twitterMatch = message.content.match(twitterRegex);
+    if (twitterMatch) {
+        let twitterUrl = twitterMatch[0];
+        twitterUrl = twitterUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
+        twitterUrl = twitterUrl.replace(/[.,:;!?]+$/, '');
+        await handleTwitterMessage(client, message, twitterUrl, message.content);
         return;
     }
 
