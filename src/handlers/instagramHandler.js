@@ -5,11 +5,15 @@ const axios = require('axios');
 const { instagramGetUrl } = require('instagram-url-direct');
 const snapinsta = require('snapinsta');
 const { AttachmentBuilder } = require('discord.js');
-const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT } = require('../config');
+const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT, FILE_SIZE_SAFETY_FACTOR, PROGRESS_UPDATE_INTERVAL_MS, RAG_OLLAMA_TIMEOUT_SHORT } = require('../config');
 const { sendRepostedMessage, sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage } = require('../utils/webhook');
 const { runCommand, findYtDlpPath } = require('../utils/shell');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
 const mediaQueue = require('../utils/mediaQueue');
+const { trackMessage } = require('../utils/messageTracker');
+const { addPendingTask, removePendingTask, updatePendingTask } = require('../utils/taskPersistence');
+const { detectFileType } = require('../utils/fileTypeDetector');
+const { startJob } = require('../utils/jobLog');
 
 async function downloadWithYtDlp(url) {
     const ytDlp = findYtDlpPath();
@@ -201,19 +205,25 @@ async function downloadWithScrapers(downloadUrl) {
             try {
                 const response = await axios.get(mUrl, {
                     responseType: 'arraybuffer',
-                    timeout: 15000,
+                    timeout: RAG_OLLAMA_TIMEOUT_SHORT,
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                     }
                 });
                 const buffer = Buffer.from(response.data);
+
+                // Use file type detection to determine the actual file type
+                let ext = detectFileType(buffer) || 'jpg';
                 const contentType = response.headers['content-type'] || '';
-                let ext = 'jpg';
+
+                // Override with content-type if available and more specific
                 if (contentType.includes('video/mp4')) ext = 'mp4';
                 else if (contentType.includes('image/png')) ext = 'png';
                 else if (contentType.includes('image/gif')) ext = 'gif';
                 else if (contentType.includes('video/')) ext = 'mp4';
                 else if (mUrl.includes('.mp4')) ext = 'mp4';
+                else if (mUrl.includes('.mov')) ext = 'mov';
+                else if (mUrl.includes('.webm')) ext = 'webm';
 
                 attachments.push(new AttachmentBuilder(buffer, { name: `instagram_media_${i}.${ext}` }));
             } catch (dlErr) {
@@ -305,14 +315,32 @@ async function downloadWithFixer(instagramUrl, domain) {
 
         const buffer = Buffer.from(mediaRes.data);
 
+        // Use file type detection to determine the actual file type
+        let ext = detectFileType(buffer) || 'jpg';
         const contentType = mediaRes.headers['content-type'] || '';
-        let ext = 'jpg';
+        const detectedType = detectFileType(buffer);
+        const isActuallyImage = detectedType && ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(detectedType);
+        const isActuallyVideo = detectedType && ['mp4', 'webm', 'mov'].includes(detectedType);
+
+        // Override with content-type if available and more specific
         if (isVideo) {
-            ext = 'mp4';
+            if (contentType.includes('video/mp4')) ext = 'mp4';
+            else if (contentType.includes('video/webm')) ext = 'webm';
+            else if (contentType.includes('video/quicktime')) ext = 'mov';
+            else ext = 'mp4'; // Default to mp4 for videos
         } else {
             if (contentType.includes('image/png')) ext = 'png';
             else if (contentType.includes('image/gif')) ext = 'gif';
             else if (contentType.includes('image/jpeg')) ext = 'jpg';
+            else if (contentType.includes('image/webp')) ext = 'webp';
+        }
+
+        // Sanity check: if the fixer claimed this was a video for a Reel/TV, but the bytes are an image,
+        // treat it as a restricted fallback instead of a successful video download.
+        if (isReelOrTv && isVideo && isActuallyImage) {
+            console.warn(`[Instagram Interceptor] ${domain} claimed video for Reel/TV but returned ${detectedType}. Treating as restricted fallback.`);
+            isRestrictedVideoFallback = true;
+            ext = detectedType || 'jpg';
         }
 
         const attachments = [new AttachmentBuilder(buffer, { name: `instagram_media_0.${ext}` })];
@@ -327,12 +355,28 @@ async function downloadWithFixer(instagramUrl, domain) {
 }
 
 async function handleInstagramMessage(client, message, instagramUrl, remadeContent) {
+    const job = startJob(message, 'handleInstagramMessage');
+
     // Instantly create the "working" message and delete the original message
     const placeholder = await sendWorkingPlaceholder(client, message, instagramUrl);
+
+    const taskId = `insta_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    addPendingTask({
+        id: taskId,
+        type: 'instagram',
+        channelId: message.channel.id,
+        originalMessageId: message.id,
+        originalUrl: instagramUrl,
+        placeholderMessageId: placeholder.sentMsg ? placeholder.sentMsg.id : null,
+        originalDeleted: false,
+        startedAt: Date.now()
+    });
+
     if (message.guild) {
         await message.delete().catch(delErr => {
             console.error('[Instagram Interceptor] Failed to delete original message:', delErr.message);
         });
+        updatePendingTask(taskId, { originalDeleted: true });
     }
 
     // Start typing indicator
@@ -445,7 +489,8 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
             }
 
             // --- Post-download: compress oversized videos with ffmpeg ---
-            const effectiveFileLimit = Math.floor(fileLimit * 0.97);
+            // Use 97% of file limit as effective cap to account for Discord multipart overhead
+            const effectiveFileLimit = Math.floor(fileLimit * FILE_SIZE_SAFETY_FACTOR);
             if (downloadSuccess && attachments.length > 0) {
                 const needsCompression = attachments.some(att => {
                     const buf = att.attachment;
@@ -464,11 +509,11 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                         if (buf && buf.length > effectiveFileLimit && isVideo) {
                             console.log(`[Instagram Interceptor] Attachment ${i} (${name}) is ${(buf.length / 1024 / 1024).toFixed(1)}MB, exceeds ${(effectiveFileLimit / 1024 / 1024).toFixed(1)}MB effective limit. Compressing...`);
                             const ext = path.extname(name).substring(1) || 'mp4';
-                            
+
                             let lastUpdate = 0;
                             const onProgress = (info) => {
                                 const now = Date.now();
-                                if (now - lastUpdate >= 5000) {
+                                if (now - lastUpdate >= PROGRESS_UPDATE_INTERVAL_MS) {
                                     lastUpdate = now;
                                     const methodStr = info.stage === 'network' ? 'NAS iGPU' : 'local CPU';
                                     const percentStr = info.percent !== undefined ? ` - ${info.percent}%` : '';
@@ -562,18 +607,25 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                     } else {
                         await updateWorkingPlaceholder(placeholder, successText, attachments, true, effectiveFileLimit, fallbackContent);
                     }
+                    job.success({ stage: 'instagram_repost' });
                 } else {
                     console.log(`[Instagram Interceptor] All downloads failed. Posting markdown hyperlink for Discord embed: [${displayUrl}](${fallbackUrl})`);
                     await updateWorkingPlaceholder(placeholder, fallbackContent, [], false, 0, fallbackContent);
+                    job.success({ stage: 'instagram_link_fallback', reason: 'all_downloads_failed' });
                 }
             } catch (sendErr) {
                 console.error('[Instagram Interceptor] Failed to send reposted message:', sendErr.message);
+                job.failure(sendErr.message, { stage: 'send' });
             }
         } catch (outerErr) {
             console.error('[Instagram Interceptor] Critical error in handler:', outerErr);
+            job.failure(outerErr.message, { stage: 'critical' });
         } finally {
             clearInterval(typingInterval);
+            removePendingTask(taskId);
         }
+    }).catch(err => {
+        job.failure(err.message, { stage: 'media_queue' });
     });
 }
 

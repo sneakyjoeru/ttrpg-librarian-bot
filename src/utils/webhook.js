@@ -1,5 +1,45 @@
+// === Webhook Utility Module ===
+// This module handles all message sending, editing, and status tracking for the bot.
+//
+// Key design decisions:
+// 1. Uses webhooks (when available) to make bot messages appear as the original user
+//    This is important for the "impersonation" feature - the bot replies look like they
+//    came from the person who triggered the command.
+// 2. Tracks all sent messages so they can be deleted later with /delete
+// 3. Splits large attachments into Discord-compliant chunks (10 files max per message)
+//
+// In-progress status system (⏳):
+// - All working placeholder messages end with ' ⏳' to indicate work in progress
+// - This status is automatically removed from final messages
+// - On bot restart, messages from the last 2 hours with this status are cleaned up:
+//   * Messages with content: status is removed (message is finalized)
+//   * Empty messages with just status: message is deleted
+// This prevents "stuck" messages from cluttering channels after crashes/restarts.
 const { trackMessage } = require('./messageTracker');
 const { chunkAttachmentsBySize } = require('./mediaCompressor');
+
+// Status indicator for messages that are in progress and could have been abandoned
+// This is used to mark working placeholders and is removed from final messages
+// The space + emoji format makes it easy to detect and strip
+const IN_PROGRESS_STATUS = ' ⏳';
+const IN_PROGRESS_REGEX = / ⏳$/;
+
+// Add status to content if not already present
+// Why: Centralized logic ensures consistency. Used by sendWorkingPlaceholder and updatePlaceholderStage.
+function addInProgressStatus(content) {
+    if (!content) return IN_PROGRESS_STATUS.trim() + ' ';
+    const trimmed = content.trimEnd();
+    if (IN_PROGRESS_REGEX.test(trimmed)) return content;
+    return trimmed + IN_PROGRESS_STATUS;
+}
+
+// Remove status from content (used when finalizing messages)
+// Why: Final messages should never show the in-progress indicator.
+// This is called in updateWorkingPlaceholder before sending the final content.
+function removeInProgressStatus(content) {
+    if (!content) return content;
+    return content.replace(IN_PROGRESS_REGEX, '').trimEnd();
+}
 
 async function sendRepostedMessage(client, message, content, attachments, suppressEmbeds = false, fileLimitBytes = 0, fallbackContent = null) {
     const DISCORD_MAX_ATTACHMENTS = 10;
@@ -120,7 +160,7 @@ async function sendWorkingPlaceholder(client, message, originalUrl = '') {
     let isWebhook = false;
     let webhookClient = null;
 
-    const contentText = `working... ${originalUrl ? `<${originalUrl}>` : ''}`;
+    const contentText = `⏳ working... ${originalUrl ? `<${originalUrl}>` : ''}` + IN_PROGRESS_STATUS;
 
     if (message.guild) {
         try {
@@ -184,9 +224,12 @@ async function updatePlaceholderStage(placeholder, content, suppressEmbeds = tru
     if (!sentMsg) return;
 
     try {
+        // Preserve the in-progress status indicator on stage updates
+        const contentWithStatus = addInProgressStatus(content || '');
+
         if (isWebhook && webhookClient) {
             const editOptions = {
-                content: content || ''
+                content: contentWithStatus || ''
             };
             if (suppressEmbeds) editOptions.flags = 4; // SuppressEmbeds
             const threadId = placeholder.originalMessage.channel.isThread() ? placeholder.originalMessage.channel.id : undefined;
@@ -196,7 +239,7 @@ async function updatePlaceholderStage(placeholder, content, suppressEmbeds = tru
         } else {
             const displayName = placeholder.originalMessage.member ? placeholder.originalMessage.member.displayName : placeholder.originalMessage.author.username;
             const prefix = `**${displayName}**: `;
-            const cleanContent = content ? `${prefix}${content}` : prefix;
+            const cleanContent = contentWithStatus ? `${prefix}${contentWithStatus}` : prefix + IN_PROGRESS_STATUS.trim();
 
             const editOptions = {
                 content: cleanContent.substring(0, 2000)
@@ -215,6 +258,10 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
     const { sentMsg, isWebhook, webhookClient } = placeholder;
     if (!sentMsg) return;
 
+    // Remove the in-progress status indicator from final content
+    const cleanFinalContent = removeInProgressStatus(finalContent);
+    const cleanFallbackContent = fallbackContent ? removeInProgressStatus(fallbackContent) : null;
+
     if (!suppressEmbeds) {
         try {
             if (isWebhook && webhookClient) {
@@ -230,11 +277,11 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
         await sendRepostedMessage(
             placeholder.originalMessage.client,
             placeholder.originalMessage,
-            finalContent,
+            cleanFinalContent,
             attachments,
             false,
             fileLimitBytes,
-            fallbackContent
+            cleanFallbackContent
         );
         return;
     }
@@ -264,7 +311,7 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
     try {
         if (isWebhook && webhookClient) {
             const editOptions = {
-                content: finalContent || '',
+                content: cleanFinalContent || '',
                 files: fileChunks[0]
             };
             if (suppressEmbeds) {
@@ -294,18 +341,18 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
                 if (err.code === 40005) {
                     console.log('[Webhook] File too large for webhook. Falling back to bot message.');
                     await webhookClient.deleteMessage(sentMsg.id, threadId).catch(() => {});
-                    
+
                     const displayName = placeholder.originalMessage.member ? placeholder.originalMessage.member.displayName : placeholder.originalMessage.author.username;
                     const prefix = `**${displayName}**: `;
-                    const cleanContent = finalContent ? `${prefix}${finalContent}` : prefix;
-                    
+                    const cleanContent = cleanFinalContent ? `${prefix}${cleanFinalContent}` : prefix;
+
                     for (let i = 0; i < fileChunks.length; i++) {
                         const sendOptions = {
                             content: i === 0 ? cleanContent.substring(0, 2000) : '',
                             files: fileChunks[i]
                         };
                         if (suppressEmbeds) sendOptions.flags = 4;
-                        
+
                         try {
                             await placeholder.originalMessage.channel.send(sendOptions);
                         } catch (botErr) {
@@ -314,8 +361,8 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
                                 sendOptions.files = [];
                                 sendOptions.flags = 0;
                                 if (i === 0) {
-                                    if (fallbackContent) {
-                                        sendOptions.content = `${prefix}${fallbackContent}`.substring(0, 2000);
+                                    if (cleanFallbackContent) {
+                                        sendOptions.content = `${prefix}${cleanFallbackContent}`.substring(0, 2000);
                                     } else {
                                         sendOptions.content = sendOptions.content.replace(/<(https?:\/\/[^>]+)>/g, '$1');
                                     }
@@ -334,7 +381,7 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
         } else {
             const displayName = placeholder.originalMessage.member ? placeholder.originalMessage.member.displayName : placeholder.originalMessage.author.username;
             const prefix = `**${displayName}**: `;
-            const cleanContent = finalContent ? `${prefix}${finalContent}` : prefix;
+            const cleanContent = cleanFinalContent ? `${prefix}${cleanFinalContent}` : prefix;
 
             const editOptions = {
                 content: cleanContent.substring(0, 2000),
@@ -356,7 +403,7 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
                         files: fileChunks[i]
                     };
                     if (suppressEmbeds) sendOptions.flags = 4;
-                    
+
                     try {
                         await placeholder.originalMessage.channel.send(sendOptions);
                     } catch (botErr) {
@@ -376,8 +423,8 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
                     editOptions.files = [];
                     editOptions.flags = 0;
                     if (editOptions.content) {
-                        if (fallbackContent) {
-                            editOptions.content = `${prefix}${fallbackContent}`.substring(0, 2000);
+                        if (cleanFallbackContent) {
+                            editOptions.content = `${prefix}${cleanFallbackContent}`.substring(0, 2000);
                         } else {
                             editOptions.content = editOptions.content.replace(/<(https?:\/\/[^>]+)>/g, '$1');
                         }
@@ -399,5 +446,9 @@ module.exports = {
     sendWorkingPlaceholder,
     updateWorkingPlaceholder,
     updatePlaceholderStage,
-    chunkAttachmentsBySize
+    chunkAttachmentsBySize,
+    addInProgressStatus,
+    removeInProgressStatus,
+    IN_PROGRESS_STATUS,
+    IN_PROGRESS_REGEX
 };

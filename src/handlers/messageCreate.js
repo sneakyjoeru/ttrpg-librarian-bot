@@ -1,6 +1,7 @@
 const { PermissionFlagsBits } = require('discord.js');
 const { getLibrarianData } = require('../utils/helpers');
-const { handleInstagramMessage } = require('../services/instagram');
+const { handleInstagramMessage } = require('./instagramHandler');
+const { handleFacebookMessage } = require('./facebookHandler');
 const { handleRagQuery } = require('../services/rag');
 const {
     SERVER_ID,
@@ -13,6 +14,26 @@ const {
 
 async function handleMessageCreate(client, message) {
     if (message.guild?.id !== SERVER_ID || message.author.bot) return;
+
+    // --- Facebook Link Interceptor ---
+    // Run BEFORE Instagram so a stray `fb.com` style URL inside an Instagram
+    // message can't trip the IG regex (it can't, but order keeps things sane).
+    const facebookRegex = /(?:https?:\/\/)?(?:www\.|m\.)?(?:facebook\.com|fb\.watch)\/[^\s]+/i;
+    const fbMatch = message.content.match(facebookRegex);
+    if (fbMatch) {
+        const originalMatch = fbMatch[0];
+        let facebookUrl = originalMatch;
+        facebookUrl = facebookUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
+        facebookUrl = facebookUrl.replace(/[.,:;!?]+$/, '');
+
+        if (!/^https?:\/\//i.test(facebookUrl)) {
+            facebookUrl = 'https://' + facebookUrl;
+        }
+
+        const remadeNormalized = message.content.replace(originalMatch, facebookUrl);
+        await handleFacebookMessage(client, message, facebookUrl, remadeNormalized);
+        return;
+    }
 
     // --- Instagram Link Interceptor ---
     const instagramRegex = /https?:\/\/(?:www\.)?(?:instagram|kkinstagram)\.com\/[^\s]+/i;

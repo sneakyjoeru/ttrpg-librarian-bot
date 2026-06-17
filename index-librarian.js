@@ -18,6 +18,8 @@ const {
     RAG_OLLAMA_TIMEOUT
 } = require('./src/config');
 const { getLastUpdates } = require('./src/utils/helpers');
+const { cleanOrphanedTempFiles, recoverOrphanedPlaceholders } = require('./src/utils/taskPersistence');
+const { IN_PROGRESS_REGEX, removeInProgressStatus } = require('./src/utils/webhook');
 const handleInteraction = require('./src/handlers/interactions');
 const handleMessageCreate = require('./src/handlers/messageCreate');
 const handleChannelUpdate = require('./src/handlers/channelUpdate');
@@ -35,6 +37,86 @@ const client = new Client({
     partials: [Partials.Message, Partials.Reaction, Partials.User]
 });
 
+// Clean up abandoned in-progress messages from the last 2 hours after restart.
+// Mirrors robot-joe's behaviour: webhook placeholders that still end with " ⏳"
+// get their status stripped, while any "⏳ ..." progress-replies are deleted
+// outright (they're transient status messages, never user-visible final output).
+async function cleanupAbandonedInProgressMessages(clientInstance) {
+    try {
+        const guild = await clientInstance.guilds.fetch(SERVER_ID).catch(() => null);
+        if (!guild) {
+            console.log('[Startup Cleanup] Main guild not found, skipping in-progress cleanup.');
+            return;
+        }
+
+        const TWO_HOURS_AGO = Date.now() - (2 * 60 * 60 * 1000);
+        let totalCleaned = 0;
+        let totalFinalized = 0;
+
+        console.log('[Startup Cleanup] Scanning for abandoned in-progress messages from the last 2 hours...');
+
+        const channels = guild.channels.cache.filter(c => c.isTextBased());
+        for (const [channelId, channel] of channels) {
+            try {
+                const messages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+                if (!messages) continue;
+
+                for (const [msgId, msg] of messages) {
+                    if (msg.createdTimestamp < TWO_HOURS_AGO) continue;
+                    if (msg.author.id !== clientInstance.user.id) continue;
+
+                    const isWebhookInProgress = IN_PROGRESS_REGEX.test(msg.content);
+                    const isProgressReply = msg.content.startsWith('⏳');
+                    if (isWebhookInProgress || isProgressReply) {
+                        console.log(`[Startup Cleanup] Found abandoned in-progress message ${msgId} in channel ${channelId} (type: ${isWebhookInProgress ? 'webhook-placeholder' : 'progress-reply'})`);
+
+                        if (isWebhookInProgress) {
+                            const cleanedContent = removeInProgressStatus(msg.content);
+                            if (cleanedContent && cleanedContent.trim().length > 0) {
+                                try {
+                                    await msg.edit({ content: cleanedContent }).catch(() => {});
+                                    totalFinalized++;
+                                    console.log(`[Startup Cleanup] Finalized in-progress message ${msgId}`);
+                                } catch (editErr) {
+                                    try {
+                                        await msg.delete().catch(() => {});
+                                        totalCleaned++;
+                                        console.log(`[Startup Cleanup] Deleted abandoned message ${msgId}`);
+                                    } catch (delErr) {
+                                        console.warn(`[Startup Cleanup] Failed to clean message ${msgId}:`, delErr.message);
+                                    }
+                                }
+                            } else {
+                                try {
+                                    await msg.delete().catch(() => {});
+                                    totalCleaned++;
+                                    console.log(`[Startup Cleanup] Deleted empty abandoned message ${msgId}`);
+                                } catch (delErr) {
+                                    console.warn(`[Startup Cleanup] Failed to delete message ${msgId}:`, delErr.message);
+                                }
+                            }
+                        } else {
+                            try {
+                                await msg.delete().catch(() => {});
+                                totalCleaned++;
+                                console.log(`[Startup Cleanup] Deleted stale progress reply ${msgId}`);
+                            } catch (delErr) {
+                                console.warn(`[Startup Cleanup] Failed to delete progress reply ${msgId}:`, delErr.message);
+                            }
+                        }
+                    }
+                }
+            } catch (channelErr) {
+                console.warn(`[Startup Cleanup] Error scanning channel ${channelId}:`, channelErr.message);
+            }
+        }
+
+        console.log(`[Startup Cleanup] Complete. Finalized: ${totalFinalized}, Deleted: ${totalCleaned}`);
+    } catch (err) {
+        console.error('[Startup Cleanup] Failed to clean abandoned in-progress messages:', err.message);
+    }
+}
+
 client.once(Events.ClientReady, async () => {
     client.user.setPresence({
         activities: [{
@@ -45,6 +127,19 @@ client.once(Events.ClientReady, async () => {
         status: 'online'
     });
     console.log(`Online as ${client.user.tag}`);
+
+    // --- STARTUP CLEANUP ---
+    // 1. Clean up abandoned in-progress messages from the last 2 hours
+    // 2. Clean up orphaned temp files left over from a previous session
+    // 3. Re-dispatch interrupted Instagram/Facebook tasks so the user
+    //    doesn't lose work because of a bot restart
+    cleanupAbandonedInProgressMessages(client).catch(err => {
+        console.error('[Startup Cleanup] Cleanup task failed:', err.message);
+    });
+    cleanOrphanedTempFiles();
+    recoverOrphanedPlaceholders(client).catch(err => {
+        console.error('[Startup Recovery] Recovery task failed:', err.message);
+    });
 
     // --- POST-RESTART MESSAGE UPDATE ---
     const restartToken = process.env.RESTART_TOKEN;

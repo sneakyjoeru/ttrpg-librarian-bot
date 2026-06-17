@@ -34,7 +34,19 @@ const RAG_SEARCH_LIMIT = 5;                           // Number of search result
 const RAG_HISTORY_LIMIT = 100;                        // Number of recent chat history messages to include in LLM context
 const RAG_SEARCH_TIMEOUT = 5000;                      // Timeout for meta-search requests (ms)
 const RAG_OLLAMA_TIMEOUT = 120000;                    // Timeout for local Ollama server generation (ms)
+const RAG_OLLAMA_TIMEOUT_SHORT = 15000;               // Short timeout for quick media downloads / scraper fetches (ms)
 const RAG_TYPING_INTERVAL = 10000;                     // Typing status keep-alive interval (ms)
+const PROGRESS_UPDATE_INTERVAL_MS = 5000;             // Throttle for stage-update edits to placeholders (ms)
+
+// === Size & Limits ===
+// FILE_SIZE_SAFETY_FACTOR: Discord has a 25MB upload limit for non-Nitro, 50MB for Nitro.
+//   We use 97% of the guild's limit to leave a safety margin for any overhead.
+const FILE_SIZE_SAFETY_FACTOR = 0.97;
+
+// Guild/user aliases used by the shared parsing pipeline. The bot operates on
+// the same guild it was invited to, so MAIN_GUILD_ID mirrors SERVER_ID.
+const MAIN_GUILD_ID = SERVER_ID;
+const ADMIN_USER_ID = SNEAKYJOE_USER_ID;
 
 // Media compression settings
 const FFMPEG_TIMEOUT = 180000; // 180s timeout for ffmpeg compression on ARM
@@ -137,6 +149,7 @@ module.exports = {
     helpText,
     commands,
     SERVER_ID,
+    MAIN_GUILD_ID,
     ACTIVE_CATEGORY_ID,
     ARCHIVED_CATEGORY_ID,
     DM_ROLE_ID,
@@ -145,6 +158,7 @@ module.exports = {
     GENERAL_CHANNEL_ID,
     RULES_MESSAGE_ID,
     SNEAKYJOE_USER_ID,
+    ADMIN_USER_ID,
     SEARXNG_URL,
     OLLAMA_URL,
     OLLAMA_MODEL,
@@ -160,7 +174,10 @@ module.exports = {
     RAG_HISTORY_LIMIT,
     RAG_SEARCH_TIMEOUT,
     RAG_OLLAMA_TIMEOUT,
+    RAG_OLLAMA_TIMEOUT_SHORT,
     RAG_TYPING_INTERVAL,
+    PROGRESS_UPDATE_INTERVAL_MS,
+    FILE_SIZE_SAFETY_FACTOR,
     NUMBER_EMOJIS,
     FALLBACK_ROASTS,
     FFMPEG_TIMEOUT,
