@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ttrpg-librarian.local/llm_cache/schemas.json",
+  "title": "TTRPG Librarian Bot — Internal Data Schemas (LLM Cache)",
+  "description": "Formal JSON Schemas for the configuration and state structures used by the Librarian Bot. Update atomically with any structural change.",
+  "type": "object",
+  "definitions": {
+    "Snowflake": {
+      "type": "string",
+      "pattern": "^\\d{17,19}$",
+      "description": "Discord snowflake id (guild/channel/user/message/role)."
+    },
+    "Url": {
+      "type": "string",
+      "format": "uri",
+      "minLength": 1
+    }
+  },
+  "properties": {
+    "Config": {
+      "type": "object",
+      "description": "Subset of src/config.js runtime configuration.",
+      "properties": {
+        "SERVER_ID": { "$ref": "#/definitions/Snowflake" },
+        "ACTIVE_CATEGORY_ID": { "$ref": "#/definitions/Snowflake" },
+        "ARCHIVED_CATEGORY_ID": { "$ref": "#/definitions/Snowflake" },
+        "DM_ROLE_ID": { "$ref": "#/definitions/Snowflake" },
+        "SYSTEM_CHANNEL_ID": { "$ref": "#/definitions/Snowflake" },
+        "SEARXNG_URL": { "$ref": "#/definitions/Url" },
+        "OLLAMA_URL": { "$ref": "#/definitions/Url" },
+        "OLLAMA_MODEL": { "type": "string" },
+        "DEEPSEEK_API_URL": { "$ref": "#/definitions/Url" },
+        "DEEPSEEK_MODEL": { "type": "string" }
+      },
+      "required": ["SERVER_ID", "OLLAMA_URL", "OLLAMA_MODEL"]
+    }
+  }
+}

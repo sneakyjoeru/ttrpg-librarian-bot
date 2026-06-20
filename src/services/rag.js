@@ -9,7 +9,10 @@ const {
     RAG_HISTORY_LIMIT,
     RAG_SEARCH_TIMEOUT,
     RAG_OLLAMA_TIMEOUT,
-    RAG_TYPING_INTERVAL
+    RAG_TYPING_INTERVAL,
+    deepseekApiKey,
+    DEEPSEEK_API_URL,
+    DEEPSEEK_MODEL
 } = require('../config');
 
 const LIBRARIAN_QUIRKS = [
@@ -24,6 +27,48 @@ const LIBRARIAN_QUIRKS = [
     "You keep forgetting what you were saying mid-sentence and muttering 'what was I about...?'",
     "You are complaining about the youth of today using shiny magic items instead of proper ink and parchment."
 ];
+
+async function checkResponseQuality(userQuery, answer) {
+    if (!userQuery) return true;
+    const evalPrompt = `You are a strict quality controller.
+Evaluate whether the following generated response is an acceptable answer that matches and directly answers the user's query.
+
+User Query: "${userQuery}"
+Generated Response: "${answer}"
+
+Check if:
+1. The response actually answers the user's question or intent.
+2. The response is not hallucinated, completely off-topic, or polluted with garbage/Chinese characters.
+3. The response makes sense given the query.
+
+Respond with exactly "YES" if the answer matches and is acceptable.
+Respond with exactly "NO" if the answer does not match, does not answer the query, or is unacceptable.
+
+Do not write any other text. Reply with either YES or NO.`;
+
+    try {
+        const response = await axios.post(OLLAMA_URL, {
+            model: OLLAMA_MODEL,
+            prompt: evalPrompt,
+            stream: false,
+            options: {
+                temperature: 0.1,
+                num_ctx: 2048
+            }
+        }, { timeout: 8000 });
+
+        const result = response.data.response.trim().toUpperCase();
+        console.log(`[Response Quality Check] Local quality check outcome: ${result}`);
+
+        if (result.includes('YES') && !result.includes('NO')) {
+            return true;
+        }
+        return false;
+    } catch (err) {
+        console.warn(`[Response Quality Check] Quality check failed/timed out: ${err.message}; treating as PASS to avoid block`);
+        return true;
+    }
+}
 
 async function handleRagQuery(client, message, query) {
     const seed = Math.floor(Math.random() * 1000000);
@@ -249,7 +294,9 @@ User Question: [${message.author.username}]: ${llmQuery}
 Answer (stay in character!):`;
 
         let answer;
+        let localOllamaSuccess = false;
         try {
+            console.log(`[Librarian Bot] Attempting local Ollama query...`);
             const ollamaResponse = await axios.post(OLLAMA_URL, {
                 model: OLLAMA_MODEL,
                 system: systemMessage,
@@ -263,9 +310,48 @@ Answer (stay in character!):`;
                 }
             }, { timeout: RAG_OLLAMA_TIMEOUT });
             answer = ollamaResponse.data.response;
+
+            // Check quality of Ollama response
+            console.log(`[Librarian Bot] Verifying local Ollama response quality...`);
+            const qualityOk = await checkResponseQuality(cleanedQuery, answer);
+            if (qualityOk) {
+                localOllamaSuccess = true;
+            } else {
+                console.warn(`[Librarian Bot] Local Ollama response failed quality check. Falling back to DeepSeek.`);
+            }
         } catch (ollamaErr) {
-            console.warn('Ollama query failed, falling back to help text:', ollamaErr.message);
-            answer = `*The Librarian shuffles through dusty shelves, muttering to himself. The arcane archives (AI backend) seem to be currently unreachable.* Let me assist you with the basic features instead!\n\n${helpText}`;
+            console.warn('Ollama query failed/timed out, falling back to DeepSeek:', ollamaErr.message);
+        }
+
+        if (!localOllamaSuccess) {
+            if (deepseekApiKey) {
+                try {
+                    console.log(`[Librarian Bot] Calling DeepSeek API fallback (model: ${DEEPSEEK_MODEL})...`);
+                    const deepseekResponse = await axios.post(DEEPSEEK_API_URL, {
+                        model: DEEPSEEK_MODEL,
+                        messages: [
+                            { role: 'system', content: systemMessage },
+                            { role: 'user', content: userPrompt }
+                        ],
+                        stream: false,
+                        temperature: 0.85
+                    }, {
+                        timeout: 30000,
+                        headers: {
+                            'Authorization': `Bearer ${deepseekApiKey}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    answer = deepseekResponse.data.choices[0].message.content;
+                    console.log(`[Librarian Bot] DeepSeek response retrieved successfully.`);
+                } catch (deepseekErr) {
+                    console.error('DeepSeek fallback failed:', deepseekErr.message);
+                    answer = `*The Librarian shuffles through dusty shelves, muttering to himself. The arcane archives (AI backend) seem to be currently unreachable.* Let me assist you with the basic features instead!\n\n${helpText}`;
+                }
+            } else {
+                console.warn('No DeepSeek API key configured, falling back to help text.');
+                answer = `*The Librarian shuffles through dusty shelves, muttering to himself. The arcane archives (AI backend) seem to be currently unreachable.* Let me assist you with the basic features instead!\n\n${helpText}`;
+            }
         }
 
         // Stop the typing indicator before sending the response

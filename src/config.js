@@ -54,11 +54,16 @@ const FALLBACK_ROASTS = [
 
 // --- TOKEN LOADING ---
 let token = '';
+let deepseekApiKey = '';
 if (fs.existsSync(SECRETS_PATH)) {
     const phpCode = fs.readFileSync(SECRETS_PATH, 'utf8');
-    const match = phpCode.match(/\$token\s*=\s*['"]([^'"]+)['"]/);
-    if (match) {
-        token = match[1];
+    const tokenMatch = phpCode.match(/\$token\s*=\s*['"]([^'"]+)['"]/);
+    if (tokenMatch) {
+        token = tokenMatch[1];
+    }
+    const deepseekMatch = phpCode.match(/\$deepseek_api_key\s*=\s*['"]([^'"]+)['"]/);
+    if (deepseekMatch) {
+        deepseekApiKey = deepseekMatch[1];
     }
 }
 if (!token && process.env.DISCORD_TOKEN) {
@@ -67,6 +72,13 @@ if (!token && process.env.DISCORD_TOKEN) {
 if (!token) {
     throw new Error("Bot token could not be found in secrets_discord.php");
 }
+
+if (!deepseekApiKey && process.env.DEEPSEEK_API_KEY) {
+    deepseekApiKey = process.env.DEEPSEEK_API_KEY;
+}
+
+const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || 'https://api.deepseek.com/v1/chat/completions';
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 
 // --- HELP TEXT ---
 const helpText = `**Librarian Bot Functions:**
@@ -164,5 +176,8 @@ module.exports = {
     NUMBER_EMOJIS,
     FALLBACK_ROASTS,
     FFMPEG_TIMEOUT,
-    DISCORD_FILE_LIMIT_DEFAULT
+    DISCORD_FILE_LIMIT_DEFAULT,
+    deepseekApiKey,
+    DEEPSEEK_API_URL,
+    DEEPSEEK_MODEL
 };
