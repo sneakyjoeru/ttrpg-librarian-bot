@@ -21,7 +21,8 @@
         "SERVER_ID": { "$ref": "#/definitions/Snowflake" },
         "ACTIVE_CATEGORY_ID": { "$ref": "#/definitions/Snowflake" },
         "ARCHIVED_CATEGORY_ID": { "$ref": "#/definitions/Snowflake" },
-        "DM_ROLE_ID": { "$ref": "#/definitions/Snowflake" },
+        "DM_ROLE_ID": { "$ref": "#/definitions/Snowflake", "description": "Dungeon Master role — used by the slash-command permission check (interactions.js) and as one of the admin-tier quota checks." },
+        "ADMIN_ROLE_ID": { "$ref": "#/definitions/Snowflake", "description": "Server Administrator role — independently grants the higher-tier DeepSeek quota (QUOTA_ADMIN_MAX_REQUESTS / QUOTA_ADMIN_WINDOW_HOURS) regardless of the slash-command permission rules." },
         "SYSTEM_CHANNEL_ID": { "$ref": "#/definitions/Snowflake" },
         "SYSTEM_MESSAGE_ID": { "$ref": "#/definitions/Snowflake" },
         "GENERAL_CHANNEL_ID": { "$ref": "#/definitions/Snowflake" },
@@ -81,6 +82,7 @@
         "ACTIVE_CATEGORY_ID",
         "ARCHIVED_CATEGORY_ID",
         "DM_ROLE_ID",
+        "ADMIN_ROLE_ID",
         "SEARXNG_URL",
         "OLLAMA_URL",
         "OLLAMA_MODEL",
@@ -99,40 +101,73 @@
     },
     "QuotaState": {
       "type": "object",
-      "description": "Persistent per-user quota tracker stored at QUOTA_STATE_PATH. Each key is a Discord user snowflake; each value is an array of millisecond timestamps (request times within the sliding window).",
+      "description": "Persistent per-user quota tracker stored at QUOTA_STATE_PATH. Each key is a Discord user snowflake; each value is a { regular, admin } bucket pair. The two buckets are tracked independently so a regular session never decrements the admin quota and vice versa. Legacy single-array entries (where the value is a flat array of timestamps, from before the admin tier was added) are read once and migrated to the bucket shape on load.",
       "additionalProperties": {
-        "type": "array",
-        "items": {
-          "type": "integer",
-          "description": "Unix epoch milliseconds when a quota slot was consumed.",
-          "minimum": 0
-        }
+        "type": "object",
+        "description": "Per-user bucket pair. A legacy flat array is also accepted on read and treated as the 'regular' bucket.",
+        "oneOf": [
+          {
+            "title": "BucketPair",
+            "type": "object",
+            "properties": {
+              "regular": {
+                "type": "array",
+                "items": { "type": "integer", "minimum": 0 },
+                "description": "Epoch ms timestamps consumed against the regular tier within the rolling window."
+              },
+              "admin": {
+                "type": "array",
+                "items": { "type": "integer", "minimum": 0 },
+                "description": "Epoch ms timestamps consumed against the admin tier within the rolling window."
+              }
+            },
+            "required": ["regular", "admin"]
+          },
+          {
+            "title": "LegacyFlatArray",
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 },
+            "description": "Pre-admin-tier format: treated as the 'regular' bucket on read."
+          }
+        ]
       },
       "examples": [
         {
-          "221722372145676288": [1719000000000, 1719003600000],
-          "1500507712239308965": [1719007200000]
+          "221722372145676288": {
+            "regular": [1719000000000, 1719003600000],
+            "admin": [1719001800000]
+          },
+          "1500507712239308965": {
+            "regular": [],
+            "admin": [1719007200000]
+          }
         }
       ]
     },
+    "QuotaProfile": {
+      "type": "string",
+      "enum": ["regular", "admin"],
+      "description": "Per-user quota tier. 'regular' consumes from the QUOTA_MAX_REQUESTS / QUOTA_WINDOW_HOURS bucket; 'admin' consumes from the QUOTA_ADMIN_MAX_REQUESTS / QUOTA_ADMIN_WINDOW_HOURS bucket. Tracked independently per user."
+    },
     "QuotaDecision": {
       "type": "object",
-      "description": "Result of consumeQuota(userId) — the runtime decision passed back to handleRagQuery.",
+      "description": "Result of consumeQuota(userId, isAdmin) — the runtime decision passed back to handleRagQuery.",
       "properties": {
         "allowed": {
           "type": "boolean",
-          "description": "true if the request fits inside the user's window and a slot was consumed."
+          "description": "true if the request fits inside the user's window for the selected profile and a slot was consumed."
         },
-        "used": { "type": "integer", "minimum": 0, "description": "Slots consumed inside the current window AFTER this decision." },
-        "remaining": { "type": "integer", "minimum": 0, "description": "Slots still available in the current window AFTER this decision." },
+        "profile": { "$ref": "#/definitions/QuotaProfile" },
+        "used": { "type": "integer", "minimum": 0, "description": "Slots consumed inside the current window for the selected profile AFTER this decision." },
+        "remaining": { "type": "integer", "minimum": 0, "description": "Slots still available in the current window for the selected profile AFTER this decision." },
         "limit": { "type": "integer", "minimum": 1 },
         "windowHours": { "type": "integer", "minimum": 1 },
         "resetAt": {
           "type": ["integer", "null"],
-          "description": "Unix epoch milliseconds when the user's oldest slot expires (null when no slots are used)."
+          "description": "Unix epoch milliseconds when the oldest slot in the selected profile's bucket expires (null when no slots are used)."
         }
       },
-      "required": ["allowed", "used", "remaining", "limit", "windowHours"]
+      "required": ["allowed", "profile", "used", "remaining", "limit", "windowHours"]
     },
     "IgpuDetection": {
       "type": "object",

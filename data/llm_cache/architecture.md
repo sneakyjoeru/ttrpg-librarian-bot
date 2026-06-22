@@ -24,7 +24,20 @@
     Quota-gated: routes to **DeepSeek first** while the user has quota
     (`src/utils/quota.js`, persisted to `data/quota.json`), falls back to
     **local Ollama** (`qwen3.5:9b` at `192.168.0.101`) with a quality check
-    + DeepSeek fallback chain when exhausted. Also generates Natural-1
+    + DeepSeek fallback chain when exhausted. **Two tiers** are tracked
+    per user in independent buckets: regular users get
+    `QUOTA_MAX_REQUESTS` (= 10) per `QUOTA_WINDOW_HOURS` (= 5h); admins
+    get `QUOTA_ADMIN_MAX_REQUESTS` (= 30) per `QUOTA_ADMIN_WINDOW_HOURS`
+    (= 3h). The admin tier is granted to any guild member who has the
+    `ADMIN_ROLE_ID` role, **or** the `DM_ROLE_ID` role, **or** the
+    `PermissionFlagsBits.Administrator` permission — these are three
+    distinct role/permission concepts (server admin vs. dungeon-master vs.
+    Discord's native admin flag), and the quota check is intentionally
+    more generous than the slash-command permission check
+    (`src/handlers/interactions.js`) which only honours `DM_ROLE_ID` /
+    `Administrator` for the campaign-management commands. The tier is
+    computed in `handleRagQuery` from `message.member` and passed as the
+    second arg to `consumeQuota(userId, isAdmin)`. Also generates Natural-1
     roasts for `/roll`.
   - `instagram.js` — Instagram link interceptor with multi-source
     downloading (fixer domains `eeinstagram` / `kkinstagram` / `uuinstagram`,
