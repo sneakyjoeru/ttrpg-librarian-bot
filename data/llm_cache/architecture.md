@@ -57,8 +57,12 @@
   - Slash commands — 12 commands (see section 7).
   - Text commands `!pin` / `!unpin` for the DM/admin.
   - Reaction-based role self-assignment on campaign OPs (`✋`).
-  - System help message with last 5 git log entries
-    (`src/utils/helpers.js#getLastUpdates`).
+  - System help message + updates thread — see section 6. The system
+    message itself is minimal (no commit history): just a `/librarian-bot`
+    hint, a single link to the locked thread, and the "Last updated"
+    timestamp. The updates themselves live ONLY in the thread's first
+    bot message — the last 10 git log entries, edited in place on every
+    restart.
   - Self-rebuild via `/restart` (uses Docker socket).
   - Monthly cron (`CRON_SCHEDULE_MONTHLY_MINI`) — auto-posts the 3D
     printing queue to `GENERAL_CHANNEL_ID` with a ±2h randomized delay,
@@ -110,15 +114,19 @@
 │   ├── llm_cache/                #   THIS CACHE (architecture.md,
 │   │                             #   schemas.json) — DO NOT touch from
 │   │                             #   runtime code
-│   └── quota.json                #   Per-user DeepSeek quota state
-│                                 #   (created at runtime by
-│                                 #   src/utils/quota.js)
+│   ├── quota.json                #   Per-user DeepSeek quota state
+│   │                             #   (created at runtime by
+│   │                             #   src/utils/quota.js)
+│   └── system_state.json         #   Thread id + updates-message id for the
+│                                 #   system help thread (created at runtime
+│                                 #   by src/utils/systemState.js)
 ├── src/
 │   ├── config.js                 # CONFIGURATION — loads secrets from PHP
 │   │                             #   file, env vars, hard-coded Discord IDs,
 │   │                             #   endpoint URLs, slash command metadata,
 │   │                             #   fallback roasts, FFMPEG constants, IGPU
-│   │                             #   constants, quota constants, etc.
+│   │                             #   constants, quota constants, system-
+│   │                             #   updates constants, etc.
 │   ├── handlers/                 # EVENT HANDLERS (Routing layer)
 │   │   ├── channelDelete.js      #   Auto-removes the campaign role when an
 │   │   │                         #   active or archived channel is deleted
@@ -147,9 +155,10 @@
 │       ├── helpers.js            #   getLibrarianData() topic-token parser,
 │       │                         #   estimateTokens() (rough char/2-byte
 │       │                         #   model), isHistoryOrAnalysisQuery()
-│       │                         #   keyword sniffer, getLastUpdates() —
-│       │                         #   runs `git log -5 --reverse` and formats
-│       │                         #   it as a markdown list
+│       │                         #   keyword sniffer, getLastUpdates(n) —
+│       │                         #   runs `git log -N --reverse` and formats
+│       │                         #   it as a markdown list (count is
+│       │                         #   SYSTEM_UPDATES_LIMIT)
 │       ├── mediaCompressor.js    #   ffmpeg compression utilities. Pipeline:
 │       │                         #   iGPU → network → local CPU. Also
 │       │                         #   getGuildFileLimit() (boost tier →
@@ -170,6 +179,10 @@
 │       │                         #   buildSshPrefix / hasRemoteAccess (SSH
 │       │                         #   key or sshpass), runCommandWithProgress
 │       │                         #   (parses ffmpeg time= stderr), findYtDlpPath
+│       ├── systemState.js        #   Persistent (threadId, updatesMessageId)
+│       │                         #   store for the system-updates thread.
+│       │                         #   Atomic temp-file + rename writes; in-process
+│       │                         #   write mutex.
 │       └── webhook.js            #   Placeholder manager: sendWorkingPlaceholder,
 │                                 #   updatePlaceholderStage, updateWorkingPlaceholder,
 │                                 #   sendRepostedMessage. Reposts use a channel
@@ -397,25 +410,129 @@ binding is also looked up by name as a fallback (used by `channelDelete`).
 
 ---
 
-## 6. System Help Message
+## 6. System Help Message + Updates Thread
 
-- Channel: `SYSTEM_CHANNEL_ID`. Message: `SYSTEM_MESSAGE_ID` (or a new
-  one is created and the operator is warned to update the config).
-- Edited on every restart from `index-librarian.js`'s `ClientReady`
-  handler. Content layout:
+- **Channel:** `SYSTEM_CHANNEL_ID`. **Anchor message:** `SYSTEM_MESSAGE_ID`
+  (the thread OP). If the message is missing the operator gets a warning
+  and the rest of the flow is skipped — we don't auto-create a new anchor
+  because we'd have to put the new id back into `config.js` manually.
+- **System message (the thread OP)** body on every restart:
   ```
   Use `/librarian-bot` for showing instructions for bot.
 
-  **Last 5 Updates:**
-  - 2026-06-22: feat(...) ([abc1234](github-url))
-  - ...
+  📜 Updates Log: https://discord.com/channels/<guild>/<thread-id>
 
-  *Last updated: 22 June 2026, 19:42:13*
+  *Last updated: 23 June 2026, 19:42:13*
   ```
-- `getLastUpdates()` runs `git log -5 --reverse --pretty=format:"..."` from
-  the repo root. Falls back to a hard-coded example list if git fails
-  (e.g. WORKDIR isn't a git checkout).
+  Per the user's spec, the system message **must not** contain any commit
+  history (no `**Last N Updates:**` block, no bulleted list). It only
+  carries a one-line pointer to the updates thread plus the "Last updated"
+  timestamp in `TIMEZONE`. The pointer is a **plain URL**, not markdown
+  `[text](url)` — Discord does not reliably render markdown-link syntax for
+  internal `discord.com/channels/...` URLs (it shows the raw text), whereas
+  a plain URL is always auto-linked as a clickable jump link. The actual
+  updates live exclusively in the thread. Any legacy `**Last N Updates:**`
+  block left in the body from an older deploy is stripped on the next
+  restart by the same `systemMessage.edit(...)` call that writes the new
+  content.
+- **Updates thread** is auto-created on the first restart after this
+  feature was deployed, name `SYSTEM_UPDATES_THREAD_NAME`
+  (= `📜 Updates Log`), auto-archive `THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS`.
+  **The thread contains exactly one bot message** — the bot's own
+  `**Last 10 Updates:** …` post (10 = `SYSTEM_UPDATES_LIMIT`), posted
+  plainly (no spoiler); on every subsequent restart that exact message is
+  **edited in place** with the rolling last 10 git log entries, never
+  re-posted. The thread is `locked: true` so nobody — including admins —
+  can post in it; the lock is re-applied on every restart as a safety net
+  (and temporarily lifted beforehand so the bot can `send()`/`edit()`
+  inside the locked thread without edge-case failures). No other messages
+  should ever appear in the thread.
+- **Thread adoption** (in order, first match wins):
+  1. **`systemMessage.thread`** — discord.js exposes the thread started on
+     a message directly via this getter. This is the primary path and works
+     for both regular text channels and forum-style channels where the
+     post's opening message and its thread **share the same id**.
+  2. **`systemMessage.startThread(...)`** — only when no thread exists yet
+     (fresh anchor). `MessageExistingThread` is swallowed and we fall
+     through to the remaining fallbacks.
+  3. **Persisted thread id** from `data/system_state.json`, fetched by id.
+  4. **Scan the channel's active threads** (`systemChannel.threads.fetchActive()`).
+  5. **Scan the channel's archived public threads**
+     (`systemChannel.threads.fetchArchived({ type: 'public' })`); unarchive
+     on adoption.
+
+  A candidate is validated by `isThread()` + parent **channel** id + name
+  contains "Updates Log". **`ThreadChannel.parentId` is the parent CHANNEL
+  id, not the starter message id** — comparing it to `systemMessage.id`
+  never matches and is a trap. Do **not** reject a thread just because
+  `thread.id === systemMessage.id`; that is legitimate in forum-style
+  channels. The bot's updates message inside the thread is found by
+  scanning `thread.messages.fetch({ limit: 20 })` for the oldest
+  bot-authored, non-system message (skipping the OP and Discord's
+  auto-generated "thread created" system message, both of which throw
+  `DiscordAPIError 50021` if edited); if none exists, a fresh message is
+  posted via `thread.send(...)`.
+- **`getLastUpdates(n)`** runs
+  `git log -N --reverse --pretty=format:"%as%x09%s%x09%h"` from the repo
+  root and rebuilds each line in JS as `- <date>: <subject> ([<short>](url))`.
+  `N` is `SYSTEM_UPDATES_LIMIT` (= 10); the helper clamps to [1, 50] for
+  safety. Commit URLs use the **short hash** (GitHub redirects short
+  hashes) and subjects are truncated to 80 chars so 10 entries fit
+  Discord's 2000-char message limit. Falls back to a hard-coded example
+  list if git fails (e.g. WORKDIR isn't a git checkout). The handler
+  additionally enforces the 2000-char limit by dropping the oldest entries
+  (front of the `--reverse` list, keeping the most recent) with a dynamic
+  `**Last N Updates:**` header, hard-truncating only as an absolute last
+  resort.
+- **Persistence:** `src/utils/systemState.js` stores
+  `{ systemUpdatesThreadId, systemUpdatesMessageId }` in
+  `data/system_state.json` (atomic temp-file + rename, in-process write
+  mutex). The pair is re-persisted at the end of every successful run, so
+  the saved state is always the **last validated** pair.
 - Time is formatted in `TIMEZONE` (`Europe/Tallinn` by default).
+- **`getLastUpdates(n)`** runs `git log -N --reverse --pretty=format:"..."`
+  from the repo root. `N` is `SYSTEM_UPDATES_LIMIT` (= 10); the helper
+  clamps to [1, 50] for safety. Falls back to a hard-coded example list
+  if git fails (e.g. WORKDIR isn't a git checkout).
+- Time is formatted in `TIMEZONE` (`Europe/Tallinn` by default).
+
+### Data flow per restart
+
+```
+ClientReady
+  └─► fetch systemChannel
+        └─► fetch systemMessage  (the anchor; if missing, warn and skip)
+              │
+              ├─ THREAD ADOPTION (first match wins; validate by isThread()
+              │   + parent CHANNEL id + name contains "Updates Log"):
+              │    1. systemMessage.thread                    (primary; works for
+              │       forum-style channels where thread.id === systemMessage.id)
+              │    2. systemMessage.startThread(...)           (fresh anchor only;
+              │       MessageExistingThread swallowed → fall through)
+              │    3. saved threadId from system_state.json    (fetch by id)
+              │    4. scan systemChannel.threads.fetchActive() by name
+              │    5. scan fetchArchived({ type: 'public' }) by name; unarchive
+              │
+              ├─ UPDATES-MESSAGE DISCOVERY (scoped to the thread):
+              │    scan thread.messages.fetch({ limit: 20 }) for the oldest
+              │    bot-authored, non-system message (skip the OP + the auto
+              │    "thread created" system msg — editing either throws 50021);
+              │    if none → thread.send(...) a fresh updates body
+              │
+              ├─ temporarily thread.edit({ locked: false }) if locked
+              ├─ edit-in-place OR send the **Last N Updates:** body (≤ 2000 chars;
+              │   drop oldest entries if too long, dynamic N in the header)
+              ├─ thread.setArchived(false) if archived
+              ├─ thread.edit({ locked: true })            (idempotent re-lock)
+              ├─ setSystemUpdatesIds({ threadId, updatesMessageId })
+              │       (re-persisted at the end so saved state is always last-validated)
+              └─ systemMessage.edit(...)  with minimal body + plain thread URL
+```
+
+The adoption order guarantees that on a brand-new deploy with no state, a
+manually-created thread, or an orphaned thread from a prior deploy, the bot
+converges to a single locked thread with a single bot-authored updates
+message and a clean minimal system message body — without ever crashing.
 
 ---
 
@@ -467,15 +584,19 @@ with the triggering user so other handlers (`/roll`, `!pin`) can answer
 
 | File | Owner | Format | Purpose |
 |---|---|---|---|
-| `data/quota.json` | `src/utils/quota.js` | JSON: `{ "<userSnowflake>": [epochMs, ...] }` | Sliding-window DeepSeek quota |
+| `data/quota.json` | `src/utils/quota.js` | JSON: `{ "<userSnowflake>": { regular: [ms…], admin: [ms…] } }` | Sliding-window DeepSeek quota (two tiers) |
+| `data/system_state.json` | `src/utils/systemState.js` | JSON: `{ systemUpdatesThreadId, systemUpdatesMessageId }` | Persists the system-updates thread + the bot's first-message id inside it across restarts |
 | Channel topic tokens | every handler | inline string `[LIBRARIAN_DATA\|DM:<id>\|ROLE:<id>]` / `SETUP\|DM:<id>\|USERS:<id>,...` | Campaign metadata |
 | In-memory `trackedMessages` | `src/utils/messageTracker.js` | capped 1000 entries | bot/webhook msg → userId |
 | In-memory `mediaQueue` | `src/utils/mediaQueue.js` | JS class | single-flight Instagram downloads |
 | In-memory `cachedResult` in `cpuDetector` | `src/utils/cpuDetector.js` | object | memoised iGPU detection |
+| In-memory `cachedState` in `systemState` | `src/utils/systemState.js` | object | memoised thread/message id state |
+| In-memory `store` in `quota` | `src/utils/quota.js` | object | memoised per-user quota buckets |
 
-`data/quota.json` is the only on-disk state besides the cache. It is
-written atomically (temp file + rename) and serialised through an
-in-process Promise chain so concurrent consumes never clobber each other.
+`data/quota.json` and `data/system_state.json` are the only on-disk state
+besides the cache. Both are written atomically (temp file + rename) and
+serialised through an in-process Promise chain so concurrent writes never
+clobber each other.
 
 ---
 

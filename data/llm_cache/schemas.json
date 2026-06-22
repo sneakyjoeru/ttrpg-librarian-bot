@@ -57,6 +57,20 @@
           "type": "string",
           "description": "Filesystem path of the persistent quota store (relative to WORKDIR)."
         },
+        "SYSTEM_UPDATES_LIMIT": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Number of git log entries shown in the system-updates thread. The actual git log call clamps to [1, 50] in getLastUpdates() for safety."
+        },
+        "SYSTEM_UPDATES_STATE_PATH": {
+          "type": "string",
+          "description": "Filesystem path of the system_state.json file (relative to WORKDIR). Stores { systemUpdatesThreadId, systemUpdatesMessageId }."
+        },
+        "SYSTEM_UPDATES_THREAD_NAME": {
+          "type": "string",
+          "description": "Display name of the auto-created updates thread. The 📜 prefix is cosmetic only."
+        },
         "IGPU_RENDER_NODE": {
           "type": "string",
           "description": "Path to the VAAPI render node inside the container (default /dev/dri/renderD128). When this file is absent the local iGPU stage is skipped."
@@ -92,7 +106,12 @@
         "CRON_SCHEDULE_MONTHLY_MINI",
         "QUOTA_MAX_REQUESTS",
         "QUOTA_WINDOW_HOURS",
+        "QUOTA_ADMIN_MAX_REQUESTS",
+        "QUOTA_ADMIN_WINDOW_HOURS",
         "QUOTA_STATE_PATH",
+        "SYSTEM_UPDATES_LIMIT",
+        "SYSTEM_UPDATES_STATE_PATH",
+        "SYSTEM_UPDATES_THREAD_NAME",
         "IGPU_RENDER_NODE",
         "IGPU_VIDEO_BITRATE_MULTIPLIERS",
         "IGPU_MAX_VIDEO_BITRATE",
@@ -247,6 +266,18 @@
     "FallbackRoast": {
       "type": "string",
       "description": "One of the FALLBACK_ROASTS in src/config.js — used by /roll when the Ollama roast generator is offline. Wrapped in italics with an '(AI backend offline, using archived roast)' tail by the handler."
+    },
+    "SystemState": {
+      "type": "object",
+      "description": "Persistent state at SYSTEM_UPDATES_STATE_PATH. Used by index-librarian.js's ClientReady handler to find the existing system-updates thread + the bot's first message inside it, edit in place, and re-apply the lock. If the stored ids reference a missing thread/message, the handler self-heals by creating a fresh thread+message and overwriting the state. Both ids are nullable to allow partial state on first run.",
+      "properties": {
+        "systemUpdatesThreadId": { "$ref": "#/definitions/Snowflake", "description": "Id of the auto-created 📜 Updates Log thread. Null on first run before the thread is created." },
+        "systemUpdatesMessageId": { "$ref": "#/definitions/Snowflake", "description": "Id of the bot's first non-OP message inside the thread (the one holding the rolling 'Last N Updates' list). Edited in place on every restart." }
+      },
+      "examples": [
+        { "systemUpdatesThreadId": "1505941250732458000", "systemUpdatesMessageId": "1505941250732458001" },
+        { "systemUpdatesThreadId": null, "systemUpdatesMessageId": null }
+      ]
     },
     "CompressResult": {
       "type": "object",
