@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { PermissionFlagsBits } = require('discord.js');
 const { estimateTokens, isHistoryOrAnalysisQuery } = require('../utils/helpers');
 const { consumeQuota, formatDuration } = require('../utils/quota');
 const {
@@ -11,6 +12,8 @@ const {
     RAG_SEARCH_TIMEOUT,
     RAG_OLLAMA_TIMEOUT,
     RAG_TYPING_INTERVAL,
+    DM_ROLE_ID,
+    ADMIN_ROLE_ID,
     deepseekApiKey,
     DEEPSEEK_API_URL,
     DEEPSEEK_MODEL
@@ -303,15 +306,40 @@ Answer (stay in character!):`;
         // DeepSeek first (cloud, faster, higher quality). When their quota is
         // exhausted we use the legacy local-Ollama pipeline with its own
         // quality check + DeepSeek fallback.
-        const quotaDecision = consumeQuota(message.author.id);
+        //
+        // Two tiers, tracked in independent per-user buckets inside
+        // src/utils/quota.js:
+        //   regular -> 10 requests / 5 hours  (QUOTA_MAX_REQUESTS / QUOTA_WINDOW_HOURS)
+        //   admin   -> 30 requests / 3 hours  (QUOTA_ADMIN_MAX_REQUESTS / QUOTA_ADMIN_WINDOW_HOURS)
+        // An "admin" (for quota purposes) is a guild member who has any of:
+        //   - the server ADMIN_ROLE_ID role, OR
+        //   - the DM_ROLE_ID role (DMs get the same quota bump because they
+        //     drive campaigns and frequently query the bot), OR
+        //   - the Administrator permission.
+        // This is a superset of the slash-command permission check
+        // (interactions.js) — that one only allows DM_ROLE_ID / Administrator
+        // for the campaign-management commands. The quota check is more
+        // generous because it only affects the per-user DeepSeek rate limit
+        // and not what the user can do in the server.
+        // In DMs (no message.member) the user is treated as regular.
+        const isAdmin = !!(
+            message.member &&
+            (
+                (ADMIN_ROLE_ID && message.member.roles?.cache?.has(ADMIN_ROLE_ID)) ||
+                (DM_ROLE_ID && message.member.roles?.cache?.has(DM_ROLE_ID)) ||
+                message.member.permissions?.has(PermissionFlagsBits.Administrator)
+            )
+        );
+        const quotaDecision = consumeQuota(message.author.id, isAdmin);
         const useDeepSeekFirst = quotaDecision.allowed;
+        const profile = quotaDecision.profile || 'regular';
 
         if (!quotaDecision.allowed && quotaDecision.used >= quotaDecision.limit) {
             const inMs = Math.max(0, (quotaDecision.resetAt || 0) - Date.now());
-            console.log(`[Librarian Bot] Quota exhausted for user ${message.author.id} (${quotaDecision.used}/${quotaDecision.limit}); falling back to local Ollama pipeline. Resets in ${formatDuration(inMs)}.`);
+            console.log(`[Librarian Bot] Quota exhausted for user ${message.author.id} (${profile} ${quotaDecision.used}/${quotaDecision.limit}); falling back to local Ollama pipeline. Resets in ${formatDuration(inMs)}.`);
             quotaExhaustedNotice = `*The Librarian adjusts his spectacles and mutters that the brighter shelves are dim for now — only the local archives are within reach. (Resets in ${formatDuration(inMs)})*`;
         } else {
-            console.log(`[Librarian Bot] Quota OK for user ${message.author.id} (${quotaDecision.used}/${quotaDecision.limit} used); routing to DeepSeek first.`);
+            console.log(`[Librarian Bot] Quota OK for user ${message.author.id} (${profile} ${quotaDecision.used}/${quotaDecision.limit} used); routing to DeepSeek first.`);
         }
 
         if (useDeepSeekFirst) {

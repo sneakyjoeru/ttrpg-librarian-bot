@@ -7,6 +7,7 @@ const SERVER_ID = '1294242036492406837';             // The ID of the Discord Gu
 const ACTIVE_CATEGORY_ID = '1294261463808217088';     // Category ID where active campaign text channels are created
 const ARCHIVED_CATEGORY_ID = '1294261512780906526';   // Category ID where archived campaign channels are stored
 const DM_ROLE_ID = '1294335928759746560';             // Role ID of Dungeon Masters who have administrative access to game campaigns
+const ADMIN_ROLE_ID = '1294255902957764670';           // Role ID of server Administrators; granted the higher-tier DeepSeek quota
 
 const SYSTEM_CHANNEL_ID = '1294333974897885185';      // Channel where Librarian Bot posts its global interactive help message
 const SYSTEM_MESSAGE_ID = '1505941250732458166';      // Message ID of the bot's help post in SYSTEM_CHANNEL_ID (edited automatically on restart)
@@ -39,8 +40,17 @@ const RAG_TYPING_INTERVAL = 10000;                     // Typing status keep-ali
 // --- USER QUOTA ---
 // While the user has quota, requests are routed to DeepSeek (cloud) first; otherwise
 // they fall back to the local Ollama pipeline with quality-check + DeepSeek fallback.
-const QUOTA_MAX_REQUESTS = 10;                        // Max DeepSeek-routed requests per user per window
-const QUOTA_WINDOW_HOURS = 5;                         // Sliding window length, in hours
+//
+// Two tiers:
+//   * Regular users — QUOTA_MAX_REQUESTS per QUOTA_WINDOW_HOURS.
+//   * Admins (DM_ROLE_ID or guild Administrator) — a separate, larger bucket
+//     (QUOTA_ADMIN_MAX_REQUESTS per QUOTA_WINDOW_ADMIN_HOURS). The two buckets
+//     are tracked independently per user, so a regular session never
+//     interferes with an admin one (and vice versa).
+const QUOTA_MAX_REQUESTS = 10;                        // Max DeepSeek-routed requests per regular user per window
+const QUOTA_WINDOW_HOURS = 5;                         // Sliding window length for regular users (hours)
+const QUOTA_ADMIN_MAX_REQUESTS = 30;                  // Max DeepSeek-routed requests per admin per window
+const QUOTA_ADMIN_WINDOW_HOURS = 3;                   // Sliding window length for admins (hours)
 const QUOTA_STATE_PATH = './data/quota.json';         // Where the per-user request timestamps are persisted
 
 // Media compression settings
@@ -168,6 +178,7 @@ module.exports = {
     ACTIVE_CATEGORY_ID,
     ARCHIVED_CATEGORY_ID,
     DM_ROLE_ID,
+    ADMIN_ROLE_ID,
     SYSTEM_CHANNEL_ID,
     SYSTEM_MESSAGE_ID,
     GENERAL_CHANNEL_ID,
@@ -191,6 +202,8 @@ module.exports = {
     RAG_TYPING_INTERVAL,
     QUOTA_MAX_REQUESTS,
     QUOTA_WINDOW_HOURS,
+    QUOTA_ADMIN_MAX_REQUESTS,
+    QUOTA_ADMIN_WINDOW_HOURS,
     QUOTA_STATE_PATH,
     NUMBER_EMOJIS,
     FALLBACK_ROASTS,
