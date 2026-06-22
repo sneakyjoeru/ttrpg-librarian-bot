@@ -418,7 +418,7 @@ binding is also looked up by name as a fallback (used by `channelDelete`).
   because we'd have to put the new id back into `config.js` manually.
 - **System message (the thread OP)** body on every restart:
   ```
-  Use `/librarian-bot` for showing instructions for bot.
+  Use `/librarian-bot` to see instructions for bot privately.
 
   📜 Updates Log: https://discord.com/channels/<guild>/<thread-id>
 

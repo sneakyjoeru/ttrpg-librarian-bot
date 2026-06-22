@@ -377,7 +377,7 @@ client.once(Events.ClientReady, async () => {
                     // the raw [text](url) text). A plain URL is always
                     // auto-linked as a clickable jump link.
                     systemContent =
-                        `Use \`/librarian-bot\` for showing instructions for bot.\n\n` +
+                        `Use \`/librarian-bot\` to see instructions for bot privately.\n\n` +
                         `${SYSTEM_UPDATES_THREAD_NAME}: ${threadUrl}\n\n` +
                         `*Last updated: ${tallinnTime}*`;
                 } else {
