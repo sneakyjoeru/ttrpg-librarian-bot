@@ -2,8 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ttrpg-librarian.local/llm_cache/schemas.json",
   "title": "TTRPG Librarian Bot — Internal Data Schemas (LLM Cache)",
-  "description": "Formal JSON Schemas for the configuration and state structures used by the Librarian Bot. Update atomically with any structural change.",
-  "type": "object",
+  "description": "Formal JSON Schemas for the configuration, state structures, and on-the-wire payloads used by the Librarian Bot. Update atomically with any structural change.",
   "definitions": {
     "Snowflake": {
       "type": "string",
@@ -14,23 +13,35 @@
       "type": "string",
       "format": "uri",
       "minLength": 1
-    }
-  },
-  "properties": {
+    },
     "Config": {
       "type": "object",
-      "description": "Subset of src/config.js runtime configuration.",
+      "description": "Subset of src/config.js runtime configuration. Every value here is the source of truth for that knob.",
       "properties": {
         "SERVER_ID": { "$ref": "#/definitions/Snowflake" },
         "ACTIVE_CATEGORY_ID": { "$ref": "#/definitions/Snowflake" },
         "ARCHIVED_CATEGORY_ID": { "$ref": "#/definitions/Snowflake" },
         "DM_ROLE_ID": { "$ref": "#/definitions/Snowflake" },
         "SYSTEM_CHANNEL_ID": { "$ref": "#/definitions/Snowflake" },
+        "SYSTEM_MESSAGE_ID": { "$ref": "#/definitions/Snowflake" },
+        "GENERAL_CHANNEL_ID": { "$ref": "#/definitions/Snowflake" },
+        "RULES_MESSAGE_ID": { "$ref": "#/definitions/Snowflake" },
+        "SNEAKYJOE_USER_ID": { "$ref": "#/definitions/Snowflake" },
         "SEARXNG_URL": { "$ref": "#/definitions/Url" },
         "OLLAMA_URL": { "$ref": "#/definitions/Url" },
         "OLLAMA_MODEL": { "type": "string" },
         "DEEPSEEK_API_URL": { "$ref": "#/definitions/Url" },
         "DEEPSEEK_MODEL": { "type": "string" },
+        "TIMEZONE": { "type": "string", "description": "IANA tz (e.g. Europe/Tallinn). Used by cron and the system help timestamp." },
+        "CRON_SCHEDULE_MONTHLY_MINI": { "type": "string", "description": "Standard 5-field cron expression for the monthly mini-printing post." },
+        "EMBED_COLOR": { "type": "integer", "description": "Decimal RGB for bot embeds (e.g. 0x2b2d31)." },
+        "RAG_SEARCH_LIMIT": { "type": "integer", "minimum": 1 },
+        "RAG_HISTORY_LIMIT": { "type": "integer", "minimum": 1 },
+        "RAG_SEARCH_TIMEOUT": { "type": "integer", "minimum": 1, "description": "SearXNG request timeout (ms)." },
+        "RAG_OLLAMA_TIMEOUT": { "type": "integer", "minimum": 1, "description": "Ollama generation timeout (ms)." },
+        "RAG_TYPING_INTERVAL": { "type": "integer", "minimum": 1, "description": "Discord typing indicator keepalive (ms)." },
+        "FFMPEG_TIMEOUT": { "type": "integer", "minimum": 1, "description": "Per-ffmpeg-attempt timeout (ms)." },
+        "DISCORD_FILE_LIMIT_DEFAULT": { "type": "integer", "minimum": 1, "description": "Default guild file upload limit (bytes); overridden by boost tier in getGuildFileLimit." },
         "QUOTA_MAX_REQUESTS": {
           "type": "integer",
           "minimum": 1,
@@ -67,8 +78,16 @@
       },
       "required": [
         "SERVER_ID",
+        "ACTIVE_CATEGORY_ID",
+        "ARCHIVED_CATEGORY_ID",
+        "DM_ROLE_ID",
+        "SEARXNG_URL",
         "OLLAMA_URL",
         "OLLAMA_MODEL",
+        "DEEPSEEK_API_URL",
+        "DEEPSEEK_MODEL",
+        "TIMEZONE",
+        "CRON_SCHEDULE_MONTHLY_MINI",
         "QUOTA_MAX_REQUESTS",
         "QUOTA_WINDOW_HOURS",
         "QUOTA_STATE_PATH",
@@ -128,6 +147,84 @@
         "reason": { "type": "string", "description": "Human-readable explanation of the decision, suitable for log lines." }
       },
       "required": ["supported", "model", "renderNode", "reason"]
+    },
+    "ChannelMetadata": {
+      "description": "Metadata token embedded in a campaign channel's topic. Two formats: SETUP (pre-OP) and LIBRARIAN_DATA (post-OP). getLibrarianData() in src/utils/helpers.js only recognises LIBRARIAN_DATA; the SETUP regex is duplicated in messageCreate.js and interactions.js for pre-OP permission checks.",
+      "oneOf": [
+        {
+          "title": "SetupTopic",
+          "description": "Pre-OP format written by /new-campaign and /new-private-campaign. Topic starts with 'SETUP|'.",
+          "type": "object",
+          "properties": {
+            "kind": { "const": "setup" },
+            "dmId": { "$ref": "#/definitions/Snowflake" },
+            "users": { "type": "array", "items": { "$ref": "#/definitions/Snowflake" }, "description": "Snowflakes to auto-assign the campaign role to when the OP is posted." }
+          },
+          "required": ["kind", "dmId"]
+        },
+        {
+          "title": "ActiveTopic",
+          "description": "Post-OP format written by the OP workflow. Topic ends with ' [LIBRARIAN_DATA|DM:<id>|ROLE:<id>]'.",
+          "type": "object",
+          "properties": {
+            "kind": { "const": "librarian_data" },
+            "dmId": { "$ref": "#/definitions/Snowflake" },
+            "roleId": { "$ref": "#/definitions/Snowflake" }
+          },
+          "required": ["kind", "dmId", "roleId"]
+        }
+      ]
+    },
+    "VideoStage": {
+      "type": "string",
+      "enum": ["igpu", "network", "local"],
+      "description": "Stage label carried in FfmpegProgress objects. Mapped to user-facing strings ('local iGPU' / 'NAS iGPU' / 'local CPU') in src/services/instagram.js."
+    },
+    "FfmpegProgress": {
+      "type": "object",
+      "description": "Progress callback payload emitted by runCommandWithProgress each time ffmpeg prints a `time=HH:MM:SS.cs` line to stderr.",
+      "properties": {
+        "stage": { "$ref": "#/definitions/VideoStage" },
+        "percent": { "type": "integer", "minimum": 0, "maximum": 100, "description": "0-100; computed from the latest ffmpeg time and the input's total duration." }
+      },
+      "required": ["stage", "percent"]
+    },
+    "TrackedMessage": {
+      "type": "object",
+      "description": "In-memory association of a bot- or webhook-sent message id with the user who triggered it (used by /roll, !pin, etc.). Capped at 1000 entries by messageTracker.js.",
+      "properties": {
+        "messageId": { "$ref": "#/definitions/Snowflake" },
+        "userId": { "$ref": "#/definitions/Snowflake" },
+        "channelId": { "$ref": "#/definitions/Snowflake" },
+        "timestamp": { "type": "integer", "description": "Unix epoch milliseconds when the association was recorded." }
+      },
+      "required": ["messageId", "userId", "channelId", "timestamp"]
+    },
+    "LastUpdatesEntry": {
+      "type": "string",
+      "description": "One line of the system-help message. Format produced by getLastUpdates() in src/utils/helpers.js: `- YYYY-MM-DD: <subject> ([<shortHash>](<commitUrl>))`.",
+      "pattern": "^- \\d{4}-\\d{2}-\\d{2}: .+ \\(\\[([0-9a-f]{7,40})\\]\\(https?://[^)]+\\)\\)$"
+    },
+    "LibrarianQuirk": {
+      "type": "string",
+      "description": "One of the 10 LIBRARIAN_QUIRKS in src/services/rag.js — a 1-sentence in-character action that flavours the system prompt. Selected per query by seed % quirks.length."
+    },
+    "FallbackRoast": {
+      "type": "string",
+      "description": "One of the FALLBACK_ROASTS in src/config.js — used by /roll when the Ollama roast generator is offline. Wrapped in italics with an '(AI backend offline, using archived roast)' tail by the handler."
+    },
+    "CompressResult": {
+      "type": "object",
+      "description": "Return value of compressVideoToFit on success. Buffer is the .mp4 (or .ts if remux failed) bytes; ext is the file extension Discord should use.",
+      "properties": {
+        "buffer": { "type": "string", "contentEncoding": "base64" },
+        "ext": { "type": "string", "enum": ["mp4", "ts"] }
+      },
+      "required": ["buffer", "ext"]
     }
+  },
+  "type": "object",
+  "properties": {
+    "Config": { "$ref": "#/definitions/Config" }
   }
 }
