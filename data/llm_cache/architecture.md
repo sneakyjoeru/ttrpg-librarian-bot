@@ -33,8 +33,9 @@
 │   ├── services/                 # SERVICES (Domain logic layer)
 │   │   └── rag.js                #   Search RAG, target user resolution, history collection & LLM pipeline (quota-gated)
 │   └── utils/                    # UTILITIES
+│       ├── cpuDetector.js        #   Host CPU / iGPU detection (Intel N100/N150 + /dev/dri/renderD128 probe)
 │       ├── helpers.js            #   Text processing, token estimation, and Git log helpers
-│       ├── mediaCompressor.js    #   Ffmpeg compression utilities for files
+│       ├── mediaCompressor.js    #   Ffmpeg compression utilities for files (iGPU → network → local CPU)
 │       ├── mediaQueue.js         #   Serialized concurrency=1 execution queues
 │       ├── messageTracker.js     #   Association mapping for bot replies and triggers
 │       ├── quota.js              #   Per-user DeepSeek quota tracker (sliding window, persistent JSON store)
@@ -84,3 +85,32 @@ Discord Gateway
 | `http://192.168.0.101:11434/api/generate` | Local Ollama API (qwen3.5:9b) |
 | `https://api.deepseek.com/v1/chat/completions` | DeepSeek API (fallback) |
 | `http://192.168.0.100:9080/search` | SearXNG Search Instance |
+
+---
+
+## 4. Video Transcoding Pipeline
+
+Triggered when an incoming Instagram media attachment exceeds the guild's
+Discord upload limit. Implemented in `src/utils/mediaCompressor.js` with
+detection in `src/utils/cpuDetector.js`.
+
+Three stages, tried in order:
+
+1. **Local iGPU (host)** — `src/utils/cpuDetector.js` reads `/proc/cpuinfo`
+   for an `Intel(R) N100` / `Intel(R) N150` model name **and** checks that
+   `/dev/dri/renderD128` exists. If both pass, ffmpeg runs locally with
+   `-hwaccel vaapi -vaapi_device /dev/dri/renderD128 -c:v hevc_vaapi`. The
+   container must be started with `--device /dev/dri/renderD128` (handled
+   automatically by `rebuild-run.sh` when the render node exists on the
+   host).
+2. **Network transcoder (NAS)** — fallback when the iGPU stage is skipped
+   or fails. Reuses the same VAAPI ladder over SSH to the NAS
+   (`sneakyjoe@192.168.0.100`) using `TRANSCODER_CONTAINER`.
+3. **Local CPU (libx264)** — final fallback. Iterates CRF `[28, 33, 38, 44]`
+   with `preset ultrafast`.
+
+Both VAAPI stages share the same bitrate ladder and `scale_vaapi` filter
+(factored into `calculateTargetBitrate()` and `buildVaapiScaleFilter()`)
+and the same TS→MP4 remux step. Progress updates carry a `stage` field of
+`'igpu' | 'network' | 'local'`, mapped to human-readable labels in
+`src/services/instagram.js` (`local iGPU` / `NAS iGPU` / `local CPU`).

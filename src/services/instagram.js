@@ -470,7 +470,13 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                                 const now = Date.now();
                                 if (now - lastUpdate >= 5000) {
                                     lastUpdate = now;
-                                    const methodStr = info.stage === 'network' ? 'NAS iGPU' : 'local CPU';
+                                    let methodStr;
+                                    switch (info.stage) {
+                                        case 'igpu':    methodStr = 'local iGPU'; break;
+                                        case 'network': methodStr = 'NAS iGPU';   break;
+                                        case 'local':   methodStr = 'local CPU';  break;
+                                        default:        methodStr = info.stage || 'unknown';
+                                    }
                                     const percentStr = info.percent !== undefined ? ` - ${info.percent}%` : '';
                                     updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: compressing media (${methodStr})${percentStr}`).catch(()=>{});
                                 }

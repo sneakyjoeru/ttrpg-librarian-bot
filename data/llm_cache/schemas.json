@@ -44,9 +44,39 @@
         "QUOTA_STATE_PATH": {
           "type": "string",
           "description": "Filesystem path of the persistent quota store (relative to WORKDIR)."
+        },
+        "IGPU_RENDER_NODE": {
+          "type": "string",
+          "description": "Path to the VAAPI render node inside the container (default /dev/dri/renderD128). When this file is absent the local iGPU stage is skipped."
+        },
+        "IGPU_VIDEO_BITRATE_MULTIPLIERS": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0, "maximum": 1 },
+          "description": "Bitrate multipliers (as a fraction of the size budget) tried in order by every VAAPI encode stage."
+        },
+        "IGPU_MAX_VIDEO_BITRATE": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Upper clamp for the calculated video bitrate (bits per second) used by the iGPU and network VAAPI encoders."
+        },
+        "IGPU_MIN_VIDEO_BITRATE": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Lower clamp for the calculated video bitrate (bits per second) used by the iGPU and network VAAPI encoders."
         }
       },
-      "required": ["SERVER_ID", "OLLAMA_URL", "OLLAMA_MODEL", "QUOTA_MAX_REQUESTS", "QUOTA_WINDOW_HOURS", "QUOTA_STATE_PATH"]
+      "required": [
+        "SERVER_ID",
+        "OLLAMA_URL",
+        "OLLAMA_MODEL",
+        "QUOTA_MAX_REQUESTS",
+        "QUOTA_WINDOW_HOURS",
+        "QUOTA_STATE_PATH",
+        "IGPU_RENDER_NODE",
+        "IGPU_VIDEO_BITRATE_MULTIPLIERS",
+        "IGPU_MAX_VIDEO_BITRATE",
+        "IGPU_MIN_VIDEO_BITRATE"
+      ]
     },
     "QuotaState": {
       "type": "object",
@@ -84,6 +114,20 @@
         }
       },
       "required": ["allowed", "used", "remaining", "limit", "windowHours"]
+    },
+    "IgpuDetection": {
+      "type": "object",
+      "description": "Result of hasSupportedIgpu() — whether the host exposes a usable Intel iGPU render node for VAAPI transcoding.",
+      "properties": {
+        "supported": {
+          "type": "boolean",
+          "description": "true only when the CPU model is in the supported list (currently Intel N100 / N150) AND the render node exists in the container."
+        },
+        "model": { "type": "string", "description": "Contents of the first `model name` field from /proc/cpuinfo (empty string when cpuinfo is unreadable)." },
+        "renderNode": { "type": "string", "description": "Path to the VAAPI render node used by the iGPU stage." },
+        "reason": { "type": "string", "description": "Human-readable explanation of the decision, suitable for log lines." }
+      },
+      "required": ["supported", "model", "renderNode", "reason"]
     }
   }
 }

@@ -47,6 +47,15 @@ const QUOTA_STATE_PATH = './data/quota.json';         // Where the per-user requ
 const FFMPEG_TIMEOUT = 180000; // 180s timeout for ffmpeg compression on ARM
 const DISCORD_FILE_LIMIT_DEFAULT = 10 * 1024 * 1024; // 10MB default (no boosts)
 
+// Local iGPU (Intel N100/N150 VAAPI) transcoding settings.
+// Only used when the host CPU is detected as one of the supported Intel SoCs
+// AND /dev/dri/renderD128 is accessible to the container — otherwise the
+// compressor skips this stage and falls through to the network transcoder.
+const IGPU_RENDER_NODE = '/dev/dri/renderD128';       // VAAPI render node exposed by the i915 kernel driver
+const IGPU_VIDEO_BITRATE_MULTIPLIERS = [0.80, 0.65, 0.50, 0.35]; // Same ladder as the network transcoder
+const IGPU_MAX_VIDEO_BITRATE = 4000000;             // 4M ceiling — keeps the bitrate sane on the iGPU
+const IGPU_MIN_VIDEO_BITRATE = 150000;              // 150k floor — don't go below this on tiny clips
+
 const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
 const FALLBACK_ROASTS = [
@@ -187,6 +196,10 @@ module.exports = {
     FALLBACK_ROASTS,
     FFMPEG_TIMEOUT,
     DISCORD_FILE_LIMIT_DEFAULT,
+    IGPU_RENDER_NODE,
+    IGPU_VIDEO_BITRATE_MULTIPLIERS,
+    IGPU_MAX_VIDEO_BITRATE,
+    IGPU_MIN_VIDEO_BITRATE,
     deepseekApiKey,
     DEEPSEEK_API_URL,
     DEEPSEEK_MODEL
