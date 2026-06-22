@@ -15,9 +15,15 @@ const {
     THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS,
     OLLAMA_URL,
     OLLAMA_MODEL,
-    RAG_OLLAMA_TIMEOUT
+    RAG_OLLAMA_TIMEOUT,
+    SYSTEM_UPDATES_LIMIT,
+    SYSTEM_UPDATES_THREAD_NAME
 } = require('./src/config');
 const { getLastUpdates } = require('./src/utils/helpers');
+const {
+    getSystemUpdatesThreadId,
+    setSystemUpdatesIds
+} = require('./src/utils/systemState');
 const handleInteraction = require('./src/handlers/interactions');
 const handleMessageCreate = require('./src/handlers/messageCreate');
 const handleChannelUpdate = require('./src/handlers/channelUpdate');
@@ -138,30 +144,256 @@ client.once(Events.ClientReady, async () => {
     }
     // --- END OF REGISTRATION BLOCK ---
 
-    // --- SYSTEM HELP MESSAGE CONFIGURATION ---
+    // --- SYSTEM HELP MESSAGE + UPDATES THREAD ---
+    // On every restart the bot:
+    //   1. Creates (or finds) the updates thread on the system message.
+    //   2. Posts the last SYSTEM_UPDATES_LIMIT git log entries as ONE message
+    //      inside the thread (edited in place on every restart).
+    //   3. Edits the system message to carry ONLY a pointer link to the
+    //      thread + the "Last updated" timestamp (NO commit history).
+    // Thread + updates-message ids are persisted to data/system_state.json.
     try {
         const systemChannel = await client.channels.fetch(SYSTEM_CHANNEL_ID);
-        if (systemChannel) {
+        if (!systemChannel) {
+            console.warn(`[System Help] Channel ${SYSTEM_CHANNEL_ID} not found. Skipping.`);
+        } else {
             const systemMessage = await systemChannel.messages.fetch(SYSTEM_MESSAGE_ID).catch(() => null);
-
-            const tallinnTime = new Date().toLocaleString('en-GB', {
-                timeZone: TIMEZONE,
-                dateStyle: 'medium',
-                timeStyle: 'long'
-            });
-
-            // Retrieve the last 5 updates from git (or fallback)
-            const updatesList = getLastUpdates();
-
-            const contentWithTime = `Use \`/librarian-bot\` for showing instructions for bot.\n\n**Last 5 Updates:**\n${updatesList}\n\n*Last updated: ${tallinnTime}*`;
-
-            if (systemMessage) {
-                await systemMessage.edit({ content: contentWithTime });
-                console.log('System help message successfully updated with timestamp and last 5 updates.');
+            if (!systemMessage) {
+                console.warn(`[System Help] Message ${SYSTEM_MESSAGE_ID} not found in channel. Skipping (the operator should set SYSTEM_MESSAGE_ID after creating a fresh anchor).`);
             } else {
-                const newMessage = await systemChannel.send({ content: contentWithTime });
-                console.log(`[WARNING] System help message was deleted. Created a new one.`);
-                console.log(`[ACTION REQUIRED] Update systemMessageId to '${newMessage.id}' in your index.js to prevent duplication on next restart.`);
+                const tallinnTime = new Date().toLocaleString('en-GB', {
+                    timeZone: TIMEZONE,
+                    dateStyle: 'medium',
+                    timeStyle: 'long'
+                });
+                const updatesList = getLastUpdates(SYSTEM_UPDATES_LIMIT);
+                // Build the updates message body, guaranteeing it fits
+                // Discord's 2000-char limit. With short-hash URLs + truncated
+                // subjects (see getLastUpdates) 10 entries are ~1.5k chars, so
+                // the trimming below normally does nothing — it's a safety net
+                // for unusually long subjects or a raised SYSTEM_UPDATES_LIMIT.
+                const buildUpdatesContent = (lines) =>
+                    `**Last ${lines.length} Updates:**\n${lines.join('\n')}`;
+                let updatesLines = updatesList.split('\n').filter(Boolean);
+                let updatesContent = buildUpdatesContent(updatesLines);
+                while (updatesLines.length > 1 && updatesContent.length > 2000) {
+                    // Drop the oldest entry (front of the --reverse list) to
+                    // keep the most recent updates under the limit.
+                    updatesLines.shift();
+                    updatesContent = buildUpdatesContent(updatesLines);
+                }
+                if (updatesContent.length > 2000) {
+                    // A single gigantic line — hard-truncate as a last resort.
+                    updatesContent = updatesContent.slice(0, 1997) + '...';
+                }
+
+                // ---- Step 1: Get or create the updates thread ----
+                // Adoption order (most reliable first):
+                //   1. message.thread — discord.js exposes the thread started
+                //      on a message directly. Works for both regular text
+                //      channels and forum-style channels where the post's
+                //      opening message and its thread share the same id.
+                //   2. startThread — only when no thread exists yet (fresh
+                //      anchor). On subsequent runs message.thread is
+                //      populated, so this is skipped and we avoid the
+                //      MessageExistingThread throw.
+                //   3. Persisted thread id (data/system_state.json).
+                //   4. Scan active threads in the channel by name.
+                //   5. Scan archived public threads in the channel by name.
+                // A thread is validated by isThread() + parent channel; do
+                // NOT reject on thread.id === systemMessage.id — that is
+                // legitimate in forum-style channels.
+                const isOurUpdatesThread = (t) =>
+                    t && t.isThread && t.isThread() &&
+                    (t.parentId === SYSTEM_CHANNEL_ID || t.parentId === systemChannel.id) &&
+                    typeof t.name === 'string' && t.name.includes('Updates Log');
+                const unarchiveIfNeeded = async (t, why) => {
+                    if (t.archived) {
+                        try { await t.setArchived(false, why); }
+                        catch (e) { console.warn(`[System Help] Could not unarchive thread ${t.id}: ${e.message}`); }
+                    }
+                };
+                let thread = null;
+
+                if (!thread && systemMessage.thread) {
+                    const direct = systemMessage.thread;
+                    if (direct.isThread && direct.isThread() &&
+                        (direct.parentId === SYSTEM_CHANNEL_ID || direct.parentId === systemChannel.id)) {
+                        thread = direct;
+                        console.log(`[System Help] Adopted thread ${thread.id} via message.thread.`);
+                        await unarchiveIfNeeded(thread, 'Unarchiving updates thread for bot use.');
+                    }
+                }
+                if (!thread) {
+                    try {
+                        const created = await systemMessage.startThread({
+                            name: SYSTEM_UPDATES_THREAD_NAME,
+                            autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_SEVEN_DAYS,
+                            reason: 'Librarian Bot updates log'
+                        });
+                        if (created && created.isThread && created.isThread()) {
+                            thread = created;
+                            console.log(`[System Help] Created new updates thread ${thread.id}.`);
+                        }
+                    } catch (startErr) {
+                        // MessageExistingThread is expected when the thread
+                        // already exists; fall through to the other fallbacks.
+                        if (!startErr || startErr.code !== 'MessageExistingThread') throw startErr;
+                    }
+                }
+                if (!thread) {
+                    const savedThreadId = getSystemUpdatesThreadId();
+                    if (savedThreadId) {
+                        try {
+                            const candidate = await client.channels.fetch(savedThreadId);
+                            if (candidate && candidate.isThread && candidate.isThread() &&
+                                (candidate.parentId === SYSTEM_CHANNEL_ID || candidate.parentId === systemChannel.id)) {
+                                thread = candidate;
+                                console.log(`[System Help] Adopted saved thread ${thread.id}.`);
+                                await unarchiveIfNeeded(thread, 'Unarchiving updates thread for bot use.');
+                            }
+                        } catch (fetchErr) {
+                            console.warn(`[System Help] Could not fetch saved thread ${savedThreadId}: ${fetchErr.message}`);
+                        }
+                    }
+                }
+                if (!thread) {
+                    try {
+                        const active = await systemChannel.threads.fetchActive();
+                        const orphan = active.threads.find(isOurUpdatesThread);
+                        if (orphan) {
+                            thread = orphan;
+                            console.log(`[System Help] Adopted active thread ${thread.id}.`);
+                        }
+                    } catch (scanErr) {
+                        console.warn(`[System Help] Could not scan active threads: ${scanErr.message}`);
+                    }
+                }
+                if (!thread) {
+                    try {
+                        const archived = await systemChannel.threads.fetchArchived({ type: 'public' });
+                        const orphan = archived.threads.find(isOurUpdatesThread);
+                        if (orphan) {
+                            thread = orphan;
+                            console.log(`[System Help] Adopted archived thread ${thread.id}; unarchiving.`);
+                            await unarchiveIfNeeded(thread, 'Unarchiving updates thread for bot use.');
+                        }
+                    } catch (scanErr) {
+                        console.warn(`[System Help] Could not scan archived threads: ${scanErr.message}`);
+                    }
+                }
+                if (!thread) {
+                    console.warn(`[System Help] No adoptable thread found; updates will not be posted to a thread this run.`);
+                }
+
+                // ---- Step 2: Find or post the updates message inside the thread ----
+                let updatesMessage = null;
+                if (thread) {
+                    // If the thread was locked on a previous run, temporarily
+                    // unlock it so we can reliably send/edit inside it, then
+                    // re-lock at the bottom of this block. Bots with
+                    // MANAGE_THREADS usually bypass locks, but unlocking first
+                    // avoids edge cases where send()/edit() fail in a locked
+                    // thread.
+                    try {
+                        if (thread.locked) {
+                            await thread.edit({ locked: false, reason: 'Temporarily unlocking to refresh updates message.' });
+                        }
+                    } catch (unlockErr) {
+                        console.warn(`[System Help] Could not temporarily unlock thread: ${unlockErr.message}`);
+                    }
+
+                    // Search the thread's recent history for any bot-authored
+                    // message (recovers when state.json was wiped but the
+                    // thread — and its existing updates message — survived).
+                    // We must skip:
+                    //   * the system message itself (thread OP) — editing it
+                    //     throws DiscordAPIError 50021, AND
+                    //   * any Discord "system" messages (the auto-generated
+                    //     "thread created" notification is authored by the bot
+                    //     but is a system message that CANNOT be edited — also
+                    //     throws 50021). discord.js exposes this as m.system.
+                    //   Only a real DEFAULT-type bot message is a valid target.
+                    try {
+                        const recent = await thread.messages.fetch({ limit: 20 });
+                        const botMessages = recent.filter(m =>
+                            m.author.id === client.user.id &&
+                            !m.system &&
+                            m.id !== systemMessage.id
+                        );
+                        if (botMessages.size > 0) {
+                            // Take the oldest bot message (the live updates one).
+                            updatesMessage = botMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp).first();
+                            console.log(`[System Help] Found existing bot updates message ${updatesMessage.id} in thread.`);
+                        }
+                    } catch (scanMsgErr) {
+                        console.warn(`[System Help] Could not scan thread messages (${scanMsgErr.message}); will post fresh.`);
+                    }
+
+                    if (updatesMessage) {
+                        await updatesMessage.edit({ content: updatesContent });
+                        console.log(`[System Help] Edited updates message ${updatesMessage.id} in place (${updatesContent.length} chars, ${updatesLines.length} entries).`);
+                    } else {
+                        updatesMessage = await thread.send({ content: updatesContent });
+                        console.log(`[System Help] Posted new updates message ${updatesMessage.id} in thread ${thread.id} (${updatesContent.length} chars, ${updatesLines.length} entries).`);
+                    }
+
+                    // Persist the (now-validated) ids so future restarts
+                    // can find the existing thread/message quickly.
+                    setSystemUpdatesIds({
+                        threadId: thread.id,
+                        updatesMessageId: updatesMessage.id
+                    });
+
+                    // Re-apply the lock so nobody — including admins — can
+                    // post in the thread; only the bot can edit its own
+                    // message inside the lock. Keep the thread unarchived.
+                    try {
+                        if (thread.archived) {
+                            await thread.setArchived(false, 'Keep the updates log thread active for the next bot restart.');
+                        }
+                        if (!thread.locked) {
+                            await thread.edit({ locked: true, reason: 'Keep the updates log thread bot-only' });
+                        }
+                    } catch (lockErr) {
+                        console.warn(`[System Help] Could not enforce thread lock: ${lockErr.message}`);
+                    }
+                }
+
+                // ---- Step 3: Edit the system message itself (the thread OP) ----
+                // The system message must NOT contain any commit history. It
+                // only carries a one-line pointer to the updates thread and
+                // the "Last updated" timestamp in TIMEZONE. The actual
+                // `**Last N Updates:**` body lives ONLY in the thread's first
+                // bot message (see above).
+                const threadUrl = thread
+                    ? `https://discord.com/channels/${SERVER_ID || systemChannel.guildId}/${thread.id}`
+                    : null;
+                let systemContent;
+                if (threadUrl) {
+                    // Use a PLAIN url rather than markdown [text](url):
+                    // Discord does not reliably render markdown-link syntax
+                    // for internal discord.com/channels/... URLs (it shows
+                    // the raw [text](url) text). A plain URL is always
+                    // auto-linked as a clickable jump link.
+                    systemContent =
+                        `Use \`/librarian-bot\` for showing instructions for bot.\n\n` +
+                        `${SYSTEM_UPDATES_THREAD_NAME}: ${threadUrl}\n\n` +
+                        `*Last updated: ${tallinnTime}*`;
+                } else {
+                    // No thread available — just refresh the timestamp and
+                    // strip any stale updates block from a previous run.
+                    // The legacy block may be either a plain
+                    // `**Last N Updates:**` list (no spoilers) or the older
+                    // spoiler-wrapped form (`||| ... ||`); strip both up to
+                    // the "Last updated" marker.
+                    let base = systemMessage.content;
+                    base = base.replace(/\n\n\*\*Last\s+\d+\s+Updates:\*\*[\s\S]*?(?=\n\n\*Last updated:|$)/i, '');
+                    base = base.replace(/\n\n\*Last updated:.*$/, '');
+                    systemContent = base + `\n\n*Last updated: ${tallinnTime}*`;
+                }
+                await systemMessage.edit({ content: systemContent });
+                console.log(`[System Help] System message updated with timestamp${threadUrl ? ' and link to updates thread' : ' (no thread available)'} (no commit history in the body).`);
             }
         }
     } catch (err) {

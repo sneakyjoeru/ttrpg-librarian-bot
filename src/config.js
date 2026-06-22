@@ -53,6 +53,17 @@ const QUOTA_ADMIN_MAX_REQUESTS = 30;                  // Max DeepSeek-routed req
 const QUOTA_ADMIN_WINDOW_HOURS = 3;                   // Sliding window length for admins (hours)
 const QUOTA_STATE_PATH = './data/quota.json';         // Where the per-user request timestamps are persisted
 
+// --- SYSTEM UPDATES THREAD ---
+// On every restart the bot edits the SYSTEM_MESSAGE_ID to refresh the
+// "Last updated" timestamp and the [Updates Log thread] link, then posts
+// the last SYSTEM_UPDATES_LIMIT git commits into the thread's first
+// message (the one the bot itself created — not the thread's OP / system
+// message). The thread is locked so nobody, including admins, can post
+// in it; only the bot can edit its own message inside the lock.
+const SYSTEM_UPDATES_LIMIT = 10;                       // Number of git log entries shown in the thread (was 5 in the legacy main-message body)
+const SYSTEM_UPDATES_STATE_PATH = './data/system_state.json'; // Persists { threadId, updatesMessageId } across restarts
+const SYSTEM_UPDATES_THREAD_NAME = '📜 Updates Log';   // Display name of the auto-created thread
+
 // Media compression settings
 const FFMPEG_TIMEOUT = 180000; // 180s timeout for ffmpeg compression on ARM
 const DISCORD_FILE_LIMIT_DEFAULT = 10 * 1024 * 1024; // 10MB default (no boosts)
@@ -205,6 +216,9 @@ module.exports = {
     QUOTA_ADMIN_MAX_REQUESTS,
     QUOTA_ADMIN_WINDOW_HOURS,
     QUOTA_STATE_PATH,
+    SYSTEM_UPDATES_LIMIT,
+    SYSTEM_UPDATES_STATE_PATH,
+    SYSTEM_UPDATES_THREAD_NAME,
     NUMBER_EMOJIS,
     FALLBACK_ROASTS,
     FFMPEG_TIMEOUT,
