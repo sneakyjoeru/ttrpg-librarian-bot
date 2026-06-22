@@ -36,6 +36,13 @@ const RAG_SEARCH_TIMEOUT = 5000;                      // Timeout for meta-search
 const RAG_OLLAMA_TIMEOUT = 120000;                    // Timeout for local Ollama server generation (ms)
 const RAG_TYPING_INTERVAL = 10000;                     // Typing status keep-alive interval (ms)
 
+// --- USER QUOTA ---
+// While the user has quota, requests are routed to DeepSeek (cloud) first; otherwise
+// they fall back to the local Ollama pipeline with quality-check + DeepSeek fallback.
+const QUOTA_MAX_REQUESTS = 10;                        // Max DeepSeek-routed requests per user per window
+const QUOTA_WINDOW_HOURS = 5;                         // Sliding window length, in hours
+const QUOTA_STATE_PATH = './data/quota.json';         // Where the per-user request timestamps are persisted
+
 // Media compression settings
 const FFMPEG_TIMEOUT = 180000; // 180s timeout for ffmpeg compression on ARM
 const DISCORD_FILE_LIMIT_DEFAULT = 10 * 1024 * 1024; // 10MB default (no boosts)
@@ -173,6 +180,9 @@ module.exports = {
     RAG_SEARCH_TIMEOUT,
     RAG_OLLAMA_TIMEOUT,
     RAG_TYPING_INTERVAL,
+    QUOTA_MAX_REQUESTS,
+    QUOTA_WINDOW_HOURS,
+    QUOTA_STATE_PATH,
     NUMBER_EMOJIS,
     FALLBACK_ROASTS,
     FFMPEG_TIMEOUT,

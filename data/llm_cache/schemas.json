@@ -30,9 +30,60 @@
         "OLLAMA_URL": { "$ref": "#/definitions/Url" },
         "OLLAMA_MODEL": { "type": "string" },
         "DEEPSEEK_API_URL": { "$ref": "#/definitions/Url" },
-        "DEEPSEEK_MODEL": { "type": "string" }
+        "DEEPSEEK_MODEL": { "type": "string" },
+        "QUOTA_MAX_REQUESTS": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum DeepSeek-routed requests per user inside the sliding window."
+        },
+        "QUOTA_WINDOW_HOURS": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Sliding window length (hours) for the per-user quota."
+        },
+        "QUOTA_STATE_PATH": {
+          "type": "string",
+          "description": "Filesystem path of the persistent quota store (relative to WORKDIR)."
+        }
       },
-      "required": ["SERVER_ID", "OLLAMA_URL", "OLLAMA_MODEL"]
+      "required": ["SERVER_ID", "OLLAMA_URL", "OLLAMA_MODEL", "QUOTA_MAX_REQUESTS", "QUOTA_WINDOW_HOURS", "QUOTA_STATE_PATH"]
+    },
+    "QuotaState": {
+      "type": "object",
+      "description": "Persistent per-user quota tracker stored at QUOTA_STATE_PATH. Each key is a Discord user snowflake; each value is an array of millisecond timestamps (request times within the sliding window).",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "description": "Unix epoch milliseconds when a quota slot was consumed.",
+          "minimum": 0
+        }
+      },
+      "examples": [
+        {
+          "221722372145676288": [1719000000000, 1719003600000],
+          "1500507712239308965": [1719007200000]
+        }
+      ]
+    },
+    "QuotaDecision": {
+      "type": "object",
+      "description": "Result of consumeQuota(userId) — the runtime decision passed back to handleRagQuery.",
+      "properties": {
+        "allowed": {
+          "type": "boolean",
+          "description": "true if the request fits inside the user's window and a slot was consumed."
+        },
+        "used": { "type": "integer", "minimum": 0, "description": "Slots consumed inside the current window AFTER this decision." },
+        "remaining": { "type": "integer", "minimum": 0, "description": "Slots still available in the current window AFTER this decision." },
+        "limit": { "type": "integer", "minimum": 1 },
+        "windowHours": { "type": "integer", "minimum": 1 },
+        "resetAt": {
+          "type": ["integer", "null"],
+          "description": "Unix epoch milliseconds when the user's oldest slot expires (null when no slots are used)."
+        }
+      },
+      "required": ["allowed", "used", "remaining", "limit", "windowHours"]
     }
   }
 }

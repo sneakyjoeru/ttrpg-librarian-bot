@@ -12,7 +12,7 @@
 - **Entry point:** `index-librarian.js` (root). Sets up gateway clients, registers slash commands, schedules monthly mini-printing cron flows, and handles Discord events.
 - **Core routing layer:** `src/handlers/` — delegates gateway interactions (interactions, message creation, reactions, channel deletions/updates) to services.
 - **Domain logic:** `src/services/rag.js` — manages internet search retrieval via SearXNG and local/cloud LLM completion pipelines.
-- **LLM Pipeline:** Defaults to local Ollama (at `192.168.0.101:11434`) running `qwen3.5:9b`. Automatically evaluates the response using a local quality checker, falling back to DeepSeek API (`deepseek-chat` via `$deepseek_api_key`) if local Ollama's quality is poor or if the local service is offline.
+- **LLM Pipeline (quota-gated):** Routes per-user based on a sliding-window quota (`src/utils/quota.js`, persisted to `data/quota.json`). **While the user has quota (default 10 requests / 5 hours):** requests go to **DeepSeek first** (faster, higher quality). **When the quota is exhausted:** requests fall back to the **local Ollama pipeline** (`qwen3.5:9b` at `192.168.0.101:11434`), which still quality-checks the answer locally and falls back to DeepSeek API if Ollama's quality is poor or the local service is offline. Quota state survives restarts; quota decision is logged per query.
 - **Character/Persona:** Bot acts as an old, senile but helpful librarian NPC in D&D/TTRPG-centric Discord servers.
 
 ---
@@ -31,12 +31,13 @@
 │   │   ├── messageCreate.js      #   Text message dispatcher (handles bot mentions, RAG triggers)
 │   │   └── reactions.js          #   Reaction listener (role self-assignment on OP campaigns)
 │   ├── services/                 # SERVICES (Domain logic layer)
-│   │   └── rag.js                #   Search RAG, target user resolution, history collection & LLM pipeline
+│   │   └── rag.js                #   Search RAG, target user resolution, history collection & LLM pipeline (quota-gated)
 │   └── utils/                    # UTILITIES
 │       ├── helpers.js            #   Text processing, token estimation, and Git log helpers
 │       ├── mediaCompressor.js    #   Ffmpeg compression utilities for files
 │       ├── mediaQueue.js         #   Serialized concurrency=1 execution queues
 │       ├── messageTracker.js     #   Association mapping for bot replies and triggers
+│       ├── quota.js              #   Per-user DeepSeek quota tracker (sliding window, persistent JSON store)
 │       ├── shell.js              #   Command runners and script triggers
 │       └── webhook.js            #   Placeholder message manager (typing indicators, status updates)
 ├── data/                         # PERSISTED STATE & CACHES
@@ -60,10 +61,13 @@ Discord Gateway
    │                                       ├─ SearXNG Search (context lookup)
    │                                       ├─ Target User / Member lookup
    │                                       ├─ Fetch recent channel history
-   │                                       └─ Run LLM Pipeline:
-   │                                             ├─ Attempt 1: Local Ollama (192.168.0.101)
-   │                                             ├─ Attempt 1 Quality Check (Local Ollama)
-   │                                             └─ Fallback (if Check fails / down) ──► DeepSeek API
+│                                       ├─ consumeQuota(authorId) (src/utils/quota.js)
+│                                       └─ Run LLM Pipeline (branched by quota):
+│                                             ├─ quota OK ─► DeepSeek API (primary)
+│                                             │                  └─ on failure ─► Local Ollama
+│                                             └─ quota exhausted ─► Local Ollama (qwen3.5:9b)
+│                                                            ├─ Attempt 1 Quality Check (Local Ollama)
+│                                                            └─ Fallback (if Check fails / down) ──► DeepSeek API
    │
    └─ interactionCreate ────────► handleInteraction (src/handlers/interactions.js)
                                      ├─ /librarian-bot  -> help message
