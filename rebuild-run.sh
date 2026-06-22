@@ -23,10 +23,27 @@ fi
 # Mount the host's /dev/dri (Intel iGPU render node) into the container if
 # it exists, so the local VAAPI transcoding stage can run on supported Intel
 # SoCs (N100 / N150). Skipped automatically on hosts without an Intel iGPU.
+#
+# We probe for the render node AND any present card device. The card
+# device name is platform-dependent: most N100/N150 systems expose
+# /dev/dri/card0, but some kernels / driver configurations name it
+# card1, and headless iGPU-only setups may not expose a card device at
+# all (only renderD128). Mount whatever actually exists — never fail on
+# a missing optional device.
 igpu_mount=""
+igpu_card_devices=""
 if [ -e "/dev/dri/renderD128" ]; then
-    igpu_mount="--device /dev/dri/renderD128 --device /dev/dri/card0"
-    echo "[rebuild-run] /dev/dri/renderD128 detected — mounting Intel iGPU into the container."
+    for card_dev in /dev/dri/card0 /dev/dri/card1; do
+        if [ -e "${card_dev}" ]; then
+            igpu_card_devices="${igpu_card_devices} --device ${card_dev}"
+        fi
+    done
+    igpu_mount="--device /dev/dri/renderD128${igpu_card_devices}"
+    if [ -n "${igpu_card_devices}" ]; then
+        echo "[rebuild-run] /dev/dri/renderD128 detected (with card device(s)) — mounting Intel iGPU into the container."
+    else
+        echo "[rebuild-run] /dev/dri/renderD128 detected (no /dev/dri/card* device on host; iGPU userspace should still work) — mounting Intel iGPU render node into the container."
+    fi
 else
     echo "[rebuild-run] /dev/dri/renderD128 not present on host — local iGPU transcoding will be skipped."
 fi
