@@ -114,3 +114,18 @@ Both VAAPI stages share the same bitrate ladder and `scale_vaapi` filter
 and the same TS→MP4 remux step. Progress updates carry a `stage` field of
 `'igpu' | 'network' | 'local'`, mapped to human-readable labels in
 `src/services/instagram.js` (`local iGPU` / `NAS iGPU` / `local CPU`).
+
+### Build-time VAAPI driver install
+
+The `intel-media-driver` (iHD) + `libva-intel-driver` (legacy) + `libva-utils`
++ `mesa-va-gallium` userspace stack is **not** baked into the base image —
+it adds weight that's wasted on hosts without an Intel N100/N150. The
+`Dockerfile` exposes an `INSTALL_INTEL_IGPU_DRIVER` build arg
+(default `0`). `rebuild-run.sh` greps the **host's** `/proc/cpuinfo` for
+`N100` / `N150` and automatically passes
+`--build-arg INSTALL_INTEL_IGPU_DRIVER=1` to `docker build` when matched,
+so the resulting image contains the driver stack the runtime iGPU stage
+needs. The runtime gate in `src/utils/cpuDetector.js` is the source of
+truth: even on an image with the drivers installed, the iGPU stage is
+skipped if the host doesn't expose a render node or the CPU model doesn't
+match.
