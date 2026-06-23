@@ -310,9 +310,10 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
         //    The CPU scale filter caps the LONGEST dimension to 720 (so a 720x1280
         //    portrait reel downscales to ~406x720, not left at full 720x1280 which
         //    the old `scale='min(720,iw)':-2` did — that left portrait reels at full
-        //    resolution and CRF 44 still overshot the size limit). A hard bitrate-cap
-        //    fallback (Phase C) guarantees long clips fit when the whole CRF ladder
-        //    overshoots. Mirrors the proven robot-joe CPU path.
+        //    resolution and CRF 44 still overshot the size limit). A 2-pass
+        //    bitrate-targeted encode (Phase B1) hits the exact target size in one
+        //    shot — much faster than climbing a 4-rung CRF ladder. The CRF ladder
+        //    (Phase B2) remains as a fallback if 2-pass fails. Mirrors robot-joe.
         if (!isNasAvailable) {
             console.log('[FFmpeg Compress] NAS is not available. Running local CPU compression fallback...');
             const activeWidth = width;
@@ -335,6 +336,50 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
             }
             const cpuScaleArg = `-vf "${cpuScale}"`;
 
+            // B1. Two-pass bitrate-targeted encode (fastest path to hit an exact
+            //     target size). 2-pass libx264 analyses the content in pass 1 and
+            //     distributes the bitrate in pass 2 to hit the target. Much faster
+            //     and more accurate than a 4-rung CRF ladder. Compute the video
+            //     bitrate from targetSizeBytes/duration, leaving 14% headroom for
+            //     container + audio overhead, 64k audio.
+            if (duration > 0) {
+                const passLogPrefix = path.join(tempDir, `${prefix}_2pass`);
+                try {
+                    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+                    const videoBits = Math.floor(targetSizeBytes * 8 * 0.86);
+                    const audioBits = 64 * 1000;
+                    const totalBitrate = Math.max(80000, Math.floor(videoBits / duration) - audioBits);
+                    const vBitrate = Math.floor(totalBitrate / 1000);
+                    console.log(`[FFmpeg Compress] 2-pass encode: ${vBitrate}k video / 64k audio for ${duration.toFixed(1)}s (target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)...`);
+                    // Pass 1: analysis (output to null, write stats to pass log).
+                    const pass1Cmd = `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset veryfast -b:v ${vBitrate}k -pass 1 -passlogfile "${passLogPrefix}" ${cpuScaleArg} -an -f mp4 /dev/null`;
+                    await runCommandWithProgress(pass1Cmd, duration, 'local', onProgress, timeout);
+                    // Pass 2: encode using the pass-1 stats.
+                    const pass2Cmd = `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset veryfast -b:v ${vBitrate}k -pass 2 -passlogfile "${passLogPrefix}" ${cpuScaleArg} -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart "${outputPath}"`;
+                    await runCommandWithProgress(pass2Cmd, duration, 'local', onProgress, timeout);
+                    if (fs.existsSync(outputPath)) {
+                        const stats = fs.statSync(outputPath);
+                        console.log(`[FFmpeg Compress] 2-pass output: ${(stats.size / 1024 / 1024).toFixed(1)}MB (target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)`);
+                        if (stats.size > 0 && stats.size <= targetSizeBytes) {
+                            const outputBuffer = fs.readFileSync(outputPath);
+                            console.log(`[FFmpeg Compress] Success! Compressed to ${(stats.size / 1024 / 1024).toFixed(1)}MB (2-pass ${vBitrate}k)`);
+                            return { buffer: outputBuffer, ext: 'mp4' };
+                        }
+                        console.log(`[FFmpeg Compress] 2-pass still too large; trying CRF ladder...`);
+                    }
+                } catch (tpErr) {
+                    console.error('[FFmpeg Compress] 2-pass encode failed:', tpErr.message);
+                } finally {
+                    // Clean up 2-pass log files.
+                    try {
+                        const logFiles = fs.readdirSync(tempDir).filter(f => f.startsWith(`${prefix}_2pass`));
+                        for (const f of logFiles) { try { fs.unlinkSync(path.join(tempDir, f)); } catch (_) {} }
+                    } catch (_) {}
+                }
+            }
+
+            // B2. CRF ladder fallback: if 2-pass failed or overshot (rare), try
+            //     progressively higher CRF values.
             for (const crf of crfValues) {
                 try {
                     if (fs.existsSync(outputPath)) {
@@ -362,36 +407,6 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                     console.log(`[FFmpeg Compress] CRF ${crf}: Still too large (${(stats.size / 1024 / 1024).toFixed(1)}MB > ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB). Trying next...`);
                 } catch (crfErr) {
                     console.error(`[FFmpeg Compress] CRF ${crf} failed:`, crfErr.message);
-                }
-            }
-
-            // C. Hard bitrate-cap fallback: for long clips where even CRF 44
-            //    overshoots, switch to a libx264 veryfast encode with -b:v/-maxrate
-            //    computed from targetSizeBytes/duration (audio 64k). The hard
-            //    -maxrate guarantees the output fits, so a long reel always lands
-            //    under the limit instead of failing to post.
-            if (duration > 0) {
-                console.log('[FFmpeg Compress] CRF exhausted. Trying hard bitrate-cap fallback...');
-                try {
-                    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-                    const videoBits = Math.floor(targetSizeBytes * 8 * 0.86);
-                    const audioBits = 64 * 1000;
-                    const totalBitrate = Math.max(80000, Math.floor(videoBits / duration) - audioBits);
-                    const vBitrate = Math.floor(totalBitrate / 1000);
-                    const cmd = `ffmpeg -i "${inputPath}" -c:v libx264 -preset veryfast -b:v ${vBitrate}k -maxrate ${vBitrate}k -bufsize ${Math.floor(vBitrate * 2)}k ${cpuScaleArg} -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart -y "${outputPath}"`;
-                    console.log(`[FFmpeg Compress] Hard bitrate cap: ${vBitrate}k video / 64k audio for ${duration.toFixed(1)}s (target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)...`);
-                    await runCommandWithProgress(cmd, duration, 'local', onProgress, timeout);
-                    if (fs.existsSync(outputPath)) {
-                        const stats = fs.statSync(outputPath);
-                        console.log(`[FFmpeg Compress] Bitrate-cap output: ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
-                        if (stats.size <= targetSizeBytes && stats.size > 0) {
-                            const outputBuffer = fs.readFileSync(outputPath);
-                            console.log(`[FFmpeg Compress] Success! Compressed to ${(stats.size / 1024 / 1024).toFixed(1)}MB (bitrate cap ${vBitrate}k)`);
-                            return { buffer: outputBuffer, ext: 'mp4' };
-                        }
-                    }
-                } catch (bcErr) {
-                    console.error('[FFmpeg Compress] Bitrate-cap fallback failed:', bcErr.message);
                 }
             }
         }
