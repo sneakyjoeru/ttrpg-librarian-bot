@@ -466,6 +466,7 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                             const ext = path.extname(name).substring(1) || 'mp4';
                             
                             let lastUpdate = 0;
+                            const targetMB = (effectiveFileLimit / 1024 / 1024).toFixed(1);
                             const onProgress = (info) => {
                                 const now = Date.now();
                                 if (now - lastUpdate >= 5000) {
@@ -478,7 +479,7 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                                         default:        methodStr = info.stage || 'unknown';
                                     }
                                     const percentStr = info.percent !== undefined ? ` - ${info.percent}%` : '';
-                                    updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: compressing media (${methodStr})${percentStr}`).catch(()=>{});
+                                    updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: compressing media (${methodStr}, target ${targetMB}MB)${percentStr}`).catch(()=>{});
                                 }
                             };
 

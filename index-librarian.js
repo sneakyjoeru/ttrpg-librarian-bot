@@ -1,4 +1,5 @@
 const { Client, GatewayIntentBits, Partials, REST, Routes, ActivityType, Events } = require('discord.js');
+const fs = require('fs');
 const cron = require('node-cron');
 const axios = require('axios');
 const {
@@ -51,6 +52,22 @@ client.once(Events.ClientReady, async () => {
         status: 'online'
     });
     console.log(`Online as ${client.user.tag}`);
+
+    // iGPU passthrough check: log at startup whether /dev/dri is present so
+    // the user can immediately see if they need to rebuild (Docker restart
+    // doesn't re-apply --device flags; only a fresh docker run via
+    // rebuild-run.sh does).
+    try {
+        const driExists = fs.existsSync('/dev/dri');
+        const renderNodes = driExists ? fs.readdirSync('/dev/dri').filter(f => /^renderD\d+$/.test(f)) : [];
+        if (renderNodes.length > 0) {
+            console.log(`[Startup] iGPU passthrough active: /dev/dri/${renderNodes[0]} is available. VAAPI transcoding will be used.`);
+        } else {
+            console.warn('[Startup] ⚠️ iGPU passthrough NOT active: /dev/dri has no render node. Video transcoding will use CPU (slower). Re-run ./rebuild-run.sh on the host to re-apply --device /dev/dri (Docker restart does NOT re-apply device flags).');
+        }
+    } catch (e) {
+        console.warn(`[Startup] Could not check /dev/dri: ${e.message}`);
+    }
 
     // --- POST-RESTART MESSAGE UPDATE ---
     const restartToken = process.env.RESTART_TOKEN;
