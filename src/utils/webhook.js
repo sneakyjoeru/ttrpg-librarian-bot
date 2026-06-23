@@ -1,6 +1,31 @@
 const { trackMessage } = require('./messageTracker');
 const { chunkAttachmentsBySize } = require('./mediaCompressor');
 
+// === In-progress status helpers (mirrors robot-joe's webhook.js) ===
+// The ⏳ indicator is appended to working placeholder messages so the startup
+// cleanup scan can find abandoned placeholders (bot killed mid-process) and
+// resume them. Without it, a killed bot leaves "working... <url>" stuck forever.
+const IN_PROGRESS_STATUS = ' ⏳';
+const IN_PROGRESS_REGEX = / ⏳$/;
+
+function addInProgressStatus(content) {
+    if (!content) return IN_PROGRESS_STATUS.trim() + ' ';
+    const trimmed = content.trimEnd();
+    if (IN_PROGRESS_REGEX.test(trimmed)) return content;
+    return trimmed + IN_PROGRESS_STATUS;
+}
+
+function removeInProgressStatus(content) {
+    if (!content) return content;
+    return content.replace(IN_PROGRESS_REGEX, '').trimEnd();
+}
+
+function extractPlaceholderBaseContent(content) {
+    if (!content) return '';
+    const withoutStatus = removeInProgressStatus(content);
+    return withoutStatus.replace(/\nstage:[\s\S]*$/i, '').trimEnd();
+}
+
 async function sendRepostedMessage(client, message, content, attachments, suppressEmbeds = false, fileLimitBytes = 0, fallbackContent = null) {
     const DISCORD_MAX_ATTACHMENTS = 10;
     const allFiles = attachments || [];
@@ -120,7 +145,7 @@ async function sendWorkingPlaceholder(client, message, originalUrl = '') {
     let isWebhook = false;
     let webhookClient = null;
 
-    const contentText = `working... ${originalUrl ? `<${originalUrl}>` : ''}`;
+    const contentText = addInProgressStatus(`working... ${originalUrl ? `<${originalUrl}>` : ''}`);
 
     if (message.guild) {
         try {
@@ -183,10 +208,15 @@ async function updatePlaceholderStage(placeholder, content, suppressEmbeds = tru
     const { sentMsg, isWebhook, webhookClient } = placeholder;
     if (!sentMsg) return;
 
+    // Keep the ⏳ indicator on stage updates so the startup cleanup scan can
+    // find abandoned placeholders even after stage updates (the scan looks
+    // for ⏳ to identify messages that were interrupted mid-process).
+    const contentWithStatus = addInProgressStatus(content || '');
+
     try {
         if (isWebhook && webhookClient) {
             const editOptions = {
-                content: content || ''
+                content: contentWithStatus
             };
             if (suppressEmbeds) editOptions.flags = 4; // SuppressEmbeds
             const threadId = placeholder.originalMessage.channel.isThread() ? placeholder.originalMessage.channel.id : undefined;
@@ -196,7 +226,7 @@ async function updatePlaceholderStage(placeholder, content, suppressEmbeds = tru
         } else {
             const displayName = placeholder.originalMessage.member ? placeholder.originalMessage.member.displayName : placeholder.originalMessage.author.username;
             const prefix = `**${displayName}**: `;
-            const cleanContent = content ? `${prefix}${content}` : prefix;
+            const cleanContent = contentWithStatus ? `${prefix}${contentWithStatus}` : prefix;
 
             const editOptions = {
                 content: cleanContent.substring(0, 2000)
@@ -215,6 +245,10 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
     const { sentMsg, isWebhook, webhookClient } = placeholder;
     if (!sentMsg) return;
 
+    // Strip the ⏳ indicator from the final content — the final message should
+    // never show the in-progress indicator.
+    const cleanFinalContent = removeInProgressStatus(finalContent || '');
+
     if (!suppressEmbeds) {
         try {
             if (isWebhook && webhookClient) {
@@ -230,7 +264,7 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
         await sendRepostedMessage(
             placeholder.originalMessage.client,
             placeholder.originalMessage,
-            finalContent,
+            cleanFinalContent,
             attachments,
             false,
             fileLimitBytes,
@@ -264,7 +298,7 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
     try {
         if (isWebhook && webhookClient) {
             const editOptions = {
-                content: finalContent || '',
+                content: cleanFinalContent || '',
                 files: fileChunks[0]
             };
             if (suppressEmbeds) {
@@ -297,7 +331,7 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
                     
                     const displayName = placeholder.originalMessage.member ? placeholder.originalMessage.member.displayName : placeholder.originalMessage.author.username;
                     const prefix = `**${displayName}**: `;
-                    const cleanContent = finalContent ? `${prefix}${finalContent}` : prefix;
+                    const cleanContent = cleanFinalContent ? `${prefix}${cleanFinalContent}` : prefix;
                     
                     for (let i = 0; i < fileChunks.length; i++) {
                         const sendOptions = {
@@ -334,7 +368,7 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
         } else {
             const displayName = placeholder.originalMessage.member ? placeholder.originalMessage.member.displayName : placeholder.originalMessage.author.username;
             const prefix = `**${displayName}**: `;
-            const cleanContent = finalContent ? `${prefix}${finalContent}` : prefix;
+            const cleanContent = cleanFinalContent ? `${prefix}${cleanFinalContent}` : prefix;
 
             const editOptions = {
                 content: cleanContent.substring(0, 2000),
@@ -394,10 +428,65 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
     }
 }
 
+// Finalize a placeholder by editing its TEXT ONLY (preserving any attachments
+// already on the message) and removing the ⏳ in-progress indicator.
+async function finalizePlaceholderClean(placeholder, content, suppressEmbeds = true) {
+    const { sentMsg, isWebhook, webhookClient } = placeholder;
+    if (!sentMsg) return;
+    try {
+        const cleanContent = removeInProgressStatus(content || '');
+        if (isWebhook && webhookClient) {
+            const editOptions = { content: cleanContent || '' };
+            if (suppressEmbeds) editOptions.flags = 4;
+            const threadId = placeholder.originalMessage.channel && placeholder.originalMessage.channel.isThread() ? placeholder.originalMessage.channel.id : undefined;
+            if (threadId) editOptions.threadId = threadId;
+            await webhookClient.editMessage(sentMsg.id, editOptions);
+        } else {
+            const displayName = placeholder.originalMessage.member ? placeholder.originalMessage.member.displayName : (placeholder.originalMessage.author ? placeholder.originalMessage.author.username : 'Unknown');
+            const prefix = `**${displayName}**: `;
+            const editOptions = { content: cleanContent ? `${prefix}${cleanContent}`.substring(0, 2000) : `${prefix}`.substring(0, 2000) };
+            if (suppressEmbeds) editOptions.flags = 4;
+            await sentMsg.edit(editOptions);
+        }
+    } catch (err) {
+        console.error('Failed to finalize placeholder clean:', err.message);
+    }
+}
+
+// Build a placeholder recovery object from an existing bot/webhook message that
+// still shows the ⏳ indicator (abandoned placeholder from a killed process).
+async function buildRecoveredPlaceholder(client, existingMessage) {
+    const baseText = extractPlaceholderBaseContent(existingMessage.content || '');
+    const placeholder = {
+        sentMsg: existingMessage,
+        isWebhook: !!existingMessage.webhookId,
+        webhookClient: null,
+        originalMessage: existingMessage,
+        baseText
+    };
+    if (placeholder.isWebhook) {
+        try {
+            const webhookChannel = existingMessage.channel.isThread() ? existingMessage.channel.parent : existingMessage.channel;
+            const webhooks = await webhookChannel.fetchWebhooks();
+            placeholder.webhookClient = webhooks.find(wh => wh.owner && wh.owner.id === client.user.id) || null;
+        } catch (err) {
+            console.warn('[Webhook] Could not re-fetch webhook for recovered placeholder:', err.message);
+        }
+    }
+    return placeholder;
+}
+
 module.exports = {
     sendRepostedMessage,
     sendWorkingPlaceholder,
     updateWorkingPlaceholder,
     updatePlaceholderStage,
-    chunkAttachmentsBySize
+    chunkAttachmentsBySize,
+    finalizePlaceholderClean,
+    buildRecoveredPlaceholder,
+    addInProgressStatus,
+    removeInProgressStatus,
+    extractPlaceholderBaseContent,
+    IN_PROGRESS_STATUS,
+    IN_PROGRESS_REGEX
 };

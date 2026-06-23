@@ -69,6 +69,14 @@ client.once(Events.ClientReady, async () => {
         console.warn(`[Startup] Could not check /dev/dri: ${e.message}`);
     }
 
+    // Clean up abandoned in-progress placeholders from the last 2 hours.
+    // Scans all text channels for bot/webhook messages that still show the ⏳
+    // indicator (meaning the bot was killed mid-process), extracts the Instagram
+    // URL from the placeholder, and re-processes it from scratch.
+    cleanupAbandonedPlaceholders(client).catch(err => {
+        console.error('[Startup Cleanup] Cleanup task failed:', err.message);
+    });
+
     // --- POST-RESTART MESSAGE UPDATE ---
     const restartToken = process.env.RESTART_TOKEN;
     const restartChannelId = process.env.RESTART_CHANNEL_ID;
@@ -728,6 +736,96 @@ async function catchUpMissedInstagramLinks() {
         console.error('[Catch-Up] Error:', err.message);
     }
     console.log('[Catch-Up] Catch-up check completed.');
+}
+
+// --- CLEANUP ABANDONED IN-PROGRESS PLACEHOLDERS ---
+// Scans all guild text channels for bot/webhook messages from the last 2 hours
+// that still show the ⏳ indicator (meaning the bot was killed mid-process),
+// extracts the Instagram URL from the placeholder text, and re-processes it
+// from scratch. Mirrors robot-joe's cleanupAbandonedInProgressMessages.
+const RECOVERY_SEEN_KEY_LB = new Set();
+
+async function cleanupAbandonedPlaceholders(clientInstance) {
+    try {
+        const guild = clientInstance.guilds.cache.get(SERVER_ID);
+        if (!guild) {
+            console.log('[Startup Cleanup] Guild not found, skipping.');
+            return;
+        }
+        const TWO_HOURS_AGO = Date.now() - (2 * 60 * 60 * 1000);
+        console.log('[Startup Cleanup] Scanning channels for abandoned placeholders...');
+        console.log(`[Startup Cleanup] Current time: ${new Date().toISOString()}, looking for messages after: ${new Date(TWO_HOURS_AGO).toISOString()}`);
+
+        const channels = await guild.channels.fetch().catch(() => null);
+        if (!channels) return;
+        const textChannels = channels.filter(c => c.isTextBased());
+        console.log(`[Startup Cleanup] Found ${textChannels.size} text channels`);
+
+        let placeholderCount = 0;
+        let totalMessagesScanned = 0;
+
+        for (const [channelId, channel] of textChannels) {
+            try {
+                const messages = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+                if (!messages || messages.size === 0) continue;
+                totalMessagesScanned += messages.size;
+
+                for (const msg of messages.values()) {
+                    if (msg.createdTimestamp < TWO_HOURS_AGO) continue;
+                    // Only bot/webhook messages with the ⏳ indicator.
+                    const isBotOrWebhook = msg.author.bot || msg.webhookId !== null;
+                    if (!isBotOrWebhook) continue;
+                    const text = msg.content || '';
+                    if (!text.includes('⏳') && !text.includes('working...') && !text.includes('stage:')) continue;
+
+                    // Extract the Instagram URL from the placeholder text.
+                    const urlMatch = text.match(/https?:\/\/(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s>⏳]+/i) ||
+                                     text.match(/<(https?:\/\/(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^>]+)>/i);
+                    if (!urlMatch) continue;
+                    const url = urlMatch[1] || urlMatch[0];
+                    const key = `${msg.channel.id}:${url}`;
+                    if (RECOVERY_SEEN_KEY_LB.has(key)) continue;
+                    RECOVERY_SEEN_KEY_LB.add(key);
+
+                    placeholderCount++;
+                    console.log(`[Startup Cleanup] Found abandoned Instagram placeholder ${msg.id} in channel ${channelId}: "${text.substring(0, 80)}..."`);
+
+                    // Build a recovered placeholder and re-process the URL.
+                    const { buildRecoveredPlaceholder, extractPlaceholderBaseContent } = require('./src/utils/webhook');
+                    const { handleInstagramMessage } = require('./src/services/instagram');
+                    try {
+                        const recoveredPlaceholder = await buildRecoveredPlaceholder(clientInstance, msg);
+                        const remadeContent = extractPlaceholderBaseContent(msg.content || '') || url;
+                        // Build a synthetic recovery message (like robot-joe).
+                        const recoveryMessage = new Proxy(msg, {
+                            get(target, prop) {
+                                if (prop === 'id') return `synth_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+                                if (prop === 'content' || prop === 'cleanContent') return url;
+                                if (prop === 'attachments') return { size: 0 };
+                                if (prop === 'webhookId') return null;
+                                if (prop === 'delete') return async () => true;
+                                if (prop === 'edit') return async () => msg;
+                                if (prop === 'reply') return async (options) => msg.channel.send(options).catch(() => null);
+                                if (prop === 'fetch') return async () => msg;
+                                return target[prop];
+                            }
+                        });
+                        console.log(`[Startup Cleanup] Resuming abandoned Instagram placeholder ${msg.id} for URL ${url}`);
+                        handleInstagramMessage(clientInstance, recoveryMessage, url, remadeContent, recoveredPlaceholder).catch(err => {
+                            console.error(`[Startup Cleanup] Error resuming placeholder ${msg.id}:`, err.message);
+                        });
+                    } catch (err) {
+                        console.error(`[Startup Cleanup] Failed to resume placeholder ${msg.id}:`, err.message);
+                    }
+                }
+            } catch (channelErr) {
+                // skip
+            }
+        }
+        console.log(`[Startup Cleanup] Scanned ${totalMessagesScanned} messages, found ${placeholderCount} abandoned placeholders`);
+    } catch (err) {
+        console.error('[Startup Cleanup] Failed to clean abandoned placeholders:', err.message);
+    }
 }
 
 client.login(token);
