@@ -326,15 +326,19 @@ Three stages, tried in order:
 1. **Local iGPU (host)** — `src/utils/cpuDetector.js` reads `/proc/cpuinfo`
    for an `Intel(R) N100` / `Intel(R) N150` model name **and** checks that
    `/dev/dri/renderD128` exists. If both pass, ffmpeg runs locally with
-   `-hwaccel vaapi -vaapi_device /dev/dri/renderD128 -rc_mode CQP -qp {28,32,36,40} -c:v h264_vaapi`
-   and outputs MP4 directly (no TS→MP4 remux). `h264_vaapi` is used instead of
-   `hevc_vaapi` because HEVC encode is not exposed on the Alpine
-   `intel-media-driver` build for the N150 (fails instantly with code 234);
-   `h264_vaapi` is universally supported on Intel iGPUs and Discord plays it
-   natively. Quality is controlled via CQP (hardware encoders overshoot a
-   target `-b:v` on short low-bitrate clips). The container must be started
-   with `--device /dev/dri/renderD128` and `--group-add <render_gid>` (handled
+   `h264_vaapi` and outputs MP4 directly (no TS→MP4 remux). The iGPU stage
+   first tries a **bitrate-capped single pass** (`-b:v`/`-maxrate` computed
+   from `targetSizeBytes/duration`) so long clips fit on the first try
+   instead of climbing a 4-rung CQP ladder; if that overshoots it falls
+   through to a CQP ladder `-rc_mode CQP -qp {28,32,36,40}`. `h264_vaapi` is
+   used instead of `hevc_vaapi` because HEVC encode is not exposed on the
+   Alpine `intel-media-driver` build for the N150 (fails instantly with
+   code 234); `h264_vaapi` is universally supported on Intel iGPUs and
+   Discord plays it natively. The container must be started with
+   `--device /dev/dri/renderD128` and `--group-add <render_gid>` (handled
    automatically by `rebuild-run.sh` when the render node exists on the host).
+   `DISCORD_FILE_LIMIT_DEFAULT=25MB` (Discord raised the free-tier upload
+   limit to 25MB; was 10MB, which forced heavy over-compression).
 2. **Network transcoder (NAS)** — fallback when the iGPU stage is skipped
    or fails. Reuses the same VAAPI ladder over SSH to the NAS
    (`sneakyjoe@192.168.0.100`) using `$TRANSCODER_CONTAINER` (env) or

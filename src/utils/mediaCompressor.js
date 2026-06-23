@@ -134,6 +134,45 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
         if (isIgpuAvailable) {
             console.log(`[FFmpeg Compress] ${igpuInfo.reason}. Attempting local iGPU VAAPI transcoding first...`);
             const renderNode = igpuInfo.renderNode || IGPU_RENDER_NODE;
+            const scaleFilter = buildVaapiScaleFilter(width, height);
+
+            // Bitrate-capped first attempt: for long clips, compute a target
+            // video bitrate from targetSizeBytes/duration and encode once with
+            // a hard -maxrate cap so the output is guaranteed to fit — instead of
+            // climbing a 4-rung CQP ladder (each rung encodes the full clip and
+            // only reveals its size after finishing). h264_vaapi honors -maxrate,
+            // so a single pass lands under the limit. If this fails or overshots
+            // (rare for very short clips where the min bitrate floor dominates),
+            // fall through to the CQP ladder below.
+            if (duration > 0) {
+                const igpuBcPath = path.join(tempDir, `${prefix}_igpu_bc.mp4`);
+                try {
+                    // 86% of target bits for video (headroom for container/audio overhead), 96k audio.
+                    const videoBits = Math.floor(targetSizeBytes * 8 * 0.86);
+                    const audioBitrate = 96 * 1000;
+                    const totalBitrate = Math.max(IGPU_MIN_VIDEO_BITRATE, Math.min(IGPU_MAX_VIDEO_BITRATE, Math.floor(videoBits / duration) - audioBitrate));
+                    const vBitrate = Math.floor(totalBitrate / 1000);
+                    const igpuBcCmd = `ffmpeg -hwaccel vaapi -vaapi_device ${renderNode} -i "${inputPath}" ` +
+                        `-vf 'format=nv12,hwupload,${scaleFilter}' -b:v ${vBitrate}k -maxrate ${vBitrate}k -bufsize ${Math.floor(vBitrate * 2)}k -c:v h264_vaapi -c:a aac -b:a 96k -movflags +faststart -y "${igpuBcPath}"`;
+                    console.log(`[FFmpeg Compress] Local iGPU bitrate-cap attempt (${vBitrate}k for ${duration.toFixed(1)}s)...`);
+                    await runCommandWithProgress(igpuBcCmd, duration, 'igpu', onProgress, timeout);
+                    if (fs.existsSync(igpuBcPath)) {
+                        const stats = fs.statSync(igpuBcPath);
+                        console.log(`[FFmpeg Compress] Local iGPU bitrate-cap produced ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
+                        if (stats.size > 0 && stats.size <= targetSizeBytes) {
+                            const outputBuffer = fs.readFileSync(igpuBcPath);
+                            console.log(`[FFmpeg Compress] Success! Compressed via iGPU bitrate-cap (${vBitrate}k) -> ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
+                            return { buffer: outputBuffer, ext: 'mp4' };
+                        }
+                        console.log(`[FFmpeg Compress] Local iGPU bitrate-cap still too large; trying CQP ladder...`);
+                    }
+                } catch (bcErr) {
+                    console.warn(`[FFmpeg Compress] Local iGPU bitrate-cap failed (${bcErr.message}); trying CQP ladder...`);
+                } finally {
+                    try { if (fs.existsSync(igpuBcPath)) fs.unlinkSync(igpuBcPath); } catch (e) {}
+                }
+            }
+
             // CQP quality ladder (higher = smaller). h264_vaapi is used instead of
             // hevc_vaapi: HEVC encode isn't exposed on the Alpine intel-media-driver
             // build for the N150 (fails instantly with code 234), while h264_vaapi
@@ -147,8 +186,6 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                 const qp = qpValues[i];
                 const igpuMp4Path = path.join(tempDir, `${prefix}_igpu_${i}.mp4`);
                 try {
-                    const scaleFilter = buildVaapiScaleFilter(width, height);
-
                     const igpuCmd = `ffmpeg -hwaccel vaapi -vaapi_device ${renderNode} -i "${inputPath}" ` +
                         `-vf 'format=nv12,hwupload,${scaleFilter}' -rc_mode CQP -qp ${qp} -c:v h264_vaapi -c:a aac -b:a 96k -movflags +faststart -y "${igpuMp4Path}"`;
 

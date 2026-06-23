@@ -66,7 +66,10 @@ const SYSTEM_UPDATES_THREAD_NAME = '📜 Updates Log';   // Display name of the 
 
 // Media compression settings
 const FFMPEG_TIMEOUT = 180000; // 180s timeout for ffmpeg compression on ARM
-const DISCORD_FILE_LIMIT_DEFAULT = 10 * 1024 * 1024; // 10MB default (no boosts)
+// Discord raised the free-tier (Tier 0/1) upload limit to 25MB. The old 10MB
+// value was forcing heavy over-compression (a 34MB reel compressed to 7.9MB
+// at QP 40 "potato" quality + a 4-rung CQP ladder) when ~24MB was allowed.
+const DISCORD_FILE_LIMIT_DEFAULT = 25 * 1024 * 1024; // 25MB default (no boosts)
 
 // Local iGPU (Intel N100/N150 VAAPI) transcoding settings.
 // Only used when the host CPU is detected as one of the supported Intel SoCs
