@@ -69,7 +69,7 @@ const FFMPEG_TIMEOUT = 180000; // 180s timeout for ffmpeg compression on ARM
 // Discord raised the free-tier (Tier 0/1) upload limit to 25MB. The old 10MB
 // value was forcing heavy over-compression (a 34MB reel compressed to 7.9MB
 // at QP 40 "potato" quality + a 4-rung CQP ladder) when ~24MB was allowed.
-const DISCORD_FILE_LIMIT_DEFAULT = 25 * 1024 * 1024; // 25MB default (no boosts)
+const DISCORD_FILE_LIMIT_DEFAULT = 10 * 1024 * 1024; // 10MB default (Tier 0/1) — Discord's guaranteed minimum; 25MB isn't rolled out to all servers yet so 10MB is the safe default. Boosted guilds use 50/100MB via getGuildFileLimit(premiumTier).
 
 // Local iGPU (Intel N100/N150 VAAPI) transcoding settings.
 // Only used when the host CPU is detected as one of the supported Intel SoCs
