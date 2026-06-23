@@ -35,7 +35,7 @@ const RAG_SEARCH_LIMIT = 5;                           // Number of search result
 const RAG_HISTORY_LIMIT = 100;                        // Number of recent chat history messages to include in LLM context
 const RAG_SEARCH_TIMEOUT = 5000;                      // Timeout for meta-search requests (ms)
 const RAG_OLLAMA_TIMEOUT = 120000;                    // Timeout for local Ollama server generation (ms)
-const RAG_TYPING_INTERVAL = 10000;                     // Typing status keep-alive interval (ms)
+const RAG_TYPING_INTERVAL = 5000;                      // Typing status keep-alive interval (ms) — shorter = less residual "typing..." after job completes (Discord shows typing for ~8-10s after the last sendTyping call)
 
 // --- USER QUOTA ---
 // While the user has quota, requests are routed to DeepSeek (cloud) first; otherwise

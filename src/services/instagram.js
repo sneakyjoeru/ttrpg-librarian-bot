@@ -470,7 +470,7 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                             const targetMB = (effectiveFileLimit / 1024 / 1024).toFixed(1);
                             const onProgress = (info) => {
                                 const now = Date.now();
-                                if (now - lastUpdate >= 5000) {
+                                if (now - lastUpdate >= 3000) {
                                     lastUpdate = now;
                                     let methodStr;
                                     switch (info.stage) {
