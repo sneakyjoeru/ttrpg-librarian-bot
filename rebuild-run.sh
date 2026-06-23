@@ -73,6 +73,17 @@ else
     echo "[rebuild-run] Host CPU '${host_cpu_model:-unknown}' is not in the supported iGPU list — skipping driver install in the image."
 fi
 
+# Write rebuild timestamp (used by the bot's catch-up mechanic to scan for
+# missed requests during the downtime window).
+date -u +"%Y-%m-%dT%H:%M:%SZ" > rebuild_time.txt
+
+# Notify the running container that a rebuild is starting (SIGUSR2 → the bot
+# sets its Discord presence to "Пересборка..." / dnd so users see the update).
+docker kill --signal=SIGUSR2 librarian-bot 2>/dev/null || true
+
+# Clean any old progress file inside the container
+docker exec librarian-bot rm -f /usr/src/app/build_progress.txt 2>/dev/null || true
+
 BUILDX_GIT_INFO=false docker build --provenance=false ${igpu_build_arg} -t discord-librarian-bot . && \
 docker stop librarian-bot || true && \
 docker rm librarian-bot || true && \

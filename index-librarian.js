@@ -147,6 +147,11 @@ client.once(Events.ClientReady, async () => {
         console.error('[Startup] Failed to fetch guild members on startup:', fetchErr);
     }
 
+    // Catch up on missed Instagram links posted during the downtime window.
+    catchUpMissedInstagramLinks().catch(err => {
+        console.error('[Catch-Up] Catch-up task failed:', err.message);
+    });
+
     // --- COMMAND REGISTRATION ---
     try {
         console.log('Started refreshing application (/) commands.');
@@ -568,5 +573,161 @@ client.on('messageReactionAdd', (reaction, user) => {
 client.on('messageReactionRemove', (reaction, user) => {
     handleReactionRemove(reaction, user).catch(console.error);
 });
+
+// --- SIGUSR2: REBUILD STATUS ---
+// When rebuild-run.sh sends SIGUSR2, the bot sets its Discord presence to
+// "Пересборка..." (dnd) so users see the update in progress. It then polls
+// build_progress.txt for the build percentage (written by the rebuild script
+// on the host into the container's working directory).
+let rebuildInterval = null;
+process.on('SIGUSR2', () => {
+    console.log('🧱 [Presence] Received SIGUSR2. Rebuild in progress. Setting status to dnd...');
+    if (client && client.user) {
+        client.user.setStatus('dnd');
+        client.user.setPresence({
+            activities: [{ name: 'status', type: ActivityType.Custom, state: 'Пересборка...' }],
+            status: 'dnd'
+        });
+    }
+    if (rebuildInterval) clearInterval(rebuildInterval);
+    const progressFilePath = './build_progress.txt';
+    let lastValue = '';
+    let sameValueCount = 0;
+    let lastPresenceUpdateTime = 0;
+    rebuildInterval = setInterval(() => {
+        try {
+            if (fs.existsSync(progressFilePath)) {
+                const content = fs.readFileSync(progressFilePath, 'utf8').trim();
+                if (content === 'FAILED') {
+                    clearInterval(rebuildInterval);
+                    rebuildInterval = null;
+                    try { fs.unlinkSync(progressFilePath); } catch (_) {}
+                    // Revert to normal presence
+                    if (client && client.user) {
+                        client.user.setPresence({
+                            activities: [{ name: 'status', type: ActivityType.Custom, state: 'Automating ttrpg.ee' }],
+                            status: 'online'
+                        });
+                    }
+                    return;
+                }
+                const percent = parseInt(content, 10);
+                if (!isNaN(percent) && percent >= 0 && percent <= 100) {
+                    const stateText = `Пересборка (${percent}%)`;
+                    const now = Date.now();
+                    if (stateText !== lastValue) {
+                        lastValue = stateText;
+                        sameValueCount = 0;
+                        if (now - lastPresenceUpdateTime >= 20000 || percent === 100) {
+                            lastPresenceUpdateTime = now;
+                            if (client && client.user) {
+                                client.user.setStatus('dnd');
+                                client.user.setPresence({
+                                    activities: [{ name: 'status', type: ActivityType.Custom, state: stateText }],
+                                    status: 'dnd'
+                                });
+                            }
+                        }
+                    } else {
+                        sameValueCount++;
+                    }
+                }
+            } else {
+                sameValueCount++;
+            }
+            if (sameValueCount > 150) {
+                clearInterval(rebuildInterval);
+                rebuildInterval = null;
+                try { fs.unlinkSync(progressFilePath); } catch (_) {}
+                if (client && client.user) {
+                    client.user.setPresence({
+                        activities: [{ name: 'status', type: ActivityType.Custom, state: 'Automating ttrpg.ee' }],
+                        status: 'online'
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('[Presence] Error checking rebuild progress:', err.message);
+        }
+    }, 2000);
+});
+
+// --- CATCH-UP FOR MISSED INSTAGRAM LINKS DURING RESTART ---
+// After the bot comes back online, scan channels for Instagram links posted
+// during the downtime window (between rebuild_time.txt and now) that were
+// never processed. This mirrors robot-joe's catchUpMissedRequests.
+async function catchUpMissedInstagramLinks() {
+    const delta = 5 * 60 * 1000;
+    let startTimestamp = Date.now() - 15 * 60 * 1000; // default 15-min window
+
+    if (fs.existsSync('./rebuild_time.txt')) {
+        try {
+            const timeStr = fs.readFileSync('./rebuild_time.txt', 'utf8').trim();
+            const parsed = new Date(timeStr).getTime();
+            if (!isNaN(parsed) && parsed > 0) {
+                startTimestamp = parsed - delta;
+                const maxLookback = 6 * 60 * 60 * 1000;
+                if (Date.now() - startTimestamp > maxLookback) {
+                    startTimestamp = Date.now() - maxLookback;
+                }
+                console.log(`[Catch-Up] Loaded rebuild timestamp: ${timeStr}. Scanning since ${new Date(startTimestamp).toISOString()}`);
+            }
+        } catch (e) {
+            console.error('[Catch-Up] Failed to read rebuild_time.txt:', e.message);
+        }
+    }
+
+    try {
+        const guild = client.guilds.cache.get(SERVER_ID);
+        if (!guild) {
+            console.log('[Catch-Up] Guild not found, skipping.');
+            return;
+        }
+        const channels = await guild.channels.fetch().catch(() => null);
+        if (!channels) return;
+        const textChannels = channels.filter(c => c.isTextBased());
+        console.log(`[Catch-Up] Scanning ${textChannels.size} text channels for missed Instagram links...`);
+
+        const instagramRegex = /(?:https?:\/\/)?(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s]+/i;
+
+        for (const [channelId, channel] of textChannels) {
+            try {
+                const fetched = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+                if (!fetched || fetched.size === 0) continue;
+                const fetchedArray = Array.from(fetched.values());
+                const missedLinks = fetchedArray.filter(msg => {
+                    if (msg.author.bot) return false;
+                    if (msg.createdTimestamp < startTimestamp) return false;
+                    if (!instagramRegex.test(msg.content)) return false;
+                    // Check if a bot/webhook response already exists for this message
+                    const msgIndex = fetchedArray.indexOf(msg);
+                    const subsequent = fetchedArray.slice(0, msgIndex);
+                    const instaMatch = msg.content.match(/(?:https?:\/\/)?(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/(?:p|reels?|tv)\/([a-zA-Z0-9_\-]+)/i);
+                    if (instaMatch) {
+                        const shortcode = instaMatch[1];
+                        const hasResponse = subsequent.some(m =>
+                            (m.author.bot || m.webhookId !== null) && m.content.includes(shortcode)
+                        );
+                        if (hasResponse) return false;
+                    }
+                    return true;
+                });
+                // Process missed links oldest-first
+                missedLinks.reverse();
+                for (const req of missedLinks) {
+                    console.log(`[Catch-Up] Found missed Instagram link from ${req.author.tag} in ${channelId}`);
+                    handleMessageCreate(client, req).catch(err => {
+                        console.error('[Catch-Up] Error handling missed link:', err.message);
+                    });
+                }
+            } catch (channelErr) {
+                // skip
+            }
+        }
+    } catch (err) {
+        console.error('[Catch-Up] Error:', err.message);
+    }
+    console.log('[Catch-Up] Catch-up check completed.');
+}
 
 client.login(token);
