@@ -341,6 +341,7 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
         message.channel.sendTyping().catch(() => { });
     }, RAG_TYPING_INTERVAL);
 
+    try {
     mediaQueue.enqueue(async () => {
         try {
             // Determine the file size limit for this guild
@@ -582,6 +583,10 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
             clearInterval(typingInterval);
         }
     });
+    } catch (enqueueErr) {
+        console.error('[Instagram Interceptor] mediaQueue.enqueue failed:', enqueueErr.message);
+        clearInterval(typingInterval);
+    }
 }
 
 module.exports = {
