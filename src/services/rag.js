@@ -5,8 +5,6 @@ const { consumeQuota, formatDuration } = require('../utils/quota');
 const {
     helpText,
     SEARXNG_URL,
-    OLLAMA_URL,
-    OLLAMA_MODEL,
     RAG_SEARCH_LIMIT,
     RAG_HISTORY_LIMIT,
     RAG_SEARCH_TIMEOUT,
@@ -16,7 +14,9 @@ const {
     ADMIN_ROLE_ID,
     deepseekApiKey,
     DEEPSEEK_API_URL,
-    DEEPSEEK_MODEL
+    DEEPSEEK_MODEL,
+    DEEPSEEK_ROUTING_MODEL,
+    DEEPSEEK_FALLBACK_MODEL
 } = require('../config');
 
 const LIBRARIAN_QUIRKS = [
@@ -34,6 +34,7 @@ const LIBRARIAN_QUIRKS = [
 
 async function checkResponseQuality(userQuery, answer) {
     if (!userQuery) return true;
+    if (!deepseekApiKey) return true;
     const evalPrompt = `You are a strict quality controller.
 Evaluate whether the following generated response is an acceptable answer that matches and directly answers the user's query.
 
@@ -51,18 +52,23 @@ Respond with exactly "NO" if the answer does not match, does not answer the quer
 Do not write any other text. Reply with either YES or NO.`;
 
     try {
-        const response = await axios.post(OLLAMA_URL, {
-            model: OLLAMA_MODEL,
-            prompt: evalPrompt,
+        const routingModel = DEEPSEEK_ROUTING_MODEL || 'deepseek-chat';
+        const response = await axios.post(DEEPSEEK_API_URL, {
+            model: routingModel,
+            messages: [{ role: 'user', content: evalPrompt }],
             stream: false,
-            options: {
-                temperature: 0.1,
-                num_ctx: 2048
+            temperature: 0.1,
+            max_tokens: 16
+        }, {
+            timeout: 10000,
+            headers: {
+                'Authorization': `Bearer ${deepseekApiKey}`,
+                'Content-Type': 'application/json'
             }
-        }, { timeout: 8000 });
+        });
 
-        const result = response.data.response.trim().toUpperCase();
-        console.log(`[Response Quality Check] Local quality check outcome: ${result}`);
+        const result = (response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message && response.data.choices[0].message.content || '').trim().toUpperCase();
+        console.log(`[Response Quality Check] DeepSeek quality check outcome: ${result}`);
 
         if (result.includes('YES') && !result.includes('NO')) {
             return true;
@@ -304,8 +310,8 @@ Answer (stay in character!):`;
         // --- QUOTA GATE ---
         // While the requesting user has DeepSeek quota remaining we route to
         // DeepSeek first (cloud, faster, higher quality). When their quota is
-        // exhausted we use the legacy local-Ollama pipeline with its own
-        // quality check + DeepSeek fallback.
+        // exhausted we use the DeepSeek fallback pipeline with its own
+        // quality check + DeepSeek retry with routing model.
         //
         // Two tiers, tracked in independent per-user buckets inside
         // src/utils/quota.js:
@@ -336,8 +342,8 @@ Answer (stay in character!):`;
 
         if (!quotaDecision.allowed && quotaDecision.used >= quotaDecision.limit) {
             const inMs = Math.max(0, (quotaDecision.resetAt || 0) - Date.now());
-            console.log(`[Librarian Bot] Quota exhausted for user ${message.author.id} (${profile} ${quotaDecision.used}/${quotaDecision.limit}); falling back to local Ollama pipeline. Resets in ${formatDuration(inMs)}.`);
-            quotaExhaustedNotice = `*The Librarian adjusts his spectacles and mutters that the brighter shelves are dim for now — only the local archives are within reach. (Resets in ${formatDuration(inMs)})*`;
+            console.log(`[Librarian Bot] Quota exhausted for user ${message.author.id} (${profile} ${quotaDecision.used}/${quotaDecision.limit}); falling back to DeepSeek fallback pipeline. Resets in ${formatDuration(inMs)}.`);
+            quotaExhaustedNotice = `*The Librarian adjusts his spectacles and mutters that the brighter shelves are dim for now — only the secondary archives are within reach. (Resets in ${formatDuration(inMs)})*`;
         } else {
             console.log(`[Librarian Bot] Quota OK for user ${message.author.id} (${profile} ${quotaDecision.used}/${quotaDecision.limit} used); routing to DeepSeek first.`);
         }
@@ -377,46 +383,50 @@ Answer (stay in character!):`;
         }
 
         if (!deepseekSuccess) {
-            // --- LOCAL OLLAMA PATH (existing behavior) ---
-            // Either quota is exhausted (preferred path) or the DeepSeek quota
-            // call failed (fallback). Behavior is identical to the original
-            // pipeline: try Ollama, quality-check, fall back to DeepSeek on
-            // failure.
-            let localOllamaSuccess = false;
+            // --- DEEPSEEK FALLBACK PATH (replaces old local Ollama) ---
+            // Either quota is exhausted or the DeepSeek quota call failed.
+            // Try DeepSeek API with the fallback model, quality-check it,
+            // and if it fails, try DeepSeek again with the routing model.
+            let deepseekFallbackSuccess = false;
+            const fallbackModel = DEEPSEEK_FALLBACK_MODEL || 'deepseek-chat';
             try {
-                console.log(`[Librarian Bot] Attempting local Ollama query...`);
-                const ollamaResponse = await axios.post(OLLAMA_URL, {
-                    model: OLLAMA_MODEL,
-                    system: systemMessage,
-                    prompt: userPrompt,
+                console.log(`[Librarian Bot] Attempting DeepSeek fallback (model: ${fallbackModel})...`);
+                const dsResponse = await axios.post(DEEPSEEK_API_URL, {
+                    model: fallbackModel,
+                    messages: [
+                        { role: 'system', content: systemMessage },
+                        { role: 'user', content: userPrompt }
+                    ],
                     stream: false,
-                    options: {
-                        temperature: 0.85,
-                        num_ctx: 32768,
-                        seed: seed,
-                        stop: ["\n[", "\nUser Question:", "\nRecent Channel Chat History", "\nInternet Search Context:"]
+                    temperature: 0.85
+                }, {
+                    timeout: 30000,
+                    headers: {
+                        'Authorization': `Bearer ${deepseekApiKey}`,
+                        'Content-Type': 'application/json'
                     }
-                }, { timeout: RAG_OLLAMA_TIMEOUT });
-                answer = ollamaResponse.data.response;
+                });
+                answer = dsResponse.data.choices[0].message.content;
 
-                // Check quality of Ollama response
-                console.log(`[Librarian Bot] Verifying local Ollama response quality...`);
+                // Check quality of DeepSeek response
+                console.log(`[Librarian Bot] Verifying DeepSeek fallback response quality...`);
                 const qualityOk = await checkResponseQuality(cleanedQuery, answer);
                 if (qualityOk) {
-                    localOllamaSuccess = true;
+                    deepseekFallbackSuccess = true;
                 } else {
-                    console.warn(`[Librarian Bot] Local Ollama response failed quality check. Falling back to DeepSeek.`);
+                    console.warn(`[Librarian Bot] DeepSeek fallback response failed quality check.`);
                 }
-            } catch (ollamaErr) {
-                console.warn('Ollama query failed/timed out, falling back to DeepSeek:', ollamaErr.message);
+            } catch (dsErr) {
+                console.warn('DeepSeek fallback query failed/timed out:', dsErr.message);
             }
 
-            if (!localOllamaSuccess) {
+            if (!deepseekFallbackSuccess) {
                 if (deepseekApiKey) {
                     try {
-                        console.log(`[Librarian Bot] Calling DeepSeek API fallback (model: ${DEEPSEEK_MODEL})...`);
-                        const deepseekResponse = await axios.post(DEEPSEEK_API_URL, {
-                            model: DEEPSEEK_MODEL,
+                        const routingModel = DEEPSEEK_ROUTING_MODEL || 'deepseek-chat';
+                        console.log(`[Librarian Bot] Calling DeepSeek API final attempt (model: ${routingModel})...`);
+                        const dsResponse = await axios.post(DEEPSEEK_API_URL, {
+                            model: routingModel,
                             messages: [
                                 { role: 'system', content: systemMessage },
                                 { role: 'user', content: userPrompt }
@@ -430,10 +440,10 @@ Answer (stay in character!):`;
                                 'Content-Type': 'application/json'
                             }
                         });
-                        answer = deepseekResponse.data.choices[0].message.content;
-                        console.log(`[Librarian Bot] DeepSeek response retrieved successfully.`);
-                    } catch (deepseekErr) {
-                        console.error('DeepSeek fallback failed:', deepseekErr.message);
+                        answer = dsResponse.data.choices[0].message.content;
+                        console.log(`[Librarian Bot] DeepSeek final attempt response retrieved successfully.`);
+                    } catch (dsErr) {
+                        console.error('DeepSeek final attempt failed:', dsErr.message);
                         answer = `*The Librarian shuffles through dusty shelves, muttering to himself. The arcane archives (AI backend) seem to be currently unreachable.* Let me assist you with the basic features instead!\n\n${helpText}`;
                     }
                 } else {

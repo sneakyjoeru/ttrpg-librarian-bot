@@ -119,6 +119,11 @@ if (!deepseekApiKey && process.env.DEEPSEEK_API_KEY) {
 
 const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || 'https://api.deepseek.com/v1/chat/completions';
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+// DEEPSEEK_ROUTING_MODEL: model used for routing/classification tasks (cheap, fast).
+// DEEPSEEK_FALLBACK_MODEL: model used as fallback when the primary DeepSeek call fails
+//   (replaces the old local-Ollama fallback).
+const DEEPSEEK_ROUTING_MODEL = process.env.DEEPSEEK_ROUTING_MODEL || 'deepseek-chat';
+const DEEPSEEK_FALLBACK_MODEL = process.env.DEEPSEEK_FALLBACK_MODEL || 'deepseek-chat';
 
 // --- HELP TEXT ---
 const helpText = `**Librarian Bot Functions:**
@@ -232,5 +237,7 @@ module.exports = {
     IGPU_MIN_VIDEO_BITRATE,
     deepseekApiKey,
     DEEPSEEK_API_URL,
-    DEEPSEEK_MODEL
+    DEEPSEEK_MODEL,
+    DEEPSEEK_ROUTING_MODEL,
+    DEEPSEEK_FALLBACK_MODEL
 };

@@ -18,7 +18,10 @@ const {
     OLLAMA_MODEL,
     RAG_OLLAMA_TIMEOUT,
     SYSTEM_UPDATES_LIMIT,
-    SYSTEM_UPDATES_THREAD_NAME
+    SYSTEM_UPDATES_THREAD_NAME,
+    deepseekApiKey,
+    DEEPSEEK_API_URL,
+    DEEPSEEK_MODEL
 } = require('./src/config');
 const { getLastUpdates } = require('./src/utils/helpers');
 const {
@@ -480,7 +483,7 @@ client.once(Events.ClientReady, async () => {
                     while (attempts < maxAttempts) {
                         attempts++;
                         try {
-                            console.log(`[Monthly Mini Cron] Attempting to generate announcement via Ollama (attempt ${attempts}/${maxAttempts})...`);
+                            console.log(`[Monthly Mini Cron] Attempting to generate announcement via DeepSeek (attempt ${attempts}/${maxAttempts})...`);
                             const systemMessage = `You are Librarian, a senile but helpful TTRPG librarian bot living inside a Discord server. 
 Today is the 1st of the month, and the monthly free 3D printing queue for miniatures has reset.
 Generate a friendly, fun, and flavor-filled community announcement in character.
@@ -493,20 +496,47 @@ CRITICAL REQUIREMENTS:
 
                             const userPrompt = `Write a short, engaging announcement (2-4 sentences) in your senile librarian character voice, welcoming people (especially newcomers) to claim their free mini printing slot for the month, pointing them to the rules here: ${pinnedPostLink}, and letting them know that <@${SNEAKYJOE_USER_ID}> will print it for free.`;
 
-                            const response = await axios.post(OLLAMA_URL, {
-                                model: OLLAMA_MODEL,
-                                system: systemMessage,
-                                prompt: userPrompt,
-                                stream: false,
-                                options: {
+                            let generatedText = null;
+                            if (deepseekApiKey) {
+                                const dsModel = DEEPSEEK_MODEL || 'deepseek-chat';
+                                const dsResponse = await axios.post(DEEPSEEK_API_URL, {
+                                    model: dsModel,
+                                    messages: [
+                                        { role: 'system', content: systemMessage },
+                                        { role: 'user', content: userPrompt }
+                                    ],
+                                    stream: false,
                                     temperature: 0.85,
-                                    num_ctx: 2048,
-                                    seed: Math.floor(Math.random() * 1000000)
+                                    max_tokens: 500
+                                }, {
+                                    timeout: 30000,
+                                    headers: {
+                                        'Authorization': `Bearer ${deepseekApiKey}`,
+                                        'Content-Type': 'application/json'
+                                    }
+                                });
+                                if (dsResponse.data && dsResponse.data.choices && dsResponse.data.choices[0] && dsResponse.data.choices[0].message) {
+                                    generatedText = dsResponse.data.choices[0].message.content.trim();
                                 }
-                            }, { timeout: RAG_OLLAMA_TIMEOUT });
+                            } else {
+                                // Fallback to local Ollama if DeepSeek is not configured
+                                const ollamaResponse = await axios.post(OLLAMA_URL, {
+                                    model: OLLAMA_MODEL,
+                                    system: systemMessage,
+                                    prompt: userPrompt,
+                                    stream: false,
+                                    options: {
+                                        temperature: 0.85,
+                                        num_ctx: 2048,
+                                        seed: Math.floor(Math.random() * 1000000)
+                                    }
+                                }, { timeout: RAG_OLLAMA_TIMEOUT });
+                                if (ollamaResponse.data && ollamaResponse.data.response) {
+                                    generatedText = ollamaResponse.data.response.trim();
+                                }
+                            }
 
-                            if (response.data && response.data.response) {
-                                const generatedText = response.data.response.trim();
+                            if (generatedText) {
                                 // Validate requirements:
                                 const hasRulesLink = generatedText.includes(pinnedPostLink);
                                 const hasHostMention = generatedText.includes(`<@${SNEAKYJOE_USER_ID}>`);
@@ -519,15 +549,15 @@ CRITICAL REQUIREMENTS:
                                     console.warn(`[Monthly Mini Cron] Validation failed for attempt ${attempts}. rulesLink: ${hasRulesLink}, hostMention: ${hasHostMention}`);
                                 }
                             } else {
-                                console.warn(`[Monthly Mini Cron] Empty response from Ollama on attempt ${attempts}`);
+                                console.warn(`[Monthly Mini Cron] Empty response on attempt ${attempts}`);
                             }
                         } catch (err) {
-                            console.error(`[Monthly Mini Cron] Ollama generation failed on attempt ${attempts}:`, err.message);
+                            console.error(`[Monthly Mini Cron] Generation failed on attempt ${attempts}:`, err.message);
                         }
                     }
 
                     if (!postText) {
-                        console.log(`[Monthly Mini Cron] Ollama generation failed or was invalid after ${maxAttempts} attempts. Falling back to static prompt.`);
+                        console.log(`[Monthly Mini Cron] Generation failed after ${maxAttempts} attempts. Falling back to static prompt.`);
                         postText = prompts[Math.floor(Math.random() * prompts.length)];
                     }
 

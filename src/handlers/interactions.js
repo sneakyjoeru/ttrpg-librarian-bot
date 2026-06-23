@@ -17,7 +17,10 @@ const {
     THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY,
     DISCORD_START_SNOWFLAKE,
     EMOJI_ROBOT,
-    EMOJI_HAND
+    EMOJI_HAND,
+    deepseekApiKey,
+    DEEPSEEK_API_URL,
+    DEEPSEEK_MODEL
 } = require('../config');
 
 async function handleInteraction(client, interaction) {
@@ -469,20 +472,41 @@ async function handleInteraction(client, interaction) {
 
             let insult = "";
             try {
-                const ollamaResponse = await axios.post(OLLAMA_URL, {
-                    model: OLLAMA_MODEL,
-                    prompt: systemPrompt,
-                    stream: false,
-                    options: {
-                        temperature: 0.8
+                if (deepseekApiKey) {
+                    const dsModel = DEEPSEEK_MODEL || 'deepseek-chat';
+                    const dsResponse = await axios.post(DEEPSEEK_API_URL, {
+                        model: dsModel,
+                        messages: [{ role: 'user', content: systemPrompt }],
+                        stream: false,
+                        temperature: 0.8,
+                        max_tokens: 200
+                    }, {
+                        timeout: 30000,
+                        headers: {
+                            'Authorization': `Bearer ${deepseekApiKey}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    if (dsResponse.data && dsResponse.data.choices && dsResponse.data.choices[0] && dsResponse.data.choices[0].message) {
+                        insult = dsResponse.data.choices[0].message.content.trim();
                     }
-                }, { timeout: RAG_OLLAMA_TIMEOUT });
+                } else {
+                    // Fallback to local Ollama if DeepSeek is not configured
+                    const ollamaResponse = await axios.post(OLLAMA_URL, {
+                        model: OLLAMA_MODEL,
+                        prompt: systemPrompt,
+                        stream: false,
+                        options: {
+                            temperature: 0.8
+                        }
+                    }, { timeout: RAG_OLLAMA_TIMEOUT });
 
-                if (ollamaResponse.data && ollamaResponse.data.response) {
-                    insult = ollamaResponse.data.response.trim();
+                    if (ollamaResponse.data && ollamaResponse.data.response) {
+                        insult = ollamaResponse.data.response.trim();
+                    }
                 }
-            } catch (ollamaErr) {
-                console.warn('Ollama roast generation failed, using fallback roast:', ollamaErr.message);
+            } catch (dsErr) {
+                console.warn('DeepSeek roast generation failed, using fallback roast:', dsErr.message);
                 const randomRoast = FALLBACK_ROASTS[Math.floor(Math.random() * FALLBACK_ROASTS.length)];
                 insult = `*${randomRoast}* *(AI backend offline, using archived roast)*`;
             }
