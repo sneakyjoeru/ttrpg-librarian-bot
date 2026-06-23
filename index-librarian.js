@@ -576,7 +576,7 @@ client.on('messageReactionRemove', (reaction, user) => {
 
 // --- SIGUSR2: REBUILD STATUS ---
 // When rebuild-run.sh sends SIGUSR2, the bot sets its Discord presence to
-// "Пересборка..." (dnd) so users see the update in progress. It then polls
+// "Upgrading..." (dnd) so users see the update in progress. It then polls
 // build_progress.txt for the build percentage (written by the rebuild script
 // on the host into the container's working directory).
 let rebuildInterval = null;
@@ -585,7 +585,7 @@ process.on('SIGUSR2', () => {
     if (client && client.user) {
         client.user.setStatus('dnd');
         client.user.setPresence({
-            activities: [{ name: 'status', type: ActivityType.Custom, state: 'Пересборка...' }],
+            activities: [{ name: 'status', type: ActivityType.Custom, state: 'Upgrading...' }],
             status: 'dnd'
         });
     }
@@ -613,7 +613,7 @@ process.on('SIGUSR2', () => {
                 }
                 const percent = parseInt(content, 10);
                 if (!isNaN(percent) && percent >= 0 && percent <= 100) {
-                    const stateText = `Пересборка (${percent}%)`;
+                    const stateText = `Upgrading (${percent}%)`;
                     const now = Date.now();
                     if (stateText !== lastValue) {
                         lastValue = stateText;

@@ -78,7 +78,7 @@ fi
 date -u +"%Y-%m-%dT%H:%M:%SZ" > rebuild_time.txt
 
 # Notify the running container that a rebuild is starting (SIGUSR2 → the bot
-# sets its Discord presence to "Пересборка..." / dnd so users see the update).
+# sets its Discord presence to "Upgrading..." / dnd so users see the update).
 docker kill --signal=SIGUSR2 librarian-bot 2>/dev/null || true
 
 # Clean any old progress file inside the container

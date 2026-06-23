@@ -91,7 +91,7 @@
 │                                 #   build arg INSTALL_INTEL_IGPU_DRIVER=1.
 ├── rebuild-run.sh                # Host-side build+run helper. Auto-detects
 │   #   Intel iGPU + driver, sends SIGUSR2 to the running container (bot sets
-│   #   Discord presence to "Пересборка..." / dnd), writes rebuild_time.txt
+│   #   Discord presence to "Upgrading..." / dnd), writes rebuild_time.txt
 │   #   (for the bot's catch-up mechanic), and runs a fresh docker run with
 │   #   --device /dev/dri passthrough.
 │                                 #   N100/N150 on the host and passes the
