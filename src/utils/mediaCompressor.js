@@ -134,67 +134,58 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
         if (isIgpuAvailable) {
             console.log(`[FFmpeg Compress] ${igpuInfo.reason}. Attempting local iGPU VAAPI transcoding first...`);
             const renderNode = igpuInfo.renderNode || IGPU_RENDER_NODE;
-            for (let i = 0; i < IGPU_VIDEO_BITRATE_MULTIPLIERS.length; i++) {
-                const multiplier = IGPU_VIDEO_BITRATE_MULTIPLIERS[i];
-                const igpuTsPath = path.join(tempDir, `${prefix}_igpu_${i}.ts`);
+            // CQP quality ladder (higher = smaller). h264_vaapi is used instead of
+            // hevc_vaapi: HEVC encode isn't exposed on the Alpine intel-media-driver
+            // build for the N150 (fails instantly with code 234), while h264_vaapi
+            // is universally supported on Intel iGPUs and Discord plays it natively.
+            // Quality is controlled via CQP (-rc_mode CQP -qp N) instead of a target
+            // bitrate because hardware encoders overshoot -b:v on short low-bitrate
+            // clips and never hit the size target. Output is MP4 directly (no mpegts
+            // remux step). Mirrors the proven robot-joe iGPU path.
+            const qpValues = [28, 32, 36, 40];
+            for (let i = 0; i < qpValues.length; i++) {
+                const qp = qpValues[i];
+                const igpuMp4Path = path.join(tempDir, `${prefix}_igpu_${i}.mp4`);
                 try {
-                    const videoBitrate = calculateTargetBitrate(targetSizeBytes, multiplier, duration);
-                    if (duration > 0) {
-                        console.log(`[FFmpeg Compress] iGPU dynamically calculated target bitrate: ${videoBitrate} for duration ${duration.toFixed(2)}s`);
-                    }
                     const scaleFilter = buildVaapiScaleFilter(width, height);
 
                     const igpuCmd = `ffmpeg -hwaccel vaapi -vaapi_device ${renderNode} -i "${inputPath}" ` +
-                        `-vf 'format=nv12,hwupload,${scaleFilter}' -b:v ${videoBitrate} -c:v hevc_vaapi -c:a aac -f mpegts -y "${igpuTsPath}"`;
+                        `-vf 'format=nv12,hwupload,${scaleFilter}' -rc_mode CQP -qp ${qp} -c:v h264_vaapi -c:a aac -b:a 96k -movflags +faststart -y "${igpuMp4Path}"`;
 
-                    console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1}/${IGPU_VIDEO_BITRATE_MULTIPLIERS.length} (multiplier: ${multiplier})...`);
+                    console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1}/${qpValues.length} (QP: ${qp})...`);
                     await runCommandWithProgress(igpuCmd, duration, 'igpu', onProgress, timeout);
 
-                    if (fs.existsSync(igpuTsPath)) {
-                        const stats = fs.statSync(igpuTsPath);
+                    if (fs.existsSync(igpuMp4Path)) {
+                        const stats = fs.statSync(igpuMp4Path);
                         console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1} produced ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
                         if (stats.size === 0) {
-                            console.warn('[FFmpeg Compress] Local iGPU produced a 0-byte file; marking iGPU unavailable and falling through to network transcoder.');
+                            console.warn('[FFmpeg Compress] Local iGPU produced a 0-byte file; marking iGPU unavailable and falling through to CPU.');
                             isIgpuAvailable = false;
                             break;
                         }
                         if (stats.size <= targetSizeBytes) {
-                            const localMp4Path = path.join(tempDir, `${prefix}_igpu_${i}.mp4`);
-                            try {
-                                console.log(`[FFmpeg Compress] Remuxing local iGPU TS output to MP4...`);
-                                await runCommand(`ffmpeg -i "${igpuTsPath}" -c copy -movflags +faststart -y "${localMp4Path}"`);
-                                if (fs.existsSync(localMp4Path)) {
-                                    const remuxedStats = fs.statSync(localMp4Path);
-                                    console.log(`[FFmpeg Compress] Local iGPU remux completed. Size: ${(remuxedStats.size / 1024 / 1024).toFixed(1)}MB`);
-                                    const outputBuffer = fs.readFileSync(localMp4Path);
-                                    return { buffer: outputBuffer, ext: 'mp4' };
-                                } else {
-                                    console.warn('[FFmpeg Compress] Local iGPU remux failed to produce MP4; returning TS.');
-                                    const outputBuffer = fs.readFileSync(igpuTsPath);
-                                    return { buffer: outputBuffer, ext: 'ts' };
-                                }
-                            } catch (remuxErr) {
-                                console.error('[FFmpeg Compress] Local iGPU remux failed:', remuxErr.message);
-                                const outputBuffer = fs.readFileSync(igpuTsPath);
-                                return { buffer: outputBuffer, ext: 'ts' };
-                            } finally {
-                                try { if (fs.existsSync(localMp4Path)) fs.unlinkSync(localMp4Path); } catch (e) {}
-                            }
+                            const outputBuffer = fs.readFileSync(igpuMp4Path);
+                            console.log(`[FFmpeg Compress] Success! Compressed via iGPU (QP ${qp}) -> ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
+                            return { buffer: outputBuffer, ext: 'mp4' };
                         } else {
-                            console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1} still too large (${(stats.size / 1024 / 1024).toFixed(1)}MB > ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB). Trying next multiplier...`);
+                            console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1} still too large (${(stats.size / 1024 / 1024).toFixed(1)}MB > ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB). Trying next QP...`);
                         }
                     } else {
-                        console.warn('[FFmpeg Compress] Local iGPU produced no output; marking iGPU unavailable and falling through to network transcoder.');
+                        console.warn('[FFmpeg Compress] Local iGPU produced no output; marking iGPU unavailable and falling through to CPU.');
                         isIgpuAvailable = false;
                         break;
                     }
                 } catch (igpuErr) {
                     console.error('[FFmpeg Compress] Local iGPU transcoding error:', igpuErr.message);
-                    console.warn('[FFmpeg Compress] Marking iGPU as unavailable and falling through to network transcoder.');
+                    if (igpuErr && igpuErr.stderr) {
+                        const tail = String(igpuErr.stderr).split('\n').filter(Boolean).slice(-6).join(' | ');
+                        if (tail) console.error('[FFmpeg Compress] ffmpeg stderr (tail):', tail);
+                    }
+                    console.warn('[FFmpeg Compress] Marking iGPU as unavailable and falling through to CPU.');
                     isIgpuAvailable = false;
                     break;
                 } finally {
-                    try { if (fs.existsSync(igpuTsPath)) fs.unlinkSync(igpuTsPath); } catch (e) {}
+                    try { if (fs.existsSync(igpuMp4Path)) fs.unlinkSync(igpuMp4Path); } catch (e) {}
                 }
             }
         } else {
@@ -278,18 +269,43 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
             console.log('[FFmpeg Compress] SHARE_PASS or SSH key not set. Skipping network transcoding.');
         }
 
-        // B. Fall back to local CPU compression only if NAS is not available
+        // B. Fall back to local CPU compression only if NAS is not available.
+        //    The CPU scale filter caps the LONGEST dimension to 720 (so a 720x1280
+        //    portrait reel downscales to ~406x720, not left at full 720x1280 which
+        //    the old `scale='min(720,iw)':-2` did — that left portrait reels at full
+        //    resolution and CRF 44 still overshot the size limit). A hard bitrate-cap
+        //    fallback (Phase C) guarantees long clips fit when the whole CRF ladder
+        //    overshoots. Mirrors the proven robot-joe CPU path.
         if (!isNasAvailable) {
             console.log('[FFmpeg Compress] NAS is not available. Running local CPU compression fallback...');
+            const activeWidth = width;
+            const activeHeight = height;
+            let cpuScale;
+            if (activeWidth > 0 && activeHeight > 0) {
+                if (activeHeight >= activeWidth) {
+                    // Portrait: cap height to 720.
+                    const th = Math.min(720, activeHeight);
+                    const tw = Math.round((activeWidth * th / activeHeight) / 2) * 2;
+                    cpuScale = `scale=${tw}:${th}`;
+                } else {
+                    // Landscape: cap width to 720.
+                    const tw = Math.min(720, activeWidth);
+                    const th = Math.round((activeHeight * tw / activeWidth) / 2) * 2;
+                    cpuScale = `scale=${tw}:${th}`;
+                }
+            } else {
+                cpuScale = `scale='min(720,iw)':'min(720,ih)':force_original_aspect_ratio=decrease`;
+            }
+            const cpuScaleArg = `-vf "${cpuScale}"`;
+
             for (const crf of crfValues) {
                 try {
                     if (fs.existsSync(outputPath)) {
                         fs.unlinkSync(outputPath);
                     }
 
-                    const scaleFilter = '-vf "scale=\'min(720,iw)\':-2"';
-                    const cmd = `ffmpeg -i "${inputPath}" -c:v libx264 -preset ultrafast -crf ${crf} ${scaleFilter} -pix_fmt yuv420p -c:a aac -b:a 96k -movflags +faststart -y "${outputPath}"`;
-                    console.log(`[FFmpeg Compress] Attempting CRF ${crf} (ultrafast)...`);
+                    const cmd = `ffmpeg -i "${inputPath}" -c:v libx264 -preset ultrafast -crf ${crf} ${cpuScaleArg} -pix_fmt yuv420p -c:a aac -b:a 96k -movflags +faststart -y "${outputPath}"`;
+                    console.log(`[FFmpeg Compress] Attempting CRF ${crf} (ultrafast, ${cpuScale})...`);
                     await runCommandWithProgress(cmd, duration, 'local', onProgress, timeout);
 
                     if (!fs.existsSync(outputPath)) {
@@ -309,6 +325,36 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                     console.log(`[FFmpeg Compress] CRF ${crf}: Still too large (${(stats.size / 1024 / 1024).toFixed(1)}MB > ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB). Trying next...`);
                 } catch (crfErr) {
                     console.error(`[FFmpeg Compress] CRF ${crf} failed:`, crfErr.message);
+                }
+            }
+
+            // C. Hard bitrate-cap fallback: for long clips where even CRF 44
+            //    overshoots, switch to a libx264 veryfast encode with -b:v/-maxrate
+            //    computed from targetSizeBytes/duration (audio 64k). The hard
+            //    -maxrate guarantees the output fits, so a long reel always lands
+            //    under the limit instead of failing to post.
+            if (duration > 0) {
+                console.log('[FFmpeg Compress] CRF exhausted. Trying hard bitrate-cap fallback...');
+                try {
+                    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+                    const videoBits = Math.floor(targetSizeBytes * 8 * 0.86);
+                    const audioBits = 64 * 1000;
+                    const totalBitrate = Math.max(80000, Math.floor(videoBits / duration) - audioBits);
+                    const vBitrate = Math.floor(totalBitrate / 1000);
+                    const cmd = `ffmpeg -i "${inputPath}" -c:v libx264 -preset veryfast -b:v ${vBitrate}k -maxrate ${vBitrate}k -bufsize ${Math.floor(vBitrate * 2)}k ${cpuScaleArg} -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart -y "${outputPath}"`;
+                    console.log(`[FFmpeg Compress] Hard bitrate cap: ${vBitrate}k video / 64k audio for ${duration.toFixed(1)}s...`);
+                    await runCommandWithProgress(cmd, duration, 'local', onProgress, timeout);
+                    if (fs.existsSync(outputPath)) {
+                        const stats = fs.statSync(outputPath);
+                        console.log(`[FFmpeg Compress] Bitrate-cap output: ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
+                        if (stats.size <= targetSizeBytes && stats.size > 0) {
+                            const outputBuffer = fs.readFileSync(outputPath);
+                            console.log(`[FFmpeg Compress] Success! Compressed to ${(stats.size / 1024 / 1024).toFixed(1)}MB (bitrate cap ${vBitrate}k)`);
+                            return { buffer: outputBuffer, ext: 'mp4' };
+                        }
+                    }
+                } catch (bcErr) {
+                    console.error('[FFmpeg Compress] Bitrate-cap fallback failed:', bcErr.message);
                 }
             }
         }

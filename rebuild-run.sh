@@ -38,11 +38,16 @@ if [ -e "/dev/dri/renderD128" ]; then
             igpu_card_devices="${igpu_card_devices} --device ${card_dev}"
         fi
     done
-    igpu_mount="--device /dev/dri/renderD128${igpu_card_devices}"
+    # Add the render node's GID to the container's supplementary groups so a
+    # non-root container process can open the (typically root:render) render
+    # node. Falls back to GID 109 (the "render" group on most Debian-based
+    # images) when stat fails. Mirrors the robot-joe deployment.
+    igpu_render_gid="$(stat -c '%g' /dev/dri/renderD128 2>/dev/null || echo 109)"
+    igpu_mount="--device /dev/dri/renderD128${igpu_card_devices} --group-add ${igpu_render_gid}"
     if [ -n "${igpu_card_devices}" ]; then
-        echo "[rebuild-run] /dev/dri/renderD128 detected (with card device(s)) — mounting Intel iGPU into the container."
+        echo "[rebuild-run] /dev/dri/renderD128 detected (with card device(s), render gid ${igpu_render_gid}) — mounting Intel iGPU into the container."
     else
-        echo "[rebuild-run] /dev/dri/renderD128 detected (no /dev/dri/card* device on host; iGPU userspace should still work) — mounting Intel iGPU render node into the container."
+        echo "[rebuild-run] /dev/dri/renderD128 detected (no /dev/dri/card* device on host, render gid ${igpu_render_gid}; iGPU userspace should still work) — mounting Intel iGPU render node into the container."
     fi
 else
     echo "[rebuild-run] /dev/dri/renderD128 not present on host — local iGPU transcoding will be skipped."
