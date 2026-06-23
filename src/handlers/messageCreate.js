@@ -15,13 +15,27 @@ async function handleMessageCreate(client, message) {
     if (message.guild?.id !== SERVER_ID || message.author.bot) return;
 
     // --- Instagram Link Interceptor ---
-    const instagramRegex = /https?:\/\/(?:www\.)?(?:instagram|kkinstagram)\.com\/[^\s]+/i;
+    // Matches instagram.com and all mirror domains (dd/kk/ee/uu/rx instagram),
+    // with an OPTIONAL protocol scheme so bare "instagram.com/reel/..." links are
+    // caught too. Mirrors the robot-joe interceptor.
+    const instagramRegex = /(?:https?:\/\/)?(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s]+/i;
     const instaMatch = message.content.match(instagramRegex);
     if (instaMatch) {
-        let instagramUrl = instaMatch[0];
+        const originalMatch = instaMatch[0];
+        let instagramUrl = originalMatch;
         instagramUrl = instagramUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
         instagramUrl = instagramUrl.replace(/[.,:;!?]+$/, '');
-        await handleInstagramMessage(client, message, instagramUrl, message.content);
+
+        // Normalize URL by ensuring it has https:// scheme
+        if (!/^https?:\/\//i.test(instagramUrl)) {
+            instagramUrl = 'https://' + instagramUrl;
+        }
+
+        // Replace the raw matched URL with the normalized one in the content so
+        // that string replacement inside the handler works correctly.
+        const contentNormalized = message.content.replace(originalMatch, instagramUrl);
+
+        await handleInstagramMessage(client, message, instagramUrl, contentNormalized);
         return;
     }
 

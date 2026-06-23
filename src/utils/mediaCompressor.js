@@ -22,7 +22,7 @@ function getGuildFileLimit(guild) {
     switch (guild.premiumTier) {
         case 2: return 50 * 1024 * 1024;  // Tier 2 (7 boosts): 50MB
         case 3: return 100 * 1024 * 1024; // Tier 3 (14 boosts): 100MB
-        default: return DISCORD_FILE_LIMIT_DEFAULT; // Tier 0 & 1: 10MB
+        default: return DISCORD_FILE_LIMIT_DEFAULT; // Tier 0 & 1: 25MB
     }
 }
 

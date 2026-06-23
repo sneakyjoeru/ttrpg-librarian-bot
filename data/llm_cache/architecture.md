@@ -135,7 +135,9 @@
 │   │   ├── interactions.js       #   Slash command dispatcher (12 commands;
 │   │   │                         #   see section 7)
 │   │   ├── messageCreate.js      #   Text dispatcher — Instagram link
-│   │   │                         #   detection, @mention → RAG, !pin/!unpin,
+│   │   │                         #   detection (instagram.com + dd/kk/ee/uu/rx
+│   │   │                         #   mirror domains, optional protocol, URL
+│   │   │                         #   normalization), @mention → RAG, !pin/!unpin,
 │   │   │                         #   OP auto-pinning + role assignment
 │   │   └── reactions.js          #   ✋ reaction → campaign role assignment
 │   │                             #   (only if 🤖 is also present, i.e. the
