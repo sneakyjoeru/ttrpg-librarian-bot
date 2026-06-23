@@ -154,11 +154,11 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                     const vBitrate = Math.floor(totalBitrate / 1000);
                     const igpuBcCmd = `ffmpeg -hwaccel vaapi -vaapi_device ${renderNode} -i "${inputPath}" ` +
                         `-vf 'format=nv12,hwupload,${scaleFilter}' -b:v ${vBitrate}k -maxrate ${vBitrate}k -bufsize ${Math.floor(vBitrate * 2)}k -c:v h264_vaapi -c:a aac -b:a 96k -movflags +faststart -y "${igpuBcPath}"`;
-                    console.log(`[FFmpeg Compress] Local iGPU bitrate-cap attempt (${vBitrate}k for ${duration.toFixed(1)}s)...`);
+                    console.log(`[FFmpeg Compress] Local iGPU bitrate-cap attempt (${vBitrate}k for ${duration.toFixed(1)}s, target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)...`);
                     await runCommandWithProgress(igpuBcCmd, duration, 'igpu', onProgress, timeout);
                     if (fs.existsSync(igpuBcPath)) {
                         const stats = fs.statSync(igpuBcPath);
-                        console.log(`[FFmpeg Compress] Local iGPU bitrate-cap produced ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
+                        console.log(`[FFmpeg Compress] Local iGPU bitrate-cap produced ${(stats.size / 1024 / 1024).toFixed(1)}MB (target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)`);
                         if (stats.size > 0 && stats.size <= targetSizeBytes) {
                             const outputBuffer = fs.readFileSync(igpuBcPath);
                             console.log(`[FFmpeg Compress] Success! Compressed via iGPU bitrate-cap (${vBitrate}k) -> ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
@@ -189,7 +189,7 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                     const igpuCmd = `ffmpeg -hwaccel vaapi -vaapi_device ${renderNode} -i "${inputPath}" ` +
                         `-vf 'format=nv12,hwupload,${scaleFilter}' -rc_mode CQP -qp ${qp} -c:v h264_vaapi -c:a aac -b:a 96k -movflags +faststart -y "${igpuMp4Path}"`;
 
-                    console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1}/${qpValues.length} (QP: ${qp})...`);
+                    console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1}/${qpValues.length} (QP: ${qp}, target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)...`);
                     await runCommandWithProgress(igpuCmd, duration, 'igpu', onProgress, timeout);
 
                     if (fs.existsSync(igpuMp4Path)) {
@@ -342,7 +342,7 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                     }
 
                     const cmd = `ffmpeg -i "${inputPath}" -c:v libx264 -preset ultrafast -crf ${crf} ${cpuScaleArg} -pix_fmt yuv420p -c:a aac -b:a 96k -movflags +faststart -y "${outputPath}"`;
-                    console.log(`[FFmpeg Compress] Attempting CRF ${crf} (ultrafast, ${cpuScale})...`);
+                    console.log(`[FFmpeg Compress] Attempting CRF ${crf} (ultrafast, ${cpuScale}, target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)...`);
                     await runCommandWithProgress(cmd, duration, 'local', onProgress, timeout);
 
                     if (!fs.existsSync(outputPath)) {
@@ -379,7 +379,7 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                     const totalBitrate = Math.max(80000, Math.floor(videoBits / duration) - audioBits);
                     const vBitrate = Math.floor(totalBitrate / 1000);
                     const cmd = `ffmpeg -i "${inputPath}" -c:v libx264 -preset veryfast -b:v ${vBitrate}k -maxrate ${vBitrate}k -bufsize ${Math.floor(vBitrate * 2)}k ${cpuScaleArg} -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart -y "${outputPath}"`;
-                    console.log(`[FFmpeg Compress] Hard bitrate cap: ${vBitrate}k video / 64k audio for ${duration.toFixed(1)}s...`);
+                    console.log(`[FFmpeg Compress] Hard bitrate cap: ${vBitrate}k video / 64k audio for ${duration.toFixed(1)}s (target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)...`);
                     await runCommandWithProgress(cmd, duration, 'local', onProgress, timeout);
                     if (fs.existsSync(outputPath)) {
                         const stats = fs.statSync(outputPath);
