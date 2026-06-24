@@ -21,10 +21,12 @@
   `channelUpdate`, `channelDelete`) to services.
 - **Domain logic (services):** `src/services/`
   - `rag.js` — RAG pipeline (SearXNG context, history collection, persona).
-    Quota-gated: routes to **DeepSeek first** while the user has quota
-    (`src/utils/quota.js`, persisted to `data/quota.json`), falls back to
-    **local Ollama** (`qwen3.5:9b` at `192.168.0.101`) with a quality check
-    + DeepSeek fallback chain when exhausted. **Two tiers** are tracked
+    DeepSeek-primary: routes to **DeepSeek first** while the user has quota
+    (`src/utils/quota.js`, persisted to `data/quota.json`), and falls back to
+    **local Ollama** (`qwen3.5:9b` at `localhost:11434`) with a single direct
+    attempt (no quality estimation) when quota is exhausted or DeepSeek fails.
+    The old local-Ollama quality-estimator + DeepSeek-from-Ollama fallback chain
+    has been dropped — DeepSeek answers are accepted directly. **Two tiers** are tracked
     per user in independent buckets: regular users get
     `QUOTA_MAX_REQUESTS` (= 10) per `QUOTA_WINDOW_HOURS` (= 5h); admins
     get `QUOTA_ADMIN_MAX_REQUESTS` (= 30) per `QUOTA_ADMIN_WINDOW_HOURS`
@@ -43,12 +45,13 @@
     downloading (fixer domains `eeinstagram` / `kkinstagram` / `uuinstagram`,
     parallel scrapers `instagram-url-direct` + `snapinsta`, and `yt-dlp`
     with auth cookies) and oversized video re-encoding.
-- **Media compressor:** `src/utils/mediaCompressor.js`. Three-stage
-  pipeline: **local iGPU** (Intel N100/N150 only, gated by
-  `src/utils/cpuDetector.js` + `/dev/dri/renderD128`) → **network
-  transcoder** (SSH into NAS `192.168.0.100`, runs the `transcoder`
-  container) → **local CPU** (`libx264 ultrafast` CRF ladder). All oversized
-  Instagram videos funnel through it. See section 4.
+- **Media compressor:** `src/utils/mediaCompressor.js`. Two-stage pipeline
+  (the remote NAS network transcoder at `192.168.0.100` has been REMOVED):
+  **local iGPU** (Intel N100/N150 only, gated by `src/utils/cpuDetector.js` +
+  `/dev/dri/renderD128`) → **local CPU** (`libx264 ultrafast` CRF ladder).
+  `src/utils/shell.js` `buildSshPrefix()`/`hasRemoteAccess()` are now no-ops
+  (return `""`/`false`) so the network transcoder stage is always skipped. All
+  oversized Instagram videos funnel through it. See section 4.
 - **Discord features the bot owns:**
   - Campaign lifecycle — channel creation, role provisioning, OP workflow,
     archive, auto-rename sync. Persistence via the
@@ -231,10 +234,9 @@ Discord Gateway
    │                                 │                           │   (src/utils/quota.js)
    │                                 │                           └─ LLM pipeline (branched by quota):
    │                                 │                                ├─ quota OK   ─► DeepSeek first
-   │                                 │                                │                  └─ on failure ─► Local Ollama
-   │                                 │                                └─ exhausted   ─► Local Ollama
-   │                                 │                                                  ├─ Quality check
-   │                                 │                                                  └─ on fail  ─► DeepSeek
+   │                                 │                                │                  └─ on failure ─► Local Ollama (direct, no quality check)
+   │                                 │                                └─ exhausted   ─► Local Ollama (direct, no quality check)
+   │                                 │                                                  └─ on fail ─► help-text fallback
    │                                 │
    │                                 └─ Active campaign channel + text command
    │                                    (`!pin [id]` / `!unpin [id]`):
@@ -306,12 +308,15 @@ Cron
 
 | Endpoint | Use |
 |---|---|
-| `http://192.168.0.101:11434/api/generate` | Local Ollama API (qwen3.5:9b) |
-| `https://api.deepseek.com/v1/chat/completions` | DeepSeek API (primary on quota, fallback on Ollama fail) |
-| `http://192.168.0.100:9080/search` | SearXNG Search Instance |
+| `http://localhost:11434/api/generate` | Local Ollama API (qwen3.5:9b) — runs on the N150 host |
+| `https://api.deepseek.com/v1/chat/completions` | DeepSeek API (PRIMARY on quota, direct fallback when Ollama fails) |
+| `http://localhost:9080/search` | SearXNG Search Instance (Docker container on the N150 host) |
 | `eeinstagram.com`, `kkinstagram.com`, `uuinstagram.com` | Instagram fixer domains (priority order for Reel/TV; also fallback for non-Reel) |
-| `sneakyjoe@192.168.0.100:22` | SSH hop into the NAS for network transcoding; exec `docker exec -i $TRANSCODER_CONTAINER ffmpeg -hwaccel vaapi …` |
 | `/dev/dri/renderD128` (and any present `/dev/dri/card*`) | VAAPI render node on the host; auto-mounted into the container by `rebuild-run.sh` when the iGPU build arg is set. Card device is optional — ffmpeg VAAPI only needs the render node. |
+
+> The remote NAS network transcoder (`sneakyjoe@192.168.0.100:22`) has been
+> REMOVED. `src/utils/shell.js` `buildSshPrefix()`/`hasRemoteAccess()` are no-ops,
+> so media compression is now local-iGPU → local-CPU only.
 
 Auth: `secrets_discord.php` (regex-parsed) → `$token`, `$deepseek_api_key`,
 `$client_secret`, `$share_pass`. Env-var fallbacks:
@@ -345,14 +350,9 @@ Three stages, tried in order:
    automatically by `rebuild-run.sh` when the render node exists on the host).
    `DISCORD_FILE_LIMIT_DEFAULT=25MB` (Discord raised the free-tier upload
    limit to 25MB; was 10MB, which forced heavy over-compression).
-2. **Network transcoder (NAS)** — fallback when the iGPU stage is skipped
-   or fails. Reuses the same VAAPI ladder over SSH to the NAS
-   (`sneakyjoe@192.168.0.100`) using `$TRANSCODER_CONTAINER` (env) or
-   `transcoder` (default). Authentication via SSH key (preferred) or
-   `$SHARE_PASS` via `sshpass`. (Still uses `hevc_vaapi` + bitrate ladder +
-   TS→MP4 remux on the NAS side; left as-is since the NAS may run a
-   different driver stack than the local Alpine image.)
-3. **Local CPU (libx264)** — final fallback. Iterates CRF `[28, 33, 38, 44]`
+2. **Local CPU (libx264)** — final fallback (the old NAS network transcoder
+   stage at `192.168.0.100` has been REMOVED; `buildSshPrefix()`/`hasRemoteAccess()`
+   are no-ops). Iterates CRF `[28, 33, 38, 44]`
    with `preset ultrafast`, scaling the LONGEST dimension to 720 (so a
    720x1280 portrait reel downscales to ~406x720 instead of staying at full
    resolution). If the whole CRF ladder overshoots (long clips), a hard
@@ -361,8 +361,8 @@ Three stages, tried in order:
 
 Both VAAPI stages share the `scale_vaapi` filter (factored into
 `buildVaapiScaleFilter()`). Progress updates carry a `stage` field of
-`'igpu' | 'network' | 'local'`, mapped to human-readable labels in
-`src/services/instagram.js` (`local iGPU` / `NAS iGPU` / `local CPU`).
+`'igpu' | 'local'`, mapped to human-readable labels in
+`src/services/instagram.js` (`local iGPU` / `local CPU`).
 The effective per-attachment size budget is `floor(guildFileLimit * 0.97)`
 to leave headroom for the upload wrapper.
 

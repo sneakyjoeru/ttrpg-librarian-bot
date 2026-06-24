@@ -54,47 +54,28 @@ function prepareSshKey() {
 }
 
 /**
- * Builds the SSH prefix for connecting to sneakyjoe@192.168.0.100.
- * Prioritizes key-based authentication if a key is found, then falls back to sshpass, then raw ssh.
- * @returns {string} The ssh prefix (e.g. `ssh -i "/tmp/bot_ssh_key" -o StrictHostKeyChecking=no sneakyjoe@192.168.0.100`)
+ * Builds the SSH prefix for connecting to the remote NAS transcoder.
+ *
+ * DEPRECATED: the bot no longer uses the remote NAS (192.168.0.100) for network
+ * transcoding. All media compression now runs locally on the N150 host (iGPU →
+ * local CPU). This function is kept as a no-op so mediaCompressor's network stage
+ * is always skipped via hasRemoteAccess() === false.
+ * @returns {string} Empty string (no remote connection).
  */
 function buildSshPrefix() {
-    const keyPath = prepareSshKey();
-    if (keyPath) {
-        return `ssh -i "${keyPath}" -o StrictHostKeyChecking=no sneakyjoe@192.168.0.100`;
-    }
-
-    const sharePass = process.env.SHARE_PASS;
-    if (sharePass) {
-        return `sshpass -p "${sharePass}" ssh -o StrictHostKeyChecking=no sneakyjoe@192.168.0.100`;
-    }
-
-    console.warn('[SSH Prefix] Warning: Neither SSH key nor SHARE_PASS found. Using raw SSH connection.');
-    return `ssh -o StrictHostKeyChecking=no sneakyjoe@192.168.0.100`;
+    // No-op: all services run locally on the N150 host now.
+    return "";
 }
 
 /**
- * Checks if the bot has capability for remote connections (either SSH key or SHARE_PASS password).
- * @returns {boolean} True if remote access is configured.
+ * Checks if the bot has capability for remote connections.
+ *
+ * DEPRECATED: always returns false — the remote NAS transcoder is no longer used.
+ * This forces mediaCompressor to skip the network stage and use the local CPU fallback.
+ * @returns {boolean} Always false.
  */
 function hasRemoteAccess() {
-    if (process.env.SHARE_PASS) return true;
-
-    const possibleKeys = [
-        process.env.SSH_KEY_PATH,
-        path.join(__dirname, '../../id_rsa'),
-        path.join(__dirname, '../../id_ed25519'),
-        path.join(__dirname, '../../id_ed25519_bot'),
-        '/root/.ssh/id_rsa',
-        '/root/.ssh/id_ed25519',
-        '/root/.ssh/id_ed25519_bot'
-    ];
-
-    for (const keyPath of possibleKeys) {
-        if (keyPath && fs.existsSync(keyPath)) {
-            return true;
-        }
-    }
+    // No-op: all services run locally on the N150 host now.
     return false;
 }
 

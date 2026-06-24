@@ -15,8 +15,11 @@ const GENERAL_CHANNEL_ID = '1294242036492406840';     // General chat channel ID
 const RULES_MESSAGE_ID = '1302931730411425852';       // Message ID of server rules, referenced in monthly printing posts
 const SNEAKYJOE_USER_ID = '221722372145676288';       // Discord User ID of the 3D printing host (sneakyjoe) tagged in print queues
 
-const SEARXNG_URL = process.env.SEARXNG_URL || 'http://192.168.0.100:9080/search';           // API endpoint of local SearXNG meta-search instance for RAG queries
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://192.168.0.101:11434/api/generate';     // API endpoint of local Ollama server running Llama 3.1
+// SearXNG and Ollama now run ON the N150 host (localhost). DeepSeek is the
+// PRIMARY model for responses; local Ollama is the quota-exhausted fallback.
+// SearXNG runs as a Docker container on the N150 (see README install steps).
+const SEARXNG_URL = process.env.SEARXNG_URL || 'http://localhost:9080/search';           // API endpoint of local SearXNG meta-search instance for RAG queries
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434/api/generate';     // API endpoint of local Ollama server (fallback / vision / translation)
 const OLLAMA_MODEL = 'qwen3.5:9b';                                  // Local LLM model name run in Ollama
 
 const TIMEZONE = 'Europe/Tallinn';                    // Local timezone used to schedule cron jobs & timestamps

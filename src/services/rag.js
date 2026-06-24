@@ -32,48 +32,6 @@ const LIBRARIAN_QUIRKS = [
     "You are complaining about the youth of today using shiny magic items instead of proper ink and parchment."
 ];
 
-async function checkResponseQuality(userQuery, answer) {
-    if (!userQuery) return true;
-    const evalPrompt = `You are a strict quality controller.
-Evaluate whether the following generated response is an acceptable answer that matches and directly answers the user's query.
-
-User Query: "${userQuery}"
-Generated Response: "${answer}"
-
-Check if:
-1. The response actually answers the user's question or intent.
-2. The response is not hallucinated, completely off-topic, or polluted with garbage/Chinese characters.
-3. The response makes sense given the query.
-
-Respond with exactly "YES" if the answer matches and is acceptable.
-Respond with exactly "NO" if the answer does not match, does not answer the query, or is unacceptable.
-
-Do not write any other text. Reply with either YES or NO.`;
-
-    try {
-        const response = await axios.post(OLLAMA_URL, {
-            model: OLLAMA_MODEL,
-            prompt: evalPrompt,
-            stream: false,
-            options: {
-                temperature: 0.1,
-                num_ctx: 2048
-            }
-        }, { timeout: 8000 });
-
-        const result = response.data.response.trim().toUpperCase();
-        console.log(`[Response Quality Check] Local quality check outcome: ${result}`);
-
-        if (result.includes('YES') && !result.includes('NO')) {
-            return true;
-        }
-        return false;
-    } catch (err) {
-        console.warn(`[Response Quality Check] Quality check failed/timed out: ${err.message}; treating as PASS to avoid block`);
-        return true;
-    }
-}
-
 async function handleRagQuery(client, message, query) {
     const seed = Math.floor(Math.random() * 1000000);
     const randomQuirk = LIBRARIAN_QUIRKS[seed % LIBRARIAN_QUIRKS.length];
@@ -342,11 +300,17 @@ Answer (stay in character!):`;
             console.log(`[Librarian Bot] Quota OK for user ${message.author.id} (${profile} ${quotaDecision.used}/${quotaDecision.limit} used); routing to DeepSeek first.`);
         }
 
+        // --- LLM PIPELINE (DeepSeek-primary) ---
+        // DeepSeek is the PRIMARY model for all quota-having users. The old local
+        // Ollama quality-estimator + DeepSeek-from-Ollama fallback chain has been
+        // dropped: DeepSeek answers are accepted directly, and the local Ollama
+        // is a single direct fallback (no quality check) used when the user is out
+        // of quota or DeepSeek failed. Per-user quota is still enforced.
         if (useDeepSeekFirst) {
             // --- DEEPSEEK-FIRST PATH ---
-            // Only attempted when the user still has quota. On success we use
-            // the DeepSeek answer directly; on failure we fall back to the
-            // existing Ollama pipeline (which itself can fall back to DeepSeek).
+            // Only attempted when the user still has quota. On success we use the
+            // DeepSeek answer directly; on failure we fall back to a single local
+            // Ollama attempt (no quality estimation).
             if (deepseekApiKey) {
                 try {
                     console.log(`[Librarian Bot] Calling DeepSeek API (quota path, model: ${DEEPSEEK_MODEL})...`);
@@ -377,12 +341,11 @@ Answer (stay in character!):`;
         }
 
         if (!deepseekSuccess) {
-            // --- LOCAL OLLAMA PATH (existing behavior) ---
-            // Either quota is exhausted (preferred path) or the DeepSeek quota
-            // call failed (fallback). Behavior is identical to the original
-            // pipeline: try Ollama, quality-check, fall back to DeepSeek on
-            // failure.
-            let localOllamaSuccess = false;
+            // --- LOCAL OLLAMA PATH (single direct attempt, no quality check) ---
+            // Used when quota is exhausted OR the DeepSeek quota-path call failed.
+            // No quality estimation, no DeepSeek-from-Ollama fallback — the local
+            // Ollama answer is accepted directly. If Ollama itself fails, show the
+            // help-text graceful-failure message.
             try {
                 console.log(`[Librarian Bot] Attempting local Ollama query...`);
                 const ollamaResponse = await axios.post(OLLAMA_URL, {
@@ -398,48 +361,10 @@ Answer (stay in character!):`;
                     }
                 }, { timeout: RAG_OLLAMA_TIMEOUT });
                 answer = ollamaResponse.data.response;
-
-                // Check quality of Ollama response
-                console.log(`[Librarian Bot] Verifying local Ollama response quality...`);
-                const qualityOk = await checkResponseQuality(cleanedQuery, answer);
-                if (qualityOk) {
-                    localOllamaSuccess = true;
-                } else {
-                    console.warn(`[Librarian Bot] Local Ollama response failed quality check. Falling back to DeepSeek.`);
-                }
+                console.log(`[Librarian Bot] Local Ollama response retrieved successfully.`);
             } catch (ollamaErr) {
-                console.warn('Ollama query failed/timed out, falling back to DeepSeek:', ollamaErr.message);
-            }
-
-            if (!localOllamaSuccess) {
-                if (deepseekApiKey) {
-                    try {
-                        console.log(`[Librarian Bot] Calling DeepSeek API fallback (model: ${DEEPSEEK_MODEL})...`);
-                        const deepseekResponse = await axios.post(DEEPSEEK_API_URL, {
-                            model: DEEPSEEK_MODEL,
-                            messages: [
-                                { role: 'system', content: systemMessage },
-                                { role: 'user', content: userPrompt }
-                            ],
-                            stream: false,
-                            temperature: 0.85
-                        }, {
-                            timeout: 30000,
-                            headers: {
-                                'Authorization': `Bearer ${deepseekApiKey}`,
-                                'Content-Type': 'application/json'
-                            }
-                        });
-                        answer = deepseekResponse.data.choices[0].message.content;
-                        console.log(`[Librarian Bot] DeepSeek response retrieved successfully.`);
-                    } catch (deepseekErr) {
-                        console.error('DeepSeek fallback failed:', deepseekErr.message);
-                        answer = `*The Librarian shuffles through dusty shelves, muttering to himself. The arcane archives (AI backend) seem to be currently unreachable.* Let me assist you with the basic features instead!\n\n${helpText}`;
-                    }
-                } else {
-                    console.warn('No DeepSeek API key configured, falling back to help text.');
-                    answer = `*The Librarian shuffles through dusty shelves, muttering to himself. The arcane archives (AI backend) seem to be currently unreachable.* Let me assist you with the basic features instead!\n\n${helpText}`;
-                }
+                console.warn('Local Ollama query failed/timed out:', ollamaErr.message);
+                answer = `*The Librarian shuffles through dusty shelves, muttering to himself. The arcane archives (AI backend) seem to be currently unreachable.* Let me assist you with the basic features instead!\n\n${helpText}`;
             }
         }
 
