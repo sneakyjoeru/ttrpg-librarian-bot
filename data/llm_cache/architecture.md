@@ -23,7 +23,7 @@
   - `rag.js` — RAG pipeline (SearXNG context, history collection, persona).
     DeepSeek-primary: routes to **DeepSeek first** while the user has quota
     (`src/utils/quota.js`, persisted to `data/quota.json`), and falls back to
-    **local Ollama** (`qwen3.5:9b` at `localhost:11434`) with a single direct
+    **local Ollama** (`qwen2.5:7b` at `localhost:11434`) with a single direct
     attempt (no quality estimation) when quota is exhausted or DeepSeek fails.
     The old local-Ollama quality-estimator + DeepSeek-from-Ollama fallback chain
     has been dropped — DeepSeek answers are accepted directly. **Two tiers** are tracked

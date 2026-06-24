@@ -20,7 +20,7 @@ const SNEAKYJOE_USER_ID = '221722372145676288';       // Discord User ID of the 
 // SearXNG runs as a Docker container on the N150 (see README install steps).
 const SEARXNG_URL = process.env.SEARXNG_URL || 'http://localhost:9080/search';           // API endpoint of local SearXNG meta-search instance for RAG queries
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434/api/generate';     // API endpoint of local Ollama server (fallback / vision / translation)
-const OLLAMA_MODEL = 'qwen3.5:9b';                                  // Local LLM model name run in Ollama
+const OLLAMA_MODEL = 'qwen2.5:7b';                                  // Local LLM fallback model (shared Ollama daemon with robot joe; 7B fits in 12GB RAM alongside Whisper + OS)
 
 const TIMEZONE = 'Europe/Tallinn';                    // Local timezone used to schedule cron jobs & timestamps
 const CRON_SCHEDULE_MONTHLY_MINI = '0 9 1 * *';       // Cron schedule for monthly announcements (1st of every month at 9:00 AM for +-2h randomization)
