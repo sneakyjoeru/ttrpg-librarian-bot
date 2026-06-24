@@ -15,11 +15,13 @@ const GENERAL_CHANNEL_ID = '1294242036492406840';     // General chat channel ID
 const RULES_MESSAGE_ID = '1302931730411425852';       // Message ID of server rules, referenced in monthly printing posts
 const SNEAKYJOE_USER_ID = '221722372145676288';       // Discord User ID of the 3D printing host (sneakyjoe) tagged in print queues
 
-// SearXNG and Ollama now run ON the N150 host (localhost). DeepSeek is the
-// PRIMARY model for responses; local Ollama is the quota-exhausted fallback.
-// SearXNG runs as a Docker container on the N150 (see README install steps).
-const SEARXNG_URL = process.env.SEARXNG_URL || 'http://localhost:9080/search';           // API endpoint of local SearXNG meta-search instance for RAG queries
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434/api/generate';     // API endpoint of local Ollama server (fallback / vision / translation)
+// SearXNG and Ollama run as Docker containers on the N150 host. The librarian
+// bot also runs in a container and is attached to the shared `ollama_default`
+// network (see rebuild-run.sh), so it reaches them by container name, NOT
+// localhost (localhost inside a container = the container itself). DeepSeek is
+// the PRIMARY model for responses; local Ollama is the quota-exhausted fallback.
+const SEARXNG_URL = process.env.SEARXNG_URL || 'http://searxng:8080/search';           // API endpoint of SearXNG meta-search instance for RAG queries
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434/api/generate';     // API endpoint of local Ollama server (fallback / vision / translation)
 const OLLAMA_MODEL = 'qwen2.5:7b';                                  // Local LLM fallback model (shared Ollama daemon with robot joe; 7B fits in 12GB RAM alongside Whisper + OS)
 
 const TIMEZONE = 'Europe/Tallinn';                    // Local timezone used to schedule cron jobs & timestamps

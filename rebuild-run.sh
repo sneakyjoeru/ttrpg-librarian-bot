@@ -87,6 +87,13 @@ docker exec librarian-bot rm -f /usr/src/app/build_progress.txt 2>/dev/null || t
 BUILDX_GIT_INFO=false docker build --provenance=false ${igpu_build_arg} -t discord-librarian-bot . && \
 docker stop librarian-bot || true && \
 docker rm librarian-bot || true && \
-docker run -d --name librarian-bot --restart unless-stopped -e SHARE_PASS -e HOST_PATH="$(pwd)" -e TRANSCODER_CONTAINER -v /var/run/docker.sock:/var/run/docker.sock -v "$(pwd):/usr/src/app" -v /usr/src/app/node_modules $cookies_mount $ssh_key_mount $igpu_mount discord-librarian-bot && \
+# Attach the bot to the shared ollama_default network (when present) so it can
+# resolve the Ollama and SearXNG containers by name (ollama / searxng). localhost
+# inside the container refers to the container itself and cannot reach host services.
+ollama_network_args=""
+if docker network inspect ollama_default >/dev/null 2>&1; then
+    ollama_network_args="--network ollama_default"
+fi
+docker run -d --name librarian-bot --restart unless-stopped $ollama_network_args -e SHARE_PASS -e HOST_PATH="$(pwd)" -e TRANSCODER_CONTAINER -v /var/run/docker.sock:/var/run/docker.sock -v "$(pwd):/usr/src/app" -v /usr/src/app/node_modules $cookies_mount $ssh_key_mount $igpu_mount discord-librarian-bot && \
 sleep 15 && \
 docker logs librarian-bot
