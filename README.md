@@ -1,15 +1,21 @@
 # Librarian Bot for Channels & Roles
 
-Librarian Bot is an advanced Discord bot designed to automate and manage tabletop gaming (TTRPG) server campaigns. It orchestrates the creation of campaign channels, manages associated roles, logs history, automates thread archival, posts recurring announcements, and integrates a retrieval-augmented generation (RAG) assistant using local Ollama (Llama 3.1) and SearXNG instances.
+Librarian Bot is an advanced Discord bot designed to automate and manage tabletop gaming (TTRPG) server campaigns. It orchestrates the creation of campaign channels, manages associated roles, logs history, automates thread archival, posts recurring announcements, and integrates a retrieval-augmented generation (RAG) assistant using the **DeepSeek API** (primary) with a local **Ollama** fallback (`qwen2.5:7b`) and a local **SearXNG** instance.
+
+## Host
+
+The bot runs in a Docker container on an **Intel N150 Mini PC** (12GB RAM + 8GB swap, 512GB SSD, Intel iGPU). Ollama and SearXNG run as separate Docker containers on the same host; all three are attached to the shared `ollama_default` Docker network, so the bot reaches them **by container name** (`ollama`, `searxng`) — not `localhost` (which inside the container is the container itself). The only external dependency is the DeepSeek cloud API. `rebuild-run.sh` attaches the bot container to `ollama_default` automatically when that network exists.
+
+> **Host history:** The bot previously relied on remote network resources — a remote Ollama server at `192.168.0.101` and a remote NAS network-transcoder at `192.168.0.100`. Those remote dependencies were removed in two commits: [`eccb3f1`](https://github.com/sneakyjoeru/ttrpg-librarian-bot/commit/eccb3f1) *“Replace all local Ollama (192.168.0.101) LLM calls with DeepSeek API”* (dropped the remote Ollama host) and [`02b466a`](https://github.com/sneakyjoeru/ttrpg-librarian-bot/commit/02b466a) *“DeepSeek-primary RAG + localhost endpoints + drop NAS transcoder”* (dropped the NAS transcoder and switched the local media compressor to local-iGPU → local-CPU only). From commit `02b466a` onward the bot runs entirely on the N150 host with no remote/network resource dependencies (DeepSeek cloud API excepted).
 
 ## Features
 
 - **Campaign Management**: Automated creation of active text channels with synced permissions, automatic role creation, and automated sync on channel renames.
 - **Instagram Media Interceptor**: Automatically intercepts Instagram posts, stories, and Reels. It retrieves images and videos using a multi-layered downloading system: proxy fixers (`eeinstagram`, `kkinstagram`), parallel scrapers (`instagram-url-direct`, `snapinsta`), and `yt-dlp` using authentication cookies. It also supports slide-selection modifiers (e.g. `1,2` or `-1` to filter specific slides).
-- **iGPU & Local CPU Media Compressor**: Automatically compresses oversized video attachments to fit Discord's file size limits. The transcoding pipeline tries (in order): a local iGPU VAAPI stage on supported hosts, a remote network transcoder running on the NAS (if `SHARE_PASS` or SSH keys are set), and finally a local CPU `libx264 ultrafast` fallback. The local iGPU stage is automatically detected at runtime for Intel N100 / N150 hosts and uses the host's `/dev/dri/renderD128` VAAPI render node for hardware HEVC encoding. See [Intel N100 / N150 iGPU build](#intel-n100--n150-igpu-build-optional) below.
+- **iGPU & Local CPU Media Compressor**: Automatically compresses oversized video attachments to fit Discord's file size limits. The transcoding pipeline tries (in order): a local iGPU VAAPI stage on supported hosts, and finally a local CPU `libx264 ultrafast` fallback. The old remote NAS network-transcoder stage has been REMOVED (the bot now runs entirely on the N150 host). The local iGPU stage is automatically detected at runtime for Intel N100 / N150 hosts and uses the host's `/dev/dri/renderD128` VAAPI render node for hardware HEVC encoding. See [Intel N100 / N150 iGPU build](#intel-n100--n150-igpu-build-optional) below.
 - **System Message Updates**: Dynamically pulls the last 10 git updates (commit logs) and posts them as clickable GitHub links in a locked `📜 Updates Log` thread attached to the system help message on every restart, keeping the main message uncluttered (just a pointer link + "Last updated" timestamp).
-- **Natural 1 Roasting**: Integrates with local Ollama LLM (`qwen3.5:9b` by default) to generate snarky roasts when players roll a critical fail (Nat 1).
-- **RAG QA Mention Pipeline**: Answer player questions using web search context from local SearXNG instances and recent channel chat history via local LLM. Include `"no bs"` in mentions for short, direct responses.
+- **Natural 1 Roasting**: Integrates with the local Ollama LLM (`qwen2.5:7b` by default) to generate snarky roasts when players roll a critical fail (Nat 1).
+- **RAG QA Mention Pipeline (DeepSeek-primary)**: Answer player questions using web-search context from the local SearXNG instance and recent channel chat history. **DeepSeek is the primary model** while a user has quota (`src/utils/quota.js`, regular + admin tiers); answers are accepted directly (no quality estimation). When quota is exhausted or DeepSeek fails, a single local Ollama attempt (`qwen2.5:7b`) is used. Include `"no bs"` in mentions for short, direct responses.
 - **Monthly Scheduler**: Cron scheduling for monthly miniature queues with a randomized set of fantasy prompts.
 - **Administrative Utilities**: Includes tools like `/retro-setup` to configure old channels, `/restart` to rebuild/restart the bot via Docker socket, interactive customized polling, pinning/unpinning, and topic overrides.
 - **Automatic Archival**: Clean parent transition to archived categories and role cleanup.
@@ -38,8 +44,9 @@ The project follows a modular architecture for ease of maintenance:
 
 #### Optional Requirements (For AI/RAG Features)
 
-- **[Ollama](https://ollama.com/)** (Running `qwen3.5:9b` by default): For dynamic AI QA responses and customized Natural 1 roasts.
-- **[SearXNG](https://github.com/searxng/searxng)**: For live web-search context inside the QA pipeline.
+- **[Ollama](https://ollama.com/)** (Running `qwen2.5:7b` by default): Local fallback for the DeepSeek-primary RAG pipeline and customized Natural 1 roasts. Shared with robot joe on the same N150 Ollama daemon (one resident model).
+- **[SearXNG](https://github.com/searxng/searxng)**: For live web-search context inside the QA pipeline. Both Ollama and SearXNG run as Docker containers on the N150 host, attached to the shared `ollama_default` network so the bot reaches them by container name (`ollama` / `searxng`).
+- **DeepSeek API key** (`$deepseek_api_key` in `secrets_discord.php`): the PRIMARY response model.
 
 _Note: If Ollama or SearXNG are offline or unreachable, the bot will gracefully degrade, falling back to static predefined roasts for Nat 1s and a standard interactive command reference when mentioned, leaving core TTRPG orchestration commands fully functional._
 
@@ -141,6 +148,6 @@ user is in the `render` group (GID 106 on most distros).
 
 You can configure the bot's RAG endpoints using the following environment variables:
 
-- `SEARXNG_URL` (Default: `http://192.168.0.100:9080/search`)
-- `OLLAMA_URL` (Default: `http://192.168.0.101:11434/api/generate`)
+- `SEARXNG_URL` (Default: `http://searxng:8080/search` — container name on the `ollama_default` network; override with `http://localhost:9080/search` only if running the bot outside Docker on the host)
+- `OLLAMA_URL` (Default: `http://ollama:11434/api/generate` — container name on the `ollama_default` network; override with `http://localhost:11434/api/generate` only if running outside Docker)
 - `DISCORD_TOKEN` (Fallback if `secrets_discord.php` is missing)

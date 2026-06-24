@@ -306,17 +306,29 @@ Cron
 
 ## 3. External Endpoints
 
-| Endpoint | Use |
+| Endpoint (default, from `src/config.js`) | Use |
 |---|---|
-| `http://localhost:11434/api/generate` | Local Ollama API (qwen3.5:9b) — runs on the N150 host |
+| `http://ollama:11434/api/generate` | Local Ollama API (`qwen2.5:7b`) — reached by container name on the shared `ollama_default` Docker network (not `localhost`, which inside the bot container is the container itself) |
 | `https://api.deepseek.com/v1/chat/completions` | DeepSeek API (PRIMARY on quota, direct fallback when Ollama fails) |
-| `http://localhost:9080/search` | SearXNG Search Instance (Docker container on the N150 host) |
+| `http://searxng:8080/search` | SearXNG Search Instance (Docker container on the N150 host, on `ollama_default`; internal port 8080) |
 | `eeinstagram.com`, `kkinstagram.com`, `uuinstagram.com` | Instagram fixer domains (priority order for Reel/TV; also fallback for non-Reel) |
 | `/dev/dri/renderD128` (and any present `/dev/dri/card*`) | VAAPI render node on the host; auto-mounted into the container by `rebuild-run.sh` when the iGPU build arg is set. Card device is optional — ffmpeg VAAPI only needs the render node. |
 
 > The remote NAS network transcoder (`sneakyjoe@192.168.0.100:22`) has been
 > REMOVED. `src/utils/shell.js` `buildSshPrefix()`/`hasRemoteAccess()` are no-ops,
 > so media compression is now local-iGPU → local-CPU only.
+
+> **Host history:** The bot previously relied on remote network resources — a
+> remote Ollama server at `192.168.0.101` and a remote NAS network-transcoder at
+> `192.168.0.100`. Those were removed in two commits: `eccb3f1` *“Replace all local
+> Ollama (192.168.0.101) LLM calls with DeepSeek API”* (dropped the remote Ollama
+> host) and `02b466a` *“DeepSeek-primary RAG + localhost endpoints + drop NAS
+> transcoder”* (dropped the NAS transcoder; media compressor → local-iGPU →
+> local-CPU only; endpoints switched to `localhost`). From `02b466a` onward the
+> bot runs entirely on the N150 host (DeepSeek cloud API excepted). Later
+> (`6fc6b0d`) the endpoints were switched from `localhost` to the Docker container
+> names (`ollama`/`searxng`) on the shared `ollama_default` network, and
+> `rebuild-run.sh` attaches the bot container to that network.
 
 Auth: `secrets_discord.php` (regex-parsed) → `$token`, `$deepseek_api_key`,
 `$client_secret`, `$share_pass`. Env-var fallbacks:
