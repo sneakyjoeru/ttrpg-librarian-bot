@@ -16,7 +16,6 @@ function parsePollEmbed(message, clientUserId) {
     if (message.author && clientUserId && message.author.id !== clientUserId) return null;
     const embed = message.embeds[0];
     if (!embed.title || !embed.title.startsWith('📊 ')) return null;
-    if (!embed.footer || !embed.footer.text || !embed.footer.text.startsWith('Poll created by ')) return null;
     return embed;
 }
 
@@ -69,25 +68,25 @@ function buildResultsField(sorted) {
     const second = secondCount != null ? sorted.filter(c => c.count === secondCount) : [];
 
     const plural = (n) => n !== 1 ? 's' : '';
-    let value = '';
+    let value = '======\n\n';
 
     if (winners.length === 1) {
-        value += `🥇 **Winner:** ${winners[0].emoji} ${winners[0].text} (${winners[0].count} vote${plural(winners[0].count)})\n`;
+        value += `🥇 **Winner:** ${winners[0].emoji} ${winners[0].text} (${winners[0].count} vote${plural(winners[0].count)})`;
     } else {
         const wstr = winners.map(w => `${w.emoji} ${w.text}`).join(' / ');
-        value += `🥇 **Tied winners (${winners[0].count} vote${plural(winners[0].count)}):** ${wstr}\n`;
+        value += `🥇 **Tied winners (${winners[0].count} vote${plural(winners[0].count)}):** ${wstr}`;
     }
 
     if (second.length > 0) {
         if (second.length === 1) {
-            value += `🥈 **Second best:** ${second[0].emoji} ${second[0].text} (${second[0].count} vote${plural(second[0].count)})`;
+            value += `\n\n🥈 **Second best:** ${second[0].emoji} ${second[0].text} (${second[0].count} vote${plural(second[0].count)})`;
         } else {
             const sstr = second.map(s => `${s.emoji} ${s.text}`).join(' / ');
-            value += `🥈 **Tied second (${second[0].count} vote${plural(second[0].count)}):** ${sstr}`;
+            value += `\n\n🥈 **Tied second (${second[0].count} vote${plural(second[0].count)}):** ${sstr}`;
         }
     }
 
-    return { name: '🏆 Results', value };
+    return { name: 'Results', value };
 }
 
 // Recounts every option's reactions, rebuilds the embed description with
@@ -138,8 +137,7 @@ async function refreshPoll(message, clientUserId) {
         color: EMBED_COLOR,
         title: embed.title,
         description: descriptionText,
-        fields: resultsField ? [resultsField] : [],
-        footer: { text: embed.footer.text }
+        fields: resultsField ? [resultsField] : []
     };
 
     try {

@@ -209,10 +209,7 @@ async function handleInteraction(client, interaction) {
         const pollEmbed = {
             color: EMBED_COLOR,
             title: `📊 ${question}`,
-            description: descriptionText,
-            footer: {
-                text: `Poll created by ${interaction.user.username}`
-            }
+            description: descriptionText
         };
 
         // Send Embed and store the message object so the bot can react to it
