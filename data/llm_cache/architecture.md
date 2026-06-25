@@ -146,9 +146,17 @@
 │   │   │                         #   mirror domains, optional protocol, URL
 │   │   │                         #   normalization), @mention → RAG, !pin/!unpin,
 │   │   │                         #   OP auto-pinning + role assignment
+│   │   ├── polls.js              #   /poll-librarian live results: recount number
+│   │   │                         #   reactions, show voter mentions per option,
+│   │   │                         #   declare winner + runner-up; in game (active
+│   │   │                         #   campaign) channels only the channel DM and
+│   │   │                         #   campaign-role members may vote (others are
+│   │   │                         #   auto-removed). Refreshed on every add/remove.
 │   │   └── reactions.js          #   ✋ reaction → campaign role assignment
 │   │                             #   (only if 🤖 is also present, i.e. the
-│   │                             #   bot reacted to the OP)
+│   │                             #   bot reacted to the OP). Also delegates
+│   │                             #   number-emoji reactions on poll messages to
+│   │                             #   polls.js for live vote recounting.
 │   ├── services/                 # SERVICES (Domain logic layer)
 │   │   ├── rag.js                #   Search RAG, target-user resolution,
 │   │   │                         #   history collection, persona quirks,
@@ -277,7 +285,10 @@ Discord Gateway
    │       ├─ /archive             — confirmation-typed move to ARCHIVED_CATEGORY_ID
    │       ├─ /retro-setup         — admin: pin OP, set reactions, create role
    │       │                         and append LIBRARIAN_DATA
-   │       ├─ /poll-librarian      — embed poll, auto-react 1️⃣..🔟
+    │       ├─ /poll-librarian      — embed poll, auto-react 1️⃣..🔟; live
+    │       │                         voter names + winner/runner-up via polls.js;
+    │       │                         in game channels voting restricted to the
+    │       │                         channel DM + campaign-role members
    │       ├─ /new-campaign        — public channel under ACTIVE_CATEGORY_ID
    │       ├─ /new-private-campaign — same, hidden from @everyone
    │       ├─ /new-thread          — public thread, 1-day auto-archive
@@ -582,7 +593,7 @@ Admin-only checks use the `DM_ROLE_ID` role or `PermissionFlagsBits.Administrato
 | `/retro-setup` | Admin | back-fill pin + reactions + role + LIBRARIAN_DATA for legacy channels |
 | `/set-topic <text>` | DM/Admin | rewrites topic but preserves the LIBRARIAN_DATA token; trims to fit Discord's 1024-char limit |
 | `/update-players <count>` | DM/Admin | renames channel AND linked role to `<name>-<newcount>` (note: Discord limits renames to 2/10min) |
-| `/poll-librarian <question> <options>` | anyone | 2-10 comma-separated options, auto-reacts 1️⃣..🔟 |
+| `/poll-librarian <question> <options>` | anyone | 2-10 comma-separated options, auto-reacts 1️⃣..🔟; embed is edited live to show voter mentions per option plus 🥇 winner / 🥈 runner-up; in game (active campaign) channels only the channel DM + campaign-role members may vote |
 | `/roll <formula> [class] [context]` | anyone | dice parser; on natural 1 (d20) generates an Ollama roast with the class + context + last 10 channel messages as flavour; falls back to `FALLBACK_ROASTS[]` if Ollama is down |
 | `/restart` | Admin | exec `rebuild-run.sh` via the mounted Docker socket; the ephemeral completion message is patched via `RESTART_TOKEN`/channel fallback and auto-deleted 20s later |
 

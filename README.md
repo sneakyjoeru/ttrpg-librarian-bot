@@ -18,6 +18,7 @@ The bot runs in a Docker container on an **Intel N150 Mini PC** (12GB RAM + 8GB 
 - **RAG QA Mention Pipeline (DeepSeek-primary)**: Answer player questions using web-search context from the local SearXNG instance and recent channel chat history. **DeepSeek is the primary model** while a user has quota (`src/utils/quota.js`, regular + admin tiers); answers are accepted directly (no quality estimation). When quota is exhausted or DeepSeek fails, a single local Ollama attempt (`qwen2.5:7b`) is used. Include `"no bs"` in mentions for short, direct responses.
 - **Monthly Scheduler**: Cron scheduling for monthly miniature queues with a randomized set of fantasy prompts.
 - **Administrative Utilities**: Includes tools like `/retro-setup` to configure old channels, `/restart` to rebuild/restart the bot via Docker socket, interactive customized polling, pinning/unpinning, and topic overrides.
+- **Live Poll Results**: `/poll-librarian` polls are edited live as people vote. Each option lists the names of everyone who reacted, and a 🏆 Results field declares the 🥇 winner and 🥈 runner-up based on reaction counts. In game (active campaign) channels, only the channel's DM and campaign-role members may vote — unauthorized reactions are automatically removed.
 - **Automatic Archival**: Clean parent transition to archived categories and role cleanup.
 
 ## Codebase Layout
@@ -28,7 +29,7 @@ The project follows a modular architecture for ease of maintenance:
 - **`src/config.js`**: Centralized configuration store for Discord IDs, API endpoints, fallback values, and slash command metadata.
 - **`src/utils/helpers.js`**: Shared utilities, token estimators, and the git log dynamic updates retriever.
 - **`src/services/`**: Contain external services like RAG LLM queries and Instagram link scrapers.
-- **`src/handlers/`**: Houses modules that process Discord events (`interactionCreate`, `messageCreate`, `channelUpdate`, `channelDelete`, `reactions`).
+- **`src/handlers/`**: Houses modules that process Discord events (`interactionCreate`, `messageCreate`, `channelUpdate`, `channelDelete`, `reactions`, `polls`).
 
 ---
 

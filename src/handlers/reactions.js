@@ -1,10 +1,14 @@
 const { getLibrarianData } = require('../utils/helpers');
 const { SERVER_ID, EMOJI_ROBOT, EMOJI_HAND } = require('../config');
+const { handlePollReactionAdd, handlePollReactionRemove } = require('./polls');
 
 async function handleReactionAdd(reaction, user) {
     if (user.bot) return;
     if (reaction.partial) await reaction.fetch();
     if (reaction.message.guild?.id !== SERVER_ID) return;
+
+    // Poll vote tracking (and game-channel voter restriction).
+    await handlePollReactionAdd(reaction, user, reaction.client.user.id).catch(console.error);
 
     if (reaction.emoji.name === EMOJI_HAND) {
         const hasRobot = reaction.message.reactions.cache.get(EMOJI_ROBOT);
@@ -25,6 +29,9 @@ async function handleReactionRemove(reaction, user) {
     if (user.bot) return;
     if (reaction.partial) await reaction.fetch();
     if (reaction.message.guild?.id !== SERVER_ID) return;
+
+    // Poll vote tracking.
+    await handlePollReactionRemove(reaction, user, reaction.client.user.id).catch(console.error);
 
     if (reaction.emoji.name === EMOJI_HAND) {
         const hasRobot = reaction.message.reactions.cache.get(EMOJI_ROBOT);

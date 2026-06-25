@@ -19,6 +19,7 @@ const {
     EMOJI_ROBOT,
     EMOJI_HAND
 } = require('../config');
+const { refreshPoll } = require('./polls');
 
 async function handleInteraction(client, interaction) {
     if (!interaction.isChatInputCommand()) return;
@@ -226,6 +227,10 @@ async function handleInteraction(client, interaction) {
         } catch (error) {
             console.error('Failed to react to poll:', error);
         }
+
+        // Initialize the live voter/winners display (shows "No votes yet"
+        // per option until the first vote lands).
+        await refreshPoll(pollMessage, client.user.id).catch(console.error);
 
         return;
     }
