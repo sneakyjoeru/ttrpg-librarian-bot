@@ -303,17 +303,17 @@
     },
     "ScheduleState": {
       "type": "object",
-      "description": "Persistent state at SCHEDULE_STATE_PATH (data/schedules.json) for /schedule-poll. Each key is the poll message snowflake; each value carries the channel/creator/role context, the option list (emoji + ISO datetime + time window), and the one-shot icsSent guard so the Google-importable .ics is emitted at most once per poll (when every campaign-role member has voted for the same date(s)). Written atomically (temp-file + rename) through an in-process write Promise chain by src/utils/scheduling.js.",
+      "description": "Persistent state at SCHEDULE_STATE_PATH (data/schedules.json) for /schedule-poll. Each key is the poll message snowflake; each value carries the channel/creator/role context, the option list (emoji + ISO datetime + time window), and the lastEmittedConfirmed signature so a fresh Google-importable .ics is emitted whenever the set of unanimously-confirmed dates changes (and only then — identical consensus on later vote churn does not re-emit). Written atomically (temp-file + rename) through an in-process write Promise chain by src/utils/scheduling.js.",
       "properties": {
         "channelId": { "$ref": "#/definitions/Snowflake" },
         "guildId": { "$ref": "#/definitions/Snowflake" },
         "creatorId": { "$ref": "#/definitions/Snowflake", "description": "Discord user id of the DM/Admin who ran /schedule-poll." },
         "roleId": { "type": ["string", "null"], "description": "Campaign role id parsed from the channel topic ([LIBRARIAN_DATA|DM:..|ROLE:..]) at poll creation. Null outside an active campaign channel → no .ics is ever emitted (poll still works as a plain live-results poll)." },
         "options": { "type": "array", "items": { "$ref": "#/definitions/ScheduleOption" }, "description": "Ordered option list (chronological by isoDate)." },
-        "icsSent": { "type": "boolean", "description": "Flipped true after the unanimous-vote .ics is posted; prevents re-emission on subsequent vote churn." },
+        "lastEmittedConfirmed": { "type": ["string", "null"], "description": "Signature of the last .ics-emitted unanimously-confirmed option set (sorted `isoDate|start|end|allDay` joined by '::'). Null until the first emission. Compared on every vote change; a new .ics is posted only when the current confirmed set's signature differs." },
         "createdAt": { "type": "integer", "description": "Epoch ms when the poll was created." }
       },
-      "required": ["channelId", "guildId", "creatorId", "roleId", "options", "icsSent", "createdAt"],
+      "required": ["channelId", "guildId", "creatorId", "roleId", "options", "lastEmittedConfirmed", "createdAt"],
       "examples": [
         {
           "1505941250732458000": {
@@ -324,7 +324,7 @@
             "options": [
               { "emoji": "1️⃣", "isoDate": "20260701", "start": "18:00", "end": "22:00", "allDay": false, "label": "Wed 1 Jul 18:00-22:00" }
             ],
-            "icsSent": false,
+            "lastEmittedConfirmed": null,
             "createdAt": 1780000000000
           }
         }

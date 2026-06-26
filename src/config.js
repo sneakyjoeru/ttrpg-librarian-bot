@@ -101,7 +101,7 @@ const RANDOM_EMOJIS = [
 // "Wednesday Friday 18:00-22:00 4" (shared time), or
 // "Wed 14:00-16:00 Fri 18:00-22:00 4" (per-day times) and expands it into one
 // poll option per (weekday × week) date. State (creator, role, option ISO
-// datetimes, icsSent flag) is persisted to SCHEDULE_STATE_PATH so the calendar
+// datetimes, lastEmittedConfirmed signature) is persisted to SCHEDULE_STATE_PATH so the calendar
 // (.ics) emission can run on every vote change without re-deriving the dates.
 const SCHEDULE_MAX_WEEKS = 10;        // weeks cap — keeps total options ≤ 20
 const SCHEDULE_MAX_OPTIONS = 20;      // Discord reaction limit per message
