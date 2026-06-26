@@ -106,8 +106,11 @@ async function refreshPoll(message, clientUserId) {
     if (options.length === 0) return;
 
     // Make sure the full reaction cache is present before reading counts.
+    // discord.js' ReactionManager has no fetch() method (removed/never present
+    // in v14.26.x), so re-fetch the whole message instead — the API returns the
+    // current `reactions` array which patches message.reactions.cache in place.
     try {
-        await message.reactions.fetch();
+        await message.fetch();
     } catch (e) {
         console.error('[Poll] Failed to fetch reactions:', e.message);
     }

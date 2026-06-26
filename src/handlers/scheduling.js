@@ -189,8 +189,10 @@ async function handleSchedulingVoteChange(message, clientUserId) {
     const dmId = (metaData && metaData.dmId) ? metaData.dmId : null;
 
     // Make sure the full reaction cache + each option's user cache are loaded.
+    // discord.js' ReactionManager has no fetch() method in v14.26.x, so
+    // re-fetch the whole message to refresh message.reactions.cache in place.
     try {
-        await message.reactions.fetch();
+        await message.fetch();
     } catch (e) {
         console.error('[Scheduling] fetch reactions failed:', e.message);
         return;
