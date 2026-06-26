@@ -162,7 +162,7 @@
 │   │   │                         #   DM and campaign-role members may vote (others
 │   │   │                         #   are auto-removed). Refreshed on add/remove.
 │   │   ├── scheduling.js         #   /schedule-poll: parses the free-text spec
-│   │   │                         #   (days + optional time + weeks) via
+│   │   │                         #   (days + optional per-day time + weeks) via
 │   │   │                         #   src/utils/scheduling.js, expands it into one
 │   │   │                         #   poll option per (weekday × week), picks
 │   │   │                         #   NUMBER_EMOJIS (≤9 dates) or RANDOM_EMOJIS
@@ -213,8 +213,9 @@
 │       ├── quota.js              #   Per-user DeepSeek quota tracker
 │       │                         #   (sliding window, persistent JSON store)
 │       ├── scheduling.js         #   /schedule-poll support: parseSchedulingInput
-│       │                         #   (days + optional HH:MM[-HH:MM] + weeks →
-│       │                         #   spec), generateScheduleOptions (TZ-aware
+│       │                         #   (days + optional per-day HH:MM[-HH:MM] +
+│       │                         #   weeks → spec with per-weekday time windows),
+│       │                         #   generateScheduleOptions (TZ-aware
 │       │                         #   via Intl.DateTimeFormat in TIMEZONE, caps at
 │       │                         #   SCHEDULE_MAX_OPTIONS=20), buildIcs (RFC 5545
 │       │                         #   .ics with floating local times / all-day
@@ -324,9 +325,9 @@ Discord Gateway
      │       │                         voter names + winner/runner-up via polls.js;
      │       │                         in game channels voting restricted to the
      │       │                         channel DM + campaign-role members
-     │       ├─ /schedule-poll       — DM/Admin: free-text spec (days + optional
-     │       │                         time + weeks) → one `📅 ` poll option per
-     │       │                         weekday × week (≤9 → NUMBER_EMOJIS, >9 →
+      │       ├─ /schedule-poll       — DM/Admin: free-text spec (days + optional
+      │       │                         per-day time + weeks) → one `📅 ` poll option per
+      │       │                         weekday × week (≤9 → NUMBER_EMOJIS, >9 →
      │       │                         RANDOM_EMOJIS); unanimous campaign-role vote
      │       │                         auto-emits a Google-importable .ics
     │       ├─ /new-campaign        — public channel under ACTIVE_CATEGORY_ID
@@ -634,7 +635,7 @@ Admin-only checks use the `DM_ROLE_ID` role or `PermissionFlagsBits.Administrato
 | `/set-topic <text>` | DM/Admin | rewrites topic but preserves the LIBRARIAN_DATA token; trims to fit Discord's 1024-char limit |
 | `/update-players <count>` | DM/Admin | renames channel AND linked role to `<name>-<newcount>` (note: Discord limits renames to 2/10min) |
 | `/poll-librarian <question> <options>` | anyone | 2-10 comma-separated options, auto-reacts 1️⃣..🔟; embed is edited live to show voter mentions per option plus 🥇 winner / 🥈 runner-up; in game (active campaign) channels only the channel DM + campaign-role members may vote |
-| `/schedule-poll <input>` | DM/Admin | Free-text spec `days [time] weeks` (e.g. `Wednesday Friday 4`, `Wed Fri 18:00-22:00 4`) → one `📅 ` poll option per weekday × week for the next N weeks (≤9 dates vote with 1️⃣..🔟, >9 dates switch to RANDOM_EMOJIS; cap 20 options / 10 weeks). Reuses polls.js live results + game-channel voter restriction. State persisted to `data/schedules.json`. In an active campaign channel, once every campaign-role member has voted for the same date(s) (unanimous), the bot auto-generates + posts a Google-importable `.ics` (floating local times; all-day → `VALUE=DATE`); one emit per poll via the `icsSent` flag. Dates are computed in `TIMEZONE` via `Intl.DateTimeFormat` (no tz library). |
+| `/schedule-poll <input>` | DM/Admin | Free-text spec `days [time] [days [time] ...] weeks` (e.g. `Wednesday Friday 4`, `Wed Fri 18:00-22:00 4`, `Wed 14:00-16:00 Fri 18:00-22:00 4`) → one `📅 ` poll option per weekday × week for the next N weeks (≤9 dates vote with 1️⃣..🔟, >9 dates switch to RANDOM_EMOJIS; cap 20 options / 10 weeks). A time token applies to all days in its preceding group; days with no time are all-day. Reuses polls.js live results + game-channel voter restriction. State persisted to `data/schedules.json`. In an active campaign channel, once every campaign-role member has voted for the same date(s) (unanimous), the bot auto-generates + posts a Google-importable `.ics` (floating local times; all-day → `VALUE=DATE`); one emit per poll via the `icsSent` flag. Dates are computed in `TIMEZONE` via `Intl.DateTimeFormat` (no tz library). |
 | `/roll <formula> [class] [context]` | anyone | dice parser; on natural 1 (d20) generates an Ollama roast with the class + context + last 10 channel messages as flavour; falls back to `FALLBACK_ROASTS[]` if Ollama is down |
 | `/restart` | Admin | exec `rebuild-run.sh` via the mounted Docker socket; the ephemeral completion message is patched via `RESTART_TOKEN`/channel fallback and auto-deleted 20s later |
 

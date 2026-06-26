@@ -29,16 +29,26 @@ const TIME_RE = /^(\d{1,2}):(\d{2})(?:\s*-\s*(\d{1,2}):(\d{2}))?$/;
 // --- INPUT PARSING ---
 // Spec grammar (whitespace-separated, the leading "scheduling" word is the
 // slash command name and is NOT part of `input`):
-//   <day> [<day> ...] [<time>] <weeks>
+//   <group> [<group> ...] <weeks>
+//   <group> := <day> [<day> ...] [<time>]
 //   - <weeks>  : final token, integer 1..SCHEDULE_MAX_WEEKS
-//   - <time>   : optional "HH:MM" or "HH:MM-HH:MM" (one token, no spaces)
+//   - <time>   : optional "HH:MM" or "HH:MM-HH:MM" (one token, no spaces);
+//                applies to EVERY day in the immediately preceding group
+//                (the days seen since the last time token). Days in a group
+//                with no <time> default to all-day.
 //   - <day>    : weekday name (full or abbreviation, case-insensitive)
 //
-// Returns { days:[weekdayIdx,...], start:'HH:MM', end:'HH:MM', allDay:bool,
-// weeks:n } or throws Error with a usage message.
+// This supports both a shared time (`Wed Fri 18:00-22:00 4` → both 18-22)
+// and per-day times (`Wed 14:00-16:00 Fri 18:00-22:00 4` → Wed 14-16,
+// Fri 18-22), as well as mixed all-day/timed days.
+//
+// Returns { days:[weekdayIdx,...],
+//           dayTimes:{ [weekdayIdx]: { start:'HH:MM', end:'HH:MM', allDay:false } },
+//           weeks:n } or throws Error with a usage message. Days absent from
+// `dayTimes` are all-day.
 function parseSchedulingInput(raw) {
     const input = (raw || '').trim();
-    if (!input) throw new Error('Empty scheduling spec. Usage: `days [time] weeks`, e.g. `Wednesday Friday 4` or `Wed Fri 18:00-22:00 4`.');
+    if (!input) throw new Error('Empty scheduling spec. Usage: `days [time] weeks`, e.g. `Wednesday Friday 4` or `Wed 14:00-16:00 Fri 18:00-22:00 4`.');
 
     const tokens = input.split(/\s+/).filter(Boolean);
     if (tokens.length < 2) {
@@ -56,18 +66,29 @@ function parseSchedulingInput(raw) {
 
     const middle = tokens.slice(0, -1);
     const days = [];
-    let time = null;
+    const dayTimes = {};        // weekdayIdx → { start, end, allDay:false }
+    let currentGroup = [];      // weekday indices seen since the last time token
 
     for (const tok of middle) {
         const lower = tok.toLowerCase();
         if (TIME_RE.test(tok)) {
-            if (time) throw new Error('Only one time token is allowed.');
-            time = tok;
+            if (currentGroup.length === 0) {
+                throw new Error(`Time \`${tok}\` has no preceding weekday. Put the day(s) before the time, e.g. \`Wed 14:00-16:00\`.`);
+            }
+            const window = parseTimeWindow(tok);
+            for (const idx of currentGroup) {
+                if (dayTimes[idx]) {
+                    throw new Error(`Weekday \`${WEEKDAY_LABEL[idx]}\` already has a time (\`${dayTimes[idx].start}-${dayTimes[idx].end}\`) and was given another (\`${window.start}-${window.end}\`). List each weekday only once per time window.`);
+                }
+                dayTimes[idx] = window;
+            }
+            currentGroup = [];
             continue;
         }
         if (Object.prototype.hasOwnProperty.call(WEEKDAY_MAP, lower)) {
             const idx = WEEKDAY_MAP[lower];
             if (!days.includes(idx)) days.push(idx);
+            currentGroup.push(idx);
             continue;
         }
         throw new Error(`Unrecognized token \`${tok}\`. Expected a weekday (e.g. Mon, Wednesday) or a time (HH:MM or HH:MM-HH:MM).`);
@@ -77,23 +98,22 @@ function parseSchedulingInput(raw) {
         throw new Error('No weekdays given. Pick at least one weekday, e.g. `Wednesday Friday 4`.');
     }
 
-    let start = null, end = null, allDay = true;
-    if (time) {
-        const m = time.match(TIME_RE);
-        const sh = m[1].padStart(2, '0');
-        const sm = m[2];
-        start = `${sh}:${sm}`;
-        let eh = m[3], em = m[4];
-        if (eh === undefined) {
-            // Single start time → default session length.
-            const [h, min] = applyDuration(sh, sm, SCHEDULE_DEFAULT_SESSION_HOURS);
-            eh = h; em = min;
-        }
-        end = `${eh.padStart(2, '0')}:${em}`;
-        allDay = false;
-    }
+    return { days, dayTimes, weeks };
+}
 
-    return { days, start, end, allDay, weeks };
+// Parses a "HH:MM" or "HH:MM-HH:MM" token into { start, end, allDay:false }.
+// A bare start time gets a default session length (SCHEDULE_DEFAULT_SESSION_HOURS).
+function parseTimeWindow(time) {
+    const m = time.match(TIME_RE);
+    const sh = m[1].padStart(2, '0');
+    const sm = m[2];
+    const start = `${sh}:${sm}`;
+    let eh = m[3], em = m[4];
+    if (eh === undefined) {
+        const [h, min] = applyDuration(sh, sm, SCHEDULE_DEFAULT_SESSION_HOURS);
+        eh = h; em = min;
+    }
+    return { start, end: `${eh.padStart(2, '0')}:${em}`, allDay: false };
 }
 
 // Adds `hours` to a "HH:MM" pair and returns [HH, MM] zero-padded strings.
@@ -132,26 +152,32 @@ function getZonedToday(timezone = TIMEZONE) {
 //   { date: {year,month,day}, weekday, isoDate:'YYYYMMDD',
 //     start:'HH:MM'|null, end:'HH:MM'|null, allDay:bool,
 //     label:'Wed 2 Jul 18:00-22:00' }
-// Throws if the total option count would exceed SCHEDULE_MAX_OPTIONS.
+// Per-day time windows come from spec.dayTimes (map weekdayIdx → window);
+// days absent from the map are all-day. Throws if the total option count
+// would exceed SCHEDULE_MAX_OPTIONS.
 function generateScheduleOptions(spec) {
     const today = getZonedToday();
     const options = [];
     for (const target of spec.days) {
+        const window = spec.dayTimes && spec.dayTimes[target];
+        const start = window ? window.start : null;
+        const end = window ? window.end : null;
+        const allDay = !window;
         // Days until the first occurrence of this weekday (0 = today).
-        let delta = (target - today.weekday + 7) % 7;
+        const delta = (target - today.weekday + 7) % 7;
         for (let w = 0; w < spec.weeks; w++) {
             const occ = addDays(today, delta + w * 7);
             const isoDate = ymd(occ.year, occ.month, occ.day);
             const weekdayLabel = WEEKDAY_LABEL[occ.weekday];
             const dateLabel = `${weekdayLabel} ${occ.day} ${monthShort(occ.month)}`;
-            const timeLabel = spec.allDay ? '' : ` ${spec.start}-${spec.end}`;
+            const timeLabel = allDay ? '' : ` ${start}-${end}`;
             options.push({
                 weekday: occ.weekday,
                 date: { year: occ.year, month: occ.month, day: occ.day },
                 isoDate,
-                start: spec.start,
-                end: spec.end,
-                allDay: spec.allDay,
+                start,
+                end,
+                allDay,
                 label: `${dateLabel}${timeLabel}`
             });
         }

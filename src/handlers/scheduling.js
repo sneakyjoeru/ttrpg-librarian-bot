@@ -45,11 +45,27 @@ function pickEmojis(optionCount) {
 }
 
 // Human-readable summary of the spec, used as the poll question/title.
+// Groups the selected weekdays by their time window so per-day times read
+// naturally, e.g. "Wednesday @ 14:00-16:00 & Friday @ 18:00-22:00 — next 4
+// weeks", or "Wednesday & Friday @ 18:00-22:00 — ..." when shared, or
+// "Wednesday & Friday — ..." when all-day.
 function summarizeSpec(spec) {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const days = spec.days.map(d => dayNames[d]).join(' & ');
-    const time = spec.allDay ? '' : ` @ ${spec.start}-${spec.end}`;
-    return `Scheduling: ${days}${time} — next ${spec.weeks} week${spec.weeks === 1 ? '' : 's'}`;
+    const ALLDAY_KEY = '__allday__';
+    const groups = {};          // key → [dayName,...]
+    for (const idx of spec.days) {
+        const w = spec.dayTimes && spec.dayTimes[idx];
+        const key = w ? `${w.start}-${w.end}` : ALLDAY_KEY;
+        (groups[key] = groups[key] || []).push(dayNames[idx]);
+    }
+    // Stable group order: keep the order in which each group first appeared.
+    const order = Object.keys(groups);
+    const parts = order.map(key => {
+        const names = groups[key].join(' & ');
+        if (key === ALLDAY_KEY) return names;
+        return `${names} @ ${key}`;
+    });
+    return `Scheduling: ${parts.join(' & ')} — next ${spec.weeks} week${spec.weeks === 1 ? '' : 's'}`;
 }
 
 // --- CREATION ---
@@ -72,7 +88,7 @@ async function createSchedulePoll(interaction) {
         options = generateScheduleOptions(spec);
     } catch (e) {
         return interaction.reply({
-            content: `📅 Could not build the scheduling poll:\n> ${e.message}\n\n**Usage:** \`days [time] weeks\`\nExamples: \`Wednesday Friday 4\` · \`Mon Wed 18:00-22:00 6\``,
+            content: `📅 Could not build the scheduling poll:\n> ${e.message}\n\n**Usage:** \`days [time] [days [time] ...] weeks\`\nExamples: \`Wednesday Friday 4\` · \`Wed Fri 18:00-22:00 6\` · \`Wed 14:00-16:00 Fri 18:00-22:00 4\``,
             ephemeral: true
         });
     }

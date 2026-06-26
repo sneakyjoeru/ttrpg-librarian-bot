@@ -97,11 +97,12 @@ const RANDOM_EMOJIS = [
 ];
 
 // --- SCHEDULING POLL ---
-// `/schedule-poll` parses a free-text spec like "Wednesday Friday 4" or
-// "Wednesday Friday 18:00-22:00 4" and expands it into one poll option per
-// (weekday × week) date. State (creator, role, option ISO datetimes, icsSent
-// flag) is persisted to SCHEDULE_STATE_PATH so the calendar (.ics) emission
-// can run on every vote change without re-deriving the dates.
+// `/schedule-poll` parses a free-text spec like "Wednesday Friday 4",
+// "Wednesday Friday 18:00-22:00 4" (shared time), or
+// "Wed 14:00-16:00 Fri 18:00-22:00 4" (per-day times) and expands it into one
+// poll option per (weekday × week) date. State (creator, role, option ISO
+// datetimes, icsSent flag) is persisted to SCHEDULE_STATE_PATH so the calendar
+// (.ics) emission can run on every vote change without re-deriving the dates.
 const SCHEDULE_MAX_WEEKS = 10;        // weeks cap — keeps total options ≤ 20
 const SCHEDULE_MAX_OPTIONS = 20;      // Discord reaction limit per message
 const SCHEDULE_DEFAULT_SESSION_HOURS = 2; // when only a start time is given
@@ -157,7 +158,7 @@ const helpText = `**Librarian Bot Functions:**
 \`/new-private-campaign [campaign_name] [usernames]\` - Create private campaign channel *(DM or Admin)*
 \`/new-private-thread [usernames]\` - Create a private thread and invite mentioned users *(DM or Admin)*
 \`/poll-librarian [question] [options]\` - Create a poll. Options must be comma-separated (max 10).
-\`/schedule-poll [input]\` - Auto-scheduling poll. Input: days + optional time + weeks, e.g. \`Wednesday Friday 4\` or \`Wed Fri 18:00-22:00 4\`. Builds one poll option per weekday for each of the next N weeks (up to 10 weeks / 20 options). When more than 9 dates, random emojis are used for voting. *(DM or Admin)*
+\`/schedule-poll [input]\` - Auto-scheduling poll. Input: days + optional per-day time + weeks, e.g. \`Wednesday Friday 4\`, \`Wed Fri 18:00-22:00 4\`, or \`Wed 14:00-16:00 Fri 18:00-22:00 4\`. Builds one poll option per weekday for each of the next N weeks (up to 10 weeks / 20 options). When more than 9 dates, random emojis are used for voting. *(DM or Admin)*
 \`/set-topic [text]\` - Set a new channel topic while preserving bot metadata *(DM or Admin)*
 \`/update-players [count]\` - Change the number of players in the channel and role name *(DM or Admin)*
 \`!pin [message_id]\` - Pin a message by ID (or the last message if empty) *(DM of this channel or Admin)*
@@ -200,8 +201,8 @@ const commands = [
         .addStringOption(opt => opt.setName('question').setDescription('The question for the poll').setRequired(true))
         .addStringOption(opt => opt.setName('options').setDescription('Comma-separated options (e.g. Yes, No, Maybe)').setRequired(true)),
     new SlashCommandBuilder().setName('schedule-poll')
-        .setDescription('Create a scheduling poll from days + optional time + weeks (DM or Admin)')
-        .addStringOption(opt => opt.setName('input').setDescription('Days + optional time + weeks. e.g. "Wednesday Friday 4" or "Wed Fri 18:00-22:00 4"').setRequired(true)),
+        .setDescription('Create a scheduling poll from days + optional per-day time + weeks (DM or Admin)')
+        .addStringOption(opt => opt.setName('input').setDescription('Days + optional per-day time + weeks. e.g. "Wednesday Friday 4", "Wed Fri 18:00-22:00 4", or "Wed 14:00-16:00 Fri 18:00-22:00 4"').setRequired(true)),
     new SlashCommandBuilder().setName('roll')
         .setDescription('Roll dice (e.g., 1d20+5, 2d6, d20)')
         .addStringOption(opt => opt.setName('formula').setDescription('Dice formula to roll (e.g., 1d20+5, 2d6, d20)').setRequired(true))
