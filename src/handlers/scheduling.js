@@ -88,7 +88,7 @@ async function createSchedulePoll(interaction) {
         options = generateScheduleOptions(spec);
     } catch (e) {
         return interaction.reply({
-            content: `📅 Could not build the scheduling poll:\n> ${e.message}\n\n**Usage:** \`days [time] [days [time] ...] weeks\`\nExamples: \`Wednesday Friday 4\` · \`Wed Fri 18:00-22:00 6\` · \`Wed 14:00-16:00 Fri 18:00-22:00 4\``,
+            content: `📅 Could not build the scheduling poll:\n> ${e.message}\n\n**Usage:** \`days [time] [days [time] ...] weeks\`\nExamples: \`Wednesday Friday 4\` · \`Weekdays 18:00-22:00 6\` · \`Wed 14:00-16:00 Fri 18:00-22:00 4\`\nDays also accept the group tokens \`weekdays\`/\`wdy\` (Mon–Fri) and \`weekends\`/\`wke\`/\`wkd\` (Sat–Sun).`,
             ephemeral: true
         });
     }

@@ -23,6 +23,19 @@ const WEEKDAY_MAP = {
 
 const WEEKDAY_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// Multi-day shortcuts that expand to a whole span of weekdays. Keys are
+// lower-cased. Each entry is the sorted list of JS getDay() indices it
+// covers. Accepted both as full words and as 3-letter abbreviations
+// (`wdy` = weekDaYs, `wke` = weeKEnds, `wkd` = weeKend / wknd) to stay
+// consistent with the 3-letter weekday abbreviations above.
+const GROUP_DAY_MAP = {
+    weekdays: [1, 2, 3, 4, 5],
+    wdy: [1, 2, 3, 4, 5],
+    weekends: [0, 6],
+    wke: [0, 6],
+    wkd: [0, 6]
+};
+
 // Matches a time interval: "18:00", "18:00-22:00", "6:30-21:15".
 const TIME_RE = /^(\d{1,2}):(\d{2})(?:\s*-\s*(\d{1,2}):(\d{2}))?$/;
 
@@ -91,7 +104,14 @@ function parseSchedulingInput(raw) {
             currentGroup.push(idx);
             continue;
         }
-        throw new Error(`Unrecognized token \`${tok}\`. Expected a weekday (e.g. Mon, Wednesday) or a time (HH:MM or HH:MM-HH:MM).`);
+        if (Object.prototype.hasOwnProperty.call(GROUP_DAY_MAP, lower)) {
+            for (const idx of GROUP_DAY_MAP[lower]) {
+                if (!days.includes(idx)) days.push(idx);
+                currentGroup.push(idx);
+            }
+            continue;
+        }
+        throw new Error(`Unrecognized token \`${tok}\`. Expected a weekday (e.g. Mon, Wednesday, Weekdays, Weekends), a group (Weekdays/Wdy, Weekends/Wke/Wkd), or a time (HH:MM or HH:MM-HH:MM).`);
     }
 
     if (days.length === 0) {
@@ -351,5 +371,6 @@ module.exports = {
     setSchedule,
     updateSchedule,
     deleteSchedule,
-    WEEKDAY_MAP
+    WEEKDAY_MAP,
+    GROUP_DAY_MAP
 };
