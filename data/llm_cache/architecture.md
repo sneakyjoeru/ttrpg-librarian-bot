@@ -304,8 +304,8 @@ Discord Gateway
     │       messages to polls.js for live vote recounting (both `📊 ` custom
     │       polls and `📅 ` scheduling polls), then — for `📅 ` scheduling
     │       polls only — calls scheduling.js's handleSchedulingVoteChange
-    │       which, when every eligible voter (campaign role + DM) has voted
-    │       for the same date(s), emits a fresh Google-importable .ics
+    │       which, when every campaign-role member (DM is optional — may abstain)
+    │       has voted for the same date(s), emits a fresh Google-importable .ics
     │       whenever the confirmed set changes (lastEmittedConfirmed).
    │
    ├─ channelUpdate ───────────► handleChannelUpdate (src/handlers/channelUpdate.js)
@@ -331,7 +331,8 @@ Discord Gateway
       │       │                         per-day time + weeks) → one `📅 ` poll option per
       │       │                         weekday × week (≤9 → NUMBER_EMOJIS, >9 →
      │       │                         RANDOM_EMOJIS); unanimous campaign-role vote
-     │       │                         auto-emits a Google-importable .ics
+     │       │                         (DM optional — may abstain) auto-emits a
+     │       │                         Google-importable .ics
     │       ├─ /new-campaign        — public channel under ACTIVE_CATEGORY_ID
    │       ├─ /new-private-campaign — same, hidden from @everyone
    │       ├─ /new-thread          — public thread, 1-day auto-archive
@@ -637,7 +638,7 @@ Admin-only checks use the `DM_ROLE_ID` role or `PermissionFlagsBits.Administrato
 | `/set-topic <text>` | DM/Admin | rewrites topic but preserves the LIBRARIAN_DATA token; trims to fit Discord's 1024-char limit |
 | `/update-players <count>` | DM/Admin | renames channel AND linked role to `<name>-<newcount>` (note: Discord limits renames to 2/10min) |
 | `/poll-librarian <question> <options>` | anyone | 2-10 comma-separated options, auto-reacts 1️⃣..🔟; embed is edited live to show voter mentions per option plus 🥇 winner / 🥈 runner-up; in game (active campaign) channels only the channel DM + campaign-role members may vote |
-| `/schedule-poll <input>` | DM/Admin | Free-text spec `days [time] [days [time] ...] weeks` (e.g. `Wednesday Friday 4`, `Wed Fri 18:00-22:00 4`, `Wed 14:00-16:00 Fri 18:00-22:00 4`) → one `📅 ` poll option per weekday × week for the next N weeks (≤9 dates vote with 1️⃣..🔟, >9 dates switch to RANDOM_EMOJIS; cap 20 options / 10 weeks). A time token applies to all days in its preceding group; days with no time are all-day. Reuses polls.js live results + game-channel voter restriction (active channels: only channel DM + campaign-role members + admins may vote; others auto-removed). State persisted to `data/schedules.json`. In an active campaign channel, whenever every eligible voter (campaign role + DM) has voted for the same date(s) (unanimous), the bot auto-generates + posts a Google-importable `.ics` (floating local times; all-day → `VALUE=DATE`) — and re-posts a fresh `.ics` each time the confirmed set of dates changes (tracked via the `lastEmittedConfirmed` signature). Dates are computed in `TIMEZONE` via `Intl.DateTimeFormat` (no tz library). |
+| `/schedule-poll <input>` | DM/Admin | Free-text spec `days [time] [days [time] ...] weeks` (e.g. `Wednesday Friday 4`, `Wed Fri 18:00-22:00 4`, `Wed 14:00-16:00 Fri 18:00-22:00 4`) → one `📅 ` poll option per weekday × week for the next N weeks (≤9 dates vote with 1️⃣..🔟, >9 dates switch to RANDOM_EMOJIS; cap 20 options / 10 weeks). A time token applies to all days in its preceding group; days with no time are all-day. Reuses polls.js live results + game-channel voter restriction (active channels: only channel DM + campaign-role members + admins may vote; others auto-removed). State persisted to `data/schedules.json`. In an active campaign channel, whenever every campaign-role member (DM is optional — may abstain) has voted for the same date(s) (unanimous), the bot auto-generates + posts a Google-importable `.ics` (floating local times; all-day → `VALUE=DATE`) — and re-posts a fresh `.ics` each time the confirmed set of dates changes (tracked via the `lastEmittedConfirmed` signature). Dates are computed in `TIMEZONE` via `Intl.DateTimeFormat` (no tz library). |
 | `/roll <formula> [class] [context]` | anyone | dice parser; on natural 1 (d20) generates an Ollama roast with the class + context + last 10 channel messages as flavour; falls back to `FALLBACK_ROASTS[]` if Ollama is down |
 | `/restart` | Admin | exec `rebuild-run.sh` via the mounted Docker socket; the ephemeral completion message is patched via `RESTART_TOKEN`/channel fallback and auto-deleted 20s later |
 
