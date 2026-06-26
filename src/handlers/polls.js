@@ -4,36 +4,43 @@ const {
     SERVER_ID,
     ACTIVE_CATEGORY_ID,
     NUMBER_EMOJIS,
+    RANDOM_EMOJIS,
     EMBED_COLOR
 } = require('../config');
 
-// A message is one of our polls if it was authored by the bot and its
-// embed title starts with the poll marker and footer carries the creator
-// marker. Regular Discord users cannot send embeds, so the embed presence
-// alone is a strong signal — the title/footer markers make it exact.
+// A message is one of our polls if it was authored by the bot and its embed
+// title starts with a poll marker and footer carries the creator marker.
+// Regular Discord users cannot send embeds, so the embed presence alone is a
+// strong signal — the title/footer markers make it exact. Two markers are
+// recognized:
+//   '📊 '  — custom /poll-librarian polls
+//   '📅 '  — /schedule-poll scheduling polls (see src/handlers/scheduling.js)
 function parsePollEmbed(message, clientUserId) {
     if (!message || !message.embeds || message.embeds.length === 0) return null;
     if (message.author && clientUserId && message.author.id !== clientUserId) return null;
     const embed = message.embeds[0];
-    if (!embed.title || !embed.title.startsWith('📊 ')) return null;
+    if (!embed.title) return null;
+    if (!embed.title.startsWith('📊 ') && !embed.title.startsWith('📅 ')) return null;
     return embed;
 }
 
 // Reconstructs the ordered option list from the embed description. Each
 // description block is `${emoji} ${optionText}` optionally followed by a
 // voters line. We only read the first line of each block so the option text
-// stays stable across refreshes (voters line is on line 2).
+// stays stable across refreshes (voters line is on line 2). Emojis are
+// matched against NUMBER_EMOJIS (📊 custom polls) OR RANDOM_EMOJIS (📅
+// scheduling polls with > 9 options).
 function extractOptions(embed) {
     const description = embed.description || '';
     const blocks = description.split('\n\n').filter(Boolean);
+    const allEmojis = [...NUMBER_EMOJIS, ...RANDOM_EMOJIS];
     const options = [];
     for (const block of blocks) {
         const firstLine = block.split('\n')[0];
-        for (let i = 0; i < NUMBER_EMOJIS.length; i++) {
-            const emoji = NUMBER_EMOJIS[i];
+        for (const emoji of allEmojis) {
             if (firstLine.startsWith(emoji)) {
                 const text = firstLine.slice(emoji.length).trim();
-                options.push({ index: i, emoji, text });
+                options.push({ index: options.length, emoji, text });
                 break;
             }
         }

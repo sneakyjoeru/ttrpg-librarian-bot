@@ -20,6 +20,7 @@ const {
     EMOJI_HAND
 } = require('../config');
 const { refreshPoll } = require('./polls');
+const { createSchedulePoll } = require('./scheduling');
 
 async function handleInteraction(client, interaction) {
     if (!interaction.isChatInputCommand()) return;
@@ -230,6 +231,19 @@ async function handleInteraction(client, interaction) {
         await refreshPoll(pollMessage, client.user.id).catch(console.error);
 
         return;
+    }
+
+    if (commandName === 'schedule-poll') {
+        return createSchedulePoll(interaction).catch(async (e) => {
+            console.error('[Scheduling] createSchedulePoll failed:', e);
+            try {
+                if (interaction.deferred || interaction.replied) {
+                    await interaction.followUp({ content: '📅 Failed to create the scheduling poll.', ephemeral: true });
+                } else {
+                    await interaction.reply({ content: '📅 Failed to create the scheduling poll.', ephemeral: true });
+                }
+            } catch (_) {}
+        });
     }
 
     if (commandName === 'new-campaign' || commandName === 'new-private-campaign') {

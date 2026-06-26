@@ -57,7 +57,7 @@
     archive, auto-rename sync. Persistence via the
     `[LIBRARIAN_DATA|DM:<id>|ROLE:<id>]` token in the channel topic.
   - Instagram media interception — see `src/services/instagram.js`.
-  - Slash commands — 12 commands (see section 7).
+  - Slash commands — 13 commands (see section 7).
   - Text commands `!pin` / `!unpin` for the DM/admin.
   - Reaction-based role self-assignment on campaign OPs (`✋`).
   - System help message + updates thread — see section 6. The system
@@ -124,6 +124,11 @@
 │   ├── quota.json                #   Per-user DeepSeek quota state
 │   │                             #   (created at runtime by
 │   │                             #   src/utils/quota.js)
+│   ├── schedules.json            #   /schedule-poll state: per poll-message
+│   │                             #   { channelId, guildId, creatorId, roleId,
+│   │                             #   options:[{emoji,isoDate,start,end,allDay,
+│   │                             #   label}], icsSent, createdAt } (created at
+│   │                             #   runtime by src/utils/scheduling.js)
 │   └── system_state.json         #   Thread id + updates-message id for the
 │                                 #   system help thread (created at runtime
 │                                 #   by src/utils/systemState.js)
@@ -139,19 +144,34 @@
 │   │   │                         #   active or archived channel is deleted
 │   │   ├── channelUpdate.js      #   Auto-renames the role to match the
 │   │   │                         #   channel when a DM manually renames it
-│   │   ├── interactions.js       #   Slash command dispatcher (12 commands;
+│   │   ├── interactions.js       #   Slash command dispatcher (13 commands;
 │   │   │                         #   see section 7)
 │   │   ├── messageCreate.js      #   Text dispatcher — Instagram link
 │   │   │                         #   detection (instagram.com + dd/kk/ee/uu/rx
 │   │   │                         #   mirror domains, optional protocol, URL
 │   │   │                         #   normalization), @mention → RAG, !pin/!unpin,
 │   │   │                         #   OP auto-pinning + role assignment
-│   │   ├── polls.js              #   /poll-librarian live results: recount number
-│   │   │                         #   reactions, show voter mentions per option,
-│   │   │                         #   declare winner + runner-up; in game (active
-│   │   │                         #   campaign) channels only the channel DM and
-│   │   │                         #   campaign-role members may vote (others are
-│   │   │                         #   auto-removed). Refreshed on every add/remove.
+│   │   ├── polls.js              #   /poll-librarian + /schedule-poll live
+│   │   │                         #   results: recount number reactions, show
+│   │   │                         #   voter mentions per option, declare winner +
+│   │   │                         #   runner-up; recognizes both `📊 ` (custom
+│   │   │                         #   poll) and `📅 ` (scheduling poll) embed title
+│   │   │                         #   markers and matches NUMBER_EMOJIS OR
+│   │   │                         #   RANDOM_EMOJIS option prefixes; in game
+│   │   │                         #   (active campaign) channels only the channel
+│   │   │                         #   DM and campaign-role members may vote (others
+│   │   │                         #   are auto-removed). Refreshed on add/remove.
+│   │   ├── scheduling.js         #   /schedule-poll: parses the free-text spec
+│   │   │                         #   (days + optional time + weeks) via
+│   │   │                         #   src/utils/scheduling.js, expands it into one
+│   │   │                         #   poll option per (weekday × week), picks
+│   │   │                         #   NUMBER_EMOJIS (≤9 dates) or RANDOM_EMOJIS
+│   │   │                         #   (>9) for voting, posts the `📅 ` embed,
+│   │   │                         #   persists state to data/schedules.json, and
+│   │   │                         #   on every vote change checks whether every
+│   │   │                         #   campaign-role member voted for the same
+│   │   │                         #   date(s) → auto-generates + posts a Google-
+│   │   │                         #   importable .ics (once per poll, icsSent flag).
 │   │   └── reactions.js          #   ✋ reaction → campaign role assignment
 │   │                             #   (only if 🤖 is also present, i.e. the
 │   │                             #   bot reacted to the OP). Also delegates
@@ -192,6 +212,15 @@
 │       │                         #   etc.
 │       ├── quota.js              #   Per-user DeepSeek quota tracker
 │       │                         #   (sliding window, persistent JSON store)
+│       ├── scheduling.js         #   /schedule-poll support: parseSchedulingInput
+│       │                         #   (days + optional HH:MM[-HH:MM] + weeks →
+│       │                         #   spec), generateScheduleOptions (TZ-aware
+│       │                         #   via Intl.DateTimeFormat in TIMEZONE, caps at
+│       │                         #   SCHEDULE_MAX_OPTIONS=20), buildIcs (RFC 5545
+│       │                         #   .ics with floating local times / all-day
+│       │                         #   VALUE=DATE), and the schedules.json state
+│       │                         #   store (atomic temp-file + rename, in-process
+│       │                         #   write Promise chain).
 │       ├── shell.js              #   runCommand (exec), prepareSshKey /
 │       │                         #   buildSshPrefix / hasRemoteAccess (SSH
 │       │                         #   key or sshpass), runCommandWithProgress
@@ -264,11 +293,17 @@ Discord Gateway
    │       └─ rewrite the topic to
    │          `Active Campaign [LIBRARIAN_DATA|DM:<id>|ROLE:<id>]`
    │
-   ├─ messageReactionAdd/Remove ► handleReactionAdd / handleReactionRemove
-   │   (src/handlers/reactions.js)
-   │       If the reaction is ✋ and 🤖 (bot) is also present on the
-   │       message, toggle the campaign role (parsed from the channel
-   │       topic) on the reacting member.
+    ├─ messageReactionAdd/Remove ► handleReactionAdd / handleReactionRemove
+    │   (src/handlers/reactions.js)
+    │       If the reaction is ✋ and 🤖 (bot) is also present on the
+    │       message, toggle the campaign role (parsed from the channel
+    │       topic) on the reacting member.
+    │       Always delegates number-emoji / random-emoji reactions on poll
+    │       messages to polls.js for live vote recounting (both `📊 ` custom
+    │       polls and `📅 ` scheduling polls), then — for `📅 ` scheduling
+    │       polls only — calls scheduling.js's handleSchedulingVoteChange
+    │       which, when every campaign-role member has voted for the same
+    │       date(s), emits the Google-importable .ics once (icsSent flag).
    │
    ├─ channelUpdate ───────────► handleChannelUpdate (src/handlers/channelUpdate.js)
    │   When an active campaign channel is renamed, edit the linked role's
@@ -285,11 +320,16 @@ Discord Gateway
    │       ├─ /archive             — confirmation-typed move to ARCHIVED_CATEGORY_ID
    │       ├─ /retro-setup         — admin: pin OP, set reactions, create role
    │       │                         and append LIBRARIAN_DATA
-    │       ├─ /poll-librarian      — embed poll, auto-react 1️⃣..🔟; live
-    │       │                         voter names + winner/runner-up via polls.js;
-    │       │                         in game channels voting restricted to the
-    │       │                         channel DM + campaign-role members
-   │       ├─ /new-campaign        — public channel under ACTIVE_CATEGORY_ID
+     │       ├─ /poll-librarian      — embed poll, auto-react 1️⃣..🔟; live
+     │       │                         voter names + winner/runner-up via polls.js;
+     │       │                         in game channels voting restricted to the
+     │       │                         channel DM + campaign-role members
+     │       ├─ /schedule-poll       — DM/Admin: free-text spec (days + optional
+     │       │                         time + weeks) → one `📅 ` poll option per
+     │       │                         weekday × week (≤9 → NUMBER_EMOJIS, >9 →
+     │       │                         RANDOM_EMOJIS); unanimous campaign-role vote
+     │       │                         auto-emits a Google-importable .ics
+    │       ├─ /new-campaign        — public channel under ACTIVE_CATEGORY_ID
    │       ├─ /new-private-campaign — same, hidden from @everyone
    │       ├─ /new-thread          — public thread, 1-day auto-archive
    │       ├─ /new-private-thread  — private thread (DM/Admin), add mentioned users
@@ -594,6 +634,7 @@ Admin-only checks use the `DM_ROLE_ID` role or `PermissionFlagsBits.Administrato
 | `/set-topic <text>` | DM/Admin | rewrites topic but preserves the LIBRARIAN_DATA token; trims to fit Discord's 1024-char limit |
 | `/update-players <count>` | DM/Admin | renames channel AND linked role to `<name>-<newcount>` (note: Discord limits renames to 2/10min) |
 | `/poll-librarian <question> <options>` | anyone | 2-10 comma-separated options, auto-reacts 1️⃣..🔟; embed is edited live to show voter mentions per option plus 🥇 winner / 🥈 runner-up; in game (active campaign) channels only the channel DM + campaign-role members may vote |
+| `/schedule-poll <input>` | DM/Admin | Free-text spec `days [time] weeks` (e.g. `Wednesday Friday 4`, `Wed Fri 18:00-22:00 4`) → one `📅 ` poll option per weekday × week for the next N weeks (≤9 dates vote with 1️⃣..🔟, >9 dates switch to RANDOM_EMOJIS; cap 20 options / 10 weeks). Reuses polls.js live results + game-channel voter restriction. State persisted to `data/schedules.json`. In an active campaign channel, once every campaign-role member has voted for the same date(s) (unanimous), the bot auto-generates + posts a Google-importable `.ics` (floating local times; all-day → `VALUE=DATE`); one emit per poll via the `icsSent` flag. Dates are computed in `TIMEZONE` via `Intl.DateTimeFormat` (no tz library). |
 | `/roll <formula> [class] [context]` | anyone | dice parser; on natural 1 (d20) generates an Ollama roast with the class + context + last 10 channel messages as flavour; falls back to `FALLBACK_ROASTS[]` if Ollama is down |
 | `/restart` | Admin | exec `rebuild-run.sh` via the mounted Docker socket; the ephemeral completion message is patched via `RESTART_TOKEN`/channel fallback and auto-deleted 20s later |
 
@@ -626,6 +667,7 @@ with the triggering user so other handlers (`/roll`, `!pin`) can answer
 | File | Owner | Format | Purpose |
 |---|---|---|---|
 | `data/quota.json` | `src/utils/quota.js` | JSON: `{ "<userSnowflake>": { regular: [ms…], admin: [ms…] } }` | Sliding-window DeepSeek quota (two tiers) |
+| `data/schedules.json` | `src/utils/scheduling.js` | JSON: `{ "<pollMessageId>": { channelId, guildId, creatorId, roleId, options:[{emoji,isoDate,start,end,allDay,label}], icsSent, createdAt } }` | `/schedule-poll` state: option datetimes for the unanimous-vote check + the one-shot `.ics` emission (`icsSent` guard) |
 | `data/system_state.json` | `src/utils/systemState.js` | JSON: `{ systemUpdatesThreadId, systemUpdatesMessageId }` | Persists the system-updates thread + the bot's first-message id inside it across restarts |
 | Channel topic tokens | every handler | inline string `[LIBRARIAN_DATA\|DM:<id>\|ROLE:<id>]` / `SETUP\|DM:<id>\|USERS:<id>,...` | Campaign metadata |
 | In-memory `trackedMessages` | `src/utils/messageTracker.js` | capped 1000 entries | bot/webhook msg → userId |
@@ -634,10 +676,10 @@ with the triggering user so other handlers (`/roll`, `!pin`) can answer
 | In-memory `cachedState` in `systemState` | `src/utils/systemState.js` | object | memoised thread/message id state |
 | In-memory `store` in `quota` | `src/utils/quota.js` | object | memoised per-user quota buckets |
 
-`data/quota.json` and `data/system_state.json` are the only on-disk state
-besides the cache. Both are written atomically (temp file + rename) and
-serialised through an in-process Promise chain so concurrent writes never
-clobber each other.
+`data/quota.json`, `data/schedules.json`, and `data/system_state.json` are the
+on-disk state files besides the cache. All three are written atomically (temp
+file + rename) and serialised through an in-process Promise chain so
+concurrent writes never clobber each other.
 
 ---
 

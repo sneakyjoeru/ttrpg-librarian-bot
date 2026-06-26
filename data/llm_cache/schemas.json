@@ -287,6 +287,48 @@
         "ext": { "type": "string", "enum": ["mp4", "ts"] }
       },
       "required": ["buffer", "ext"]
+    },
+    "ScheduleOption": {
+      "type": "object",
+      "description": "One /schedule-poll option persisted in data/schedules.json. `emoji` is the reaction glyph used for voting (NUMBER_EMOJIS entry for ≤9 dates, RANDOM_EMOJIS entry for >9). `isoDate` is YYYYMMDD in the configured TIMEZONE. `start`/`end` are 'HH:MM' wall-clock strings (null when allDay). `label` is the human-readable option text shown in the embed.",
+      "properties": {
+        "emoji": { "type": "string", "description": "Unicode reaction emoji string (e.g. '1️⃣', '🍎')." },
+        "isoDate": { "type": "string", "pattern": "^\\d{8}$", "description": "YYYYMMDD in TIMEZONE." },
+        "start": { "type": ["string", "null"], "pattern": "^\\d{2}:\\d{2}$", "description": "Session start 'HH:MM' (null when allDay)." },
+        "end": { "type": ["string", "null"], "pattern": "^\\d{2}:\\d{2}$", "description": "Session end 'HH:MM' (null when allDay)." },
+        "allDay": { "type": "boolean", "description": "True → all-day .ics VEVENT (VALUE=DATE); false → timed VEVENT." },
+        "label": { "type": "string", "description": "Human-readable option text, e.g. 'Wed 2 Jul 18:00-22:00'." }
+      },
+      "required": ["emoji", "isoDate", "start", "end", "allDay", "label"]
+    },
+    "ScheduleState": {
+      "type": "object",
+      "description": "Persistent state at SCHEDULE_STATE_PATH (data/schedules.json) for /schedule-poll. Each key is the poll message snowflake; each value carries the channel/creator/role context, the option list (emoji + ISO datetime + time window), and the one-shot icsSent guard so the Google-importable .ics is emitted at most once per poll (when every campaign-role member has voted for the same date(s)). Written atomically (temp-file + rename) through an in-process write Promise chain by src/utils/scheduling.js.",
+      "properties": {
+        "channelId": { "$ref": "#/definitions/Snowflake" },
+        "guildId": { "$ref": "#/definitions/Snowflake" },
+        "creatorId": { "$ref": "#/definitions/Snowflake", "description": "Discord user id of the DM/Admin who ran /schedule-poll." },
+        "roleId": { "type": ["string", "null"], "description": "Campaign role id parsed from the channel topic ([LIBRARIAN_DATA|DM:..|ROLE:..]) at poll creation. Null outside an active campaign channel → no .ics is ever emitted (poll still works as a plain live-results poll)." },
+        "options": { "type": "array", "items": { "$ref": "#/definitions/ScheduleOption" }, "description": "Ordered option list (chronological by isoDate)." },
+        "icsSent": { "type": "boolean", "description": "Flipped true after the unanimous-vote .ics is posted; prevents re-emission on subsequent vote churn." },
+        "createdAt": { "type": "integer", "description": "Epoch ms when the poll was created." }
+      },
+      "required": ["channelId", "guildId", "creatorId", "roleId", "options", "icsSent", "createdAt"],
+      "examples": [
+        {
+          "1505941250732458000": {
+            "channelId": "1294261500000000001",
+            "guildId": "1294242036492406837",
+            "creatorId": "221722372145676288",
+            "roleId": "1294335928759746560",
+            "options": [
+              { "emoji": "1️⃣", "isoDate": "20260701", "start": "18:00", "end": "22:00", "allDay": false, "label": "Wed 1 Jul 18:00-22:00" }
+            ],
+            "icsSent": false,
+            "createdAt": 1780000000000
+          }
+        }
+      ]
     }
   },
   "type": "object",

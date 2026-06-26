@@ -1,6 +1,7 @@
 const { getLibrarianData } = require('../utils/helpers');
 const { SERVER_ID, EMOJI_ROBOT, EMOJI_HAND } = require('../config');
 const { handlePollReactionAdd, handlePollReactionRemove } = require('./polls');
+const { handleSchedulingVoteChange } = require('./scheduling');
 
 async function handleReactionAdd(reaction, user) {
     if (user.bot) return;
@@ -9,6 +10,9 @@ async function handleReactionAdd(reaction, user) {
 
     // Poll vote tracking (and game-channel voter restriction).
     await handlePollReactionAdd(reaction, user, reaction.client.user.id).catch(console.error);
+
+    // Scheduling poll → maybe emit the consensus calendar (.ics).
+    await handleSchedulingVoteChange(reaction.message, reaction.client.user.id).catch(console.error);
 
     if (reaction.emoji.name === EMOJI_HAND) {
         const hasRobot = reaction.message.reactions.cache.get(EMOJI_ROBOT);
@@ -32,6 +36,9 @@ async function handleReactionRemove(reaction, user) {
 
     // Poll vote tracking.
     await handlePollReactionRemove(reaction, user, reaction.client.user.id).catch(console.error);
+
+    // Scheduling poll → re-evaluate consensus after a vote is removed too.
+    await handleSchedulingVoteChange(reaction.message, reaction.client.user.id).catch(console.error);
 
     if (reaction.emoji.name === EMOJI_HAND) {
         const hasRobot = reaction.message.reactions.cache.get(EMOJI_ROBOT);
