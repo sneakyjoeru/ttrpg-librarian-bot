@@ -323,10 +323,11 @@ Discord Gateway
    │       ├─ /archive             — confirmation-typed move to ARCHIVED_CATEGORY_ID
    │       ├─ /retro-setup         — admin: pin OP, set reactions, create role
    │       │                         and append LIBRARIAN_DATA
-     │       ├─ /poll-librarian      — embed poll, auto-react 1️⃣..🔟; live
-     │       │                         voter names + winner/runner-up via polls.js;
-     │       │                         in game channels voting restricted to the
-     │       │                         channel DM + campaign-role members
+      │       ├─ /poll-librarian      — anyone (players + DMs) may run it; embed
+      │       │                         poll, auto-react 1️⃣..🔟; live voter names +
+      │       │                         winner/runner-up via polls.js; in game
+      │       │                         channels voting restricted to the channel
+      │       │                         DM + campaign-role members
       │       ├─ /schedule-poll       — DM/Admin: free-text spec (days + optional
       │       │                         per-day time + weeks) → one `📅 ` poll option per
       │       │                         weekday × week (≤9 → NUMBER_EMOJIS, >9 →

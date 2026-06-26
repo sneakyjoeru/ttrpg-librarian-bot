@@ -154,12 +154,12 @@ const helpText = `**Librarian Bot Functions:**
 \`/new-thread [threadname]\` - Create a public thread
 \`/roll [formula] [class] [context]\` - Roll dice (e.g. 1d20+5). Custom critical roll text through LLM
 **@LibrarianBot [question]** - Ask a question (add "no bs" for a short, direct answer)
+\`/poll-librarian [question] [options]\` - Create a poll. Options must be comma-separated (max 10). *(Anyone — players and DMs)*
 
 **🔒 DM / Admin Commands:**
 \`/new-campaign [campaign_name] [usernames]\` - Create new campaign channel *(DM or Admin)*
 \`/new-private-campaign [campaign_name] [usernames]\` - Create private campaign channel *(DM or Admin)*
 \`/new-private-thread [usernames]\` - Create a private thread and invite mentioned users *(DM or Admin)*
-\`/poll-librarian [question] [options]\` - Create a poll. Options must be comma-separated (max 10).
 \`/schedule-poll [input]\` - Auto-scheduling poll. Input: days + optional per-day time + weeks, e.g. \`Wednesday Friday 4\`, \`Wed Fri 18:00-22:00 4\`, or \`Wed 14:00-16:00 Fri 18:00-22:00 4\`. Accepts the group tokens \`weekdays\`/\`wdy\` (Mon–Fri) and \`weekends\`/\`wke\`/\`wkd\` (Sat–Sun) in place of weekday names. Builds one poll option per weekday for each of the next N weeks (up to 10 weeks / 20 options). When more than 9 dates, random emojis are used for voting. *(DM or Admin)*
 \`/set-topic [text]\` - Set a new channel topic while preserving bot metadata *(DM or Admin)*
 \`/update-players [count]\` - Change the number of players in the channel and role name *(DM or Admin)*
