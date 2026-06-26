@@ -202,7 +202,7 @@ const commands = [
         .addStringOption(opt => opt.setName('options').setDescription('Comma-separated options (e.g. Yes, No, Maybe)').setRequired(true)),
     new SlashCommandBuilder().setName('schedule-poll')
         .setDescription('Create a scheduling poll from days + optional per-day time + weeks (DM or Admin)')
-        .addStringOption(opt => opt.setName('input').setDescription('Days + optional per-day time + weeks. e.g. "Wednesday Friday 4", "Wed Fri 18:00-22:00 4", or "Wed 14:00-16:00 Fri 18:00-22:00 4"').setRequired(true)),
+        .addStringOption(opt => opt.setName('input').setDescription('e.g. "Wednesday Friday 4" or "Wed 14:00-16:00 Fri 18:00-22:00 4"').setRequired(true)),
     new SlashCommandBuilder().setName('roll')
         .setDescription('Roll dice (e.g., 1d20+5, 2d6, d20)')
         .addStringOption(opt => opt.setName('formula').setDescription('Dice formula to roll (e.g., 1d20+5, 2d6, d20)').setRequired(true))
