@@ -911,6 +911,63 @@ async function fetchInstagramGraphQLProfile(username, cookieHeader, browserUa) {
     return null;
 }
 
+// Fetch a user's recent feed posts via the private API
+// /api/v1/feed/user/{username}/username/?count=N. Returns up to maxPosts
+// { shortcode, thumbnailUrl } (the first media of each post). This endpoint
+// is more reliable than the HTML scrape (which no longer embeds timeline
+// data) and doesn't rate-limit as aggressively as web_profile_info. Requires
+// session cookies (X-IG-App-ID + csrftoken). Returns [] on failure.
+async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxPosts = 4) {
+    if (!cookieHeader) return [];
+    const csrftoken = getCsrftokenFromCookieHeader(cookieHeader);
+    if (!csrftoken) return [];
+    try {
+        const url = `https://www.instagram.com/api/v1/feed/user/${encodeURIComponent(username)}/username/?count=${maxPosts}`;
+        const resp = await axios.get(url, {
+            timeout: 15000,
+            maxRedirects: 0,
+            headers: {
+                'User-Agent': browserUa,
+                'X-IG-App-ID': '936619743392459',
+                'X-CSRFToken': csrftoken,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': '*/*',
+                'Referer': `https://www.instagram.com/${username}/`,
+                'Cookie': cookieHeader,
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin'
+            }
+        });
+        const items = resp.data && resp.data.items;
+        if (!Array.isArray(items)) return [];
+        const posts = [];
+        for (const item of items) {
+            if (posts.length >= maxPosts) break;
+            const shortcode = item.code || item.shortcode || null;
+            if (!shortcode) continue;
+            // Pick the best image candidate (highest width) from image_versions2
+            let thumbUrl = null;
+            if (item.image_versions2 && Array.isArray(item.image_versions2.candidates)) {
+                let bestW = -1;
+                for (const c of item.image_versions2.candidates) {
+                    if (c && c.url && (c.width || 0) > bestW) { thumbUrl = c.url; bestW = c.width || 0; }
+                }
+            } else if (item.thumbnail_url) {
+                thumbUrl = item.thumbnail_url;
+            }
+            if (thumbUrl) {
+                posts.push({ shortcode, thumbnailUrl: unescapeInstagramJsonUrl(thumbUrl) });
+            }
+        }
+        console.log(`[Instagram Interceptor] Profile feed API resolved ${posts.length} post(s).`);
+        return posts;
+    } catch (err) {
+        console.log('[Instagram Interceptor] Profile feed API failed:', err.message);
+        return [];
+    }
+}
+
 async function handleInstagramProfile(client, message, profileUrl, remadeContent) {
     console.log(`[Instagram Interceptor] Profile URL detected: ${profileUrl}`);
     const placeholder = await sendWorkingPlaceholder(client, message, profileUrl);
@@ -1001,8 +1058,9 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                 // so only the bio remains (if any). For profiles with no bio the
                 // og:description is just the counts + suffix, which we strip entirely.
                 description = description
-                    .replace(/^\d+\s*Followers,\s*\d+\s*Following,\s*\d+\s*Posts\s*-\s*See Instagram photos and videos from\s*/i, '')
+                    .replace(/^\d+\s*Followers,\s*\d+\s*Following,\s*\d+\s*Posts\s*-\s*See Instagram photos and videos from\s+.*/i, '')
                     .replace(/\s*-\s*See Instagram photos and videos from\s+.*/i, '')
+                    .replace(/\s*See Instagram photos and videos from\s+.*/i, '')
                     .trim();
                 // og:image is the TARGET profile's pic (server-rendered meta tag).
                 // The embedded JSON profile_pic_url_hd is the LOGGED-IN viewer's pic
@@ -1021,6 +1079,16 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                     }
                 }
                 recentPosts = extractRecentPostsFromProfileHtml(html, 4);
+            }
+        }
+
+        // If the GraphQL/HTML strategies didn't yield recent posts, try the
+        // private feed API (/api/v1/feed/user/{username}/username/) which is
+        // more reliable and doesn't rate-limit as aggressively.
+        if (recentPosts.length === 0) {
+            const feedPosts = await fetchInstagramProfileFeed(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
+            if (feedPosts.length > 0) {
+                recentPosts = feedPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
             }
         }
 
