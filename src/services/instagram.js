@@ -944,17 +944,9 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
 
         if (gqlResult) {
             displayName = gqlResult.user.fullName;
-            const bio = gqlResult.user.bio;
-            // Build the description from bio + follower/following/post counts (mirrors
-            // the og:description format that the HTML scrape used to provide).
-            const descParts = [];
-            if (bio) descParts.push(bio);
-            const countParts = [];
-            if (gqlResult.user.followerCount != null) countParts.push(`${formatCount(gqlResult.user.followerCount)} Followers`);
-            if (gqlResult.user.followingCount != null) countParts.push(`${formatCount(gqlResult.user.followingCount)} Following`);
-            if (gqlResult.user.postCount != null) countParts.push(`${formatCount(gqlResult.user.postCount)} Posts`);
-            if (countParts.length) descParts.push(countParts.join(', '));
-            description = descParts.join(' - ');
+            // Only the bio — no follower/following/post counts (the user doesn't
+            // want those in the card).
+            description = gqlResult.user.bio || '';
             profilePicUrl = gqlResult.user.profilePicUrl;
             recentPosts = gqlResult.posts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
         } else {
@@ -1004,6 +996,14 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                 let rawTitle = ogTitleMatch ? decodeEntities(ogTitleMatch[1]).trim() : '';
                 displayName = cleanInstagramOgTitle(rawTitle);
                 description = ogDescMatch ? decodeEntities(ogDescMatch[1]).trim() : '';
+                // Strip the follower/following/post counts + the "See Instagram
+                // photos and videos from Name (@handle)" suffix from og:description
+                // so only the bio remains (if any). For profiles with no bio the
+                // og:description is just the counts + suffix, which we strip entirely.
+                description = description
+                    .replace(/^\d+\s*Followers,\s*\d+\s*Following,\s*\d+\s*Posts\s*-\s*See Instagram photos and videos from\s*/i, '')
+                    .replace(/\s*-\s*See Instagram photos and videos from\s+.*/i, '')
+                    .trim();
                 // og:image is the TARGET profile's pic (server-rendered meta tag).
                 // The embedded JSON profile_pic_url_hd is the LOGGED-IN viewer's pic
                 // (when cookies are attached), NOT the target's — so prefer og:image.
@@ -1101,13 +1101,19 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         }
 
         // Build the profile card text.
+        // The original link is preserved at the TOP (with the user's text if any),
+        // followed by the profile name + bio. Follower/following/post counts are
+        // NOT included. The profile pic + last 4 post thumbnails are attached as
+        // image previews (downloaded above).
         const parts = [];
         let userComment = '';
         if (remadeContent) {
             userComment = remadeContent.replace(profileUrl, ' ').replace(/\s+/g, ' ').trim();
             if (userComment.length < 2) userComment = '';
         }
-        if (userComment) parts.push(userComment);
+        // Original link at the top (preserved with user's text).
+        const linkLine = userComment ? `${userComment} <${profileLink}>` : `<${profileLink}>`;
+        parts.push(linkLine);
         if (displayName) {
             parts.push(`**${displayName}**${username ? ` (@${username})` : ''}`);
         } else if (username) {
@@ -1119,11 +1125,6 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                 parts.push(`> ${line}`);
             }
         }
-        if (recentPosts.length > 0) {
-            const postLinks = recentPosts.map(p => `https://www.instagram.com/p/${p.shortcode}/`);
-            parts.push(`Recent posts:\n${postLinks.map(l => `<${l}>`).join('\n')}`);
-        }
-        parts.push(`[Profile](${profileLink})`);
 
         const finalContent = parts.join('\n\n').substring(0, 2000);
 

@@ -22,8 +22,17 @@ function removeInProgressStatus(content) {
 
 function extractPlaceholderBaseContent(content) {
     if (!content) return '';
-    const withoutStatus = removeInProgressStatus(content);
-    return withoutStatus.replace(/\nstage:[\s\S]*$/i, '').trimEnd();
+    let text = removeInProgressStatus(content);
+    // Strip the `working... <url>` prefix that the bot prepends to placeholders.
+    // Matches `working...` optionally followed by a wrapped/unwraped URL + newline.
+    text = text.replace(/^working\.\.\.\s*(?:<[^>]*>)?\s*\n?/i, '');
+    // Strip stale `[PRIVATE VIDEO, ACCESS ONLY VIA LINK]` markers left by a
+    // previous restricted-fallback run (catch-up reuses the old placeholder text
+    // as remadeContent, so this marker would otherwise pollute the repost).
+    text = text.replace(/\[PRIVATE VIDEO, ACCESS ONLY VIA LINK\]\s*/gi, '');
+    // Strip the `stage:` portion (and everything after it).
+    text = text.replace(/(?:^|\n)stage:[\s\S]*$/i, '');
+    return text.trimEnd();
 }
 
 async function sendRepostedMessage(client, message, content, attachments, suppressEmbeds = false, fileLimitBytes = 0, fallbackContent = null) {
