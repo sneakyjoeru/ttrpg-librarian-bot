@@ -207,18 +207,8 @@ async function handleArticleMessage(client, message, articleUrl, remadeContent, 
     }
     if (placeholder && placeholder.sentMsg) inFlightPlaceholders.add(placeholder.sentMsg.id);
 
-    // The bot replaces the user's raw link with its own posted article card
-    // (image + masked link + thread). Delete the original user message so the
-    // channel doesn't show two copies of the same link. Best-effort: if the bot
-    // lacks Manage Messages permission the original stays and we just log it.
-    // Skipped during recovery (the message is a synthetic / the card already exists).
-    if (!isRecovery) {
-        try {
-            await message.delete();
-        } catch (delErr) {
-            console.error('[Article Interceptor] Could not delete original message (bot needs Manage Messages permission):', delErr.message);
-        }
-    }
+    // The original user message is preserved during processing (like robot-joe).
+    // The bot's reposted article card appears below the original link.
 
     const typingChannel = placeholder.sentMsg ? placeholder.sentMsg.channel : message.channel;
     await typingChannel.sendTyping().catch(() => { });

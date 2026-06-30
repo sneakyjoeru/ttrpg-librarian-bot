@@ -1058,9 +1058,7 @@ async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxP
 async function handleInstagramProfile(client, message, profileUrl, remadeContent) {
     console.log(`[Instagram Interceptor] Profile URL detected: ${profileUrl}`);
     const placeholder = await sendWorkingPlaceholder(client, message, profileUrl);
-    if (message.guild) {
-        await message.delete().catch(() => {});
-    }
+    // Original message is preserved during processing (like robot-joe).
 
     await message.channel.sendTyping().catch(() => { });
     const typingInterval = setInterval(() => {
@@ -1608,13 +1606,9 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
         return handleInstagramProfile(client, message, instagramUrl, remadeContent);
     }
 
-    // Instantly create the "working" message and delete the original message
+    // Instantly create the "working" message. Original message is preserved
+    // during processing (like robot-joe).
     const placeholder = await sendWorkingPlaceholder(client, message, instagramUrl);
-    if (message.guild) {
-        await message.delete().catch(delErr => {
-            console.error('[Instagram Interceptor] Failed to delete original message:', delErr.message);
-        });
-    }
 
     // Start typing indicator
     await message.channel.sendTyping().catch(() => { });
