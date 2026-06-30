@@ -934,16 +934,16 @@ async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxP
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-origin'
     };
-    // Retry up to 3 times: Instagram intermittently returns 302 redirects
+    // Retry up to 5 times: Instagram intermittently returns 302 redirects
     // (rate-limit) when the bot's cookie monitor or other API calls have
     // recently hit the same IP. Using maxRedirects:0 + retry avoids the
-    // redirect-loop that maxRedirects:5 causes.
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    // redirect-loop that maxRedirects:5 causes. 5s delay between retries.
+    for (let attempt = 1; attempt <= 5; attempt++) {
         try {
             const resp = await axios.get(url, { timeout: 15000, maxRedirects: 0, headers });
             const items = resp.data && resp.data.items;
             if (!Array.isArray(items)) {
-                if (attempt < 3) { await new Promise(r => setTimeout(r, 2000)); continue; }
+                if (attempt < 5) { await new Promise(r => setTimeout(r, 5000)); continue; }
                 return [];
             }
             const posts = [];
@@ -968,9 +968,9 @@ async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxP
             return posts;
         } catch (err) {
             const status = err.response && err.response.status;
-            if (status === 302 && attempt < 3) {
-                console.log(`[Instagram Interceptor] Profile feed API got 302 (rate-limit), retrying in 2s (attempt ${attempt}/3).`);
-                await new Promise(r => setTimeout(r, 2000));
+            if (status === 302 && attempt < 5) {
+                console.log(`[Instagram Interceptor] Profile feed API got 302 (rate-limit), retrying in 5s (attempt ${attempt}/5).`);
+                await new Promise(r => setTimeout(r, 5000));
                 continue;
             }
             console.log(`[Instagram Interceptor] Profile feed API failed (attempt ${attempt}):`, err.message);
