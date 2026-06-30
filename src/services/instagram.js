@@ -921,51 +921,63 @@ async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxP
     if (!cookieHeader) return [];
     const csrftoken = getCsrftokenFromCookieHeader(cookieHeader);
     if (!csrftoken) return [];
-    try {
-        const url = `https://www.instagram.com/api/v1/feed/user/${encodeURIComponent(username)}/username/?count=${maxPosts}`;
-        const resp = await axios.get(url, {
-            timeout: 15000,
-            maxRedirects: 5,
-            headers: {
-                'User-Agent': browserUa,
-                'X-IG-App-ID': '936619743392459',
-                'X-CSRFToken': csrftoken,
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': '*/*',
-                'Referer': `https://www.instagram.com/${username}/`,
-                'Cookie': cookieHeader,
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin'
+    const url = `https://www.instagram.com/api/v1/feed/user/${encodeURIComponent(username)}/username/?count=${maxPosts}`;
+    const headers = {
+        'User-Agent': browserUa,
+        'X-IG-App-ID': '936619743392459',
+        'X-CSRFToken': csrftoken,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': '*/*',
+        'Referer': `https://www.instagram.com/${username}/`,
+        'Cookie': cookieHeader,
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin'
+    };
+    // Retry up to 3 times: Instagram intermittently returns 302 redirects
+    // (rate-limit) when the bot's cookie monitor or other API calls have
+    // recently hit the same IP. Using maxRedirects:0 + retry avoids the
+    // redirect-loop that maxRedirects:5 causes.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const resp = await axios.get(url, { timeout: 15000, maxRedirects: 0, headers });
+            const items = resp.data && resp.data.items;
+            if (!Array.isArray(items)) {
+                if (attempt < 3) { await new Promise(r => setTimeout(r, 2000)); continue; }
+                return [];
             }
-        });
-        const items = resp.data && resp.data.items;
-        if (!Array.isArray(items)) return [];
-        const posts = [];
-        for (const item of items) {
-            if (posts.length >= maxPosts) break;
-            const shortcode = item.code || item.shortcode || null;
-            if (!shortcode) continue;
-            // Pick the best image candidate (highest width) from image_versions2
-            let thumbUrl = null;
-            if (item.image_versions2 && Array.isArray(item.image_versions2.candidates)) {
-                let bestW = -1;
-                for (const c of item.image_versions2.candidates) {
-                    if (c && c.url && (c.width || 0) > bestW) { thumbUrl = c.url; bestW = c.width || 0; }
+            const posts = [];
+            for (const item of items) {
+                if (posts.length >= maxPosts) break;
+                const shortcode = item.code || item.shortcode || null;
+                if (!shortcode) continue;
+                let thumbUrl = null;
+                if (item.image_versions2 && Array.isArray(item.image_versions2.candidates)) {
+                    let bestW = -1;
+                    for (const c of item.image_versions2.candidates) {
+                        if (c && c.url && (c.width || 0) > bestW) { thumbUrl = c.url; bestW = c.width || 0; }
+                    }
+                } else if (item.thumbnail_url) {
+                    thumbUrl = item.thumbnail_url;
                 }
-            } else if (item.thumbnail_url) {
-                thumbUrl = item.thumbnail_url;
+                if (thumbUrl) {
+                    posts.push({ shortcode, thumbnailUrl: unescapeInstagramJsonUrl(thumbUrl) });
+                }
             }
-            if (thumbUrl) {
-                posts.push({ shortcode, thumbnailUrl: unescapeInstagramJsonUrl(thumbUrl) });
+            console.log(`[Instagram Interceptor] Profile feed API resolved ${posts.length} post(s) (attempt ${attempt}).`);
+            return posts;
+        } catch (err) {
+            const status = err.response && err.response.status;
+            if (status === 302 && attempt < 3) {
+                console.log(`[Instagram Interceptor] Profile feed API got 302 (rate-limit), retrying in 2s (attempt ${attempt}/3).`);
+                await new Promise(r => setTimeout(r, 2000));
+                continue;
             }
+            console.log(`[Instagram Interceptor] Profile feed API failed (attempt ${attempt}):`, err.message);
+            return [];
         }
-        console.log(`[Instagram Interceptor] Profile feed API resolved ${posts.length} post(s).`);
-        return posts;
-    } catch (err) {
-        console.log('[Instagram Interceptor] Profile feed API failed:', err.message);
-        return [];
     }
+    return [];
 }
 
 async function handleInstagramProfile(client, message, profileUrl, remadeContent) {
