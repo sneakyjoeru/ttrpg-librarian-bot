@@ -11,7 +11,10 @@ The bot runs in a Docker container on an **Intel N150 Mini PC** (12GB RAM + 8GB 
 ## Features
 
 - **Campaign Management**: Automated creation of active text channels with synced permissions, automatic role creation, and automated sync on channel renames.
-- **Instagram Media Interceptor**: Automatically intercepts Instagram posts, stories, and Reels. It retrieves images and videos using a multi-layered downloading system: proxy fixers (`eeinstagram`, `kkinstagram`), parallel scrapers (`instagram-url-direct`, `snapinsta`), and `yt-dlp` using authentication cookies. It also supports slide-selection modifiers (e.g. `1,2` or `-1` to filter specific slides).
+- **Instagram Media Interceptor**: Automatically intercepts Instagram posts, stories, and Reels. It retrieves images and videos using a multi-layered downloading system: proxy fixers (`eeinstagram`, `kkinstagram`), parallel scrapers (`instagram-url-direct`, `snapinsta`), and `yt-dlp` using authentication cookies. It also supports slide-selection modifiers (e.g. `1,2` or `-1` to filter specific slides). **Profile URLs** (`instagram.com/<username>`) are parsed into a card showing the user's display name, bio, profile picture, and the last 4 posts' thumbnails + links — instead of butchering the URL into a broken fallback link.
+- **Twitter/X Media Interceptor**: Reposts `twitter.com`/`x.com` status links with the tweet text quoted and all media (photos + best-quality videos) attached, fetched via the fxtwitter API (Nitter HTML scrape fallback). Oversized videos are compressed with ffmpeg. Discord's own embed is suppressed.
+- **Facebook Media Interceptor**: Reposts `facebook.com`/`fb.watch` reels, posts, photos, and videos. Download strategy: `yt-dlp` (original fbcdn mp4) → `fdown.net` fixer → generic `og:video`/`og:image` scrape. Oversized videos are compressed with ffmpeg.
+- **News Article Interceptor**: For known news domains (themoscowtimes.com, meduza.io, and others), the bot suppresses Discord's link-preview embed, attaches the article's lead image, and reposts the article body text as a blockquote inside a thread on the bot's message.
 - **iGPU & Local CPU Media Compressor**: Automatically compresses oversized video attachments to fit Discord's file size limits. The transcoding pipeline tries (in order): a local iGPU VAAPI stage on supported hosts, and finally a local CPU `libx264 ultrafast` fallback. The old remote NAS network-transcoder stage has been REMOVED (the bot now runs entirely on the N150 host). The local iGPU stage is automatically detected at runtime for Intel N100 / N150 hosts and uses the host's `/dev/dri/renderD128` VAAPI render node for hardware HEVC encoding. See [Intel N100 / N150 iGPU build](#intel-n100--n150-igpu-build-optional) below.
 - **System Message Updates**: Dynamically pulls the last 10 git updates (commit logs) and posts them as clickable GitHub links in a locked `📜 Updates Log` thread attached to the system help message on every restart, keeping the main message uncluttered (just a pointer link + "Last updated" timestamp).
 - **Natural 1 Roasting**: Integrates with the local Ollama LLM (`qwen2.5:7b` by default) to generate snarky roasts when players roll a critical fail (Nat 1).
@@ -29,8 +32,8 @@ The project follows a modular architecture for ease of maintenance:
 - **`index-librarian.js`**: Main entry point and orchestrator. Wires event listeners and schedules cron jobs.
 - **`src/config.js`**: Centralized configuration store for Discord IDs, API endpoints, fallback values, and slash command metadata.
 - **`src/utils/helpers.js`**: Shared utilities, token estimators, and the git log dynamic updates retriever.
-- **`src/services/`**: Contain external services like RAG LLM queries and Instagram link scrapers.
-- **`src/handlers/`**: Houses modules that process Discord events (`interactionCreate`, `messageCreate`, `channelUpdate`, `channelDelete`, `reactions`, `polls`).
+- **`src/services/`**: Contain external services like RAG LLM queries and the Instagram link scraper (with profile parsing).
+- **`src/handlers/`**: Houses modules that process Discord events (`interactionCreate`, `messageCreate`, `channelUpdate`, `channelDelete`, `reactions`, `polls`) plus the Twitter/X, Facebook, and news-article interceptors (`twitterHandler.js`, `facebookHandler.js`, `articleHandler.js`).
 
 ---
 

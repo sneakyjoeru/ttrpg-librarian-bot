@@ -44,7 +44,17 @@
   - `instagram.js` — Instagram link interceptor with multi-source
     downloading (fixer domains `eeinstagram` / `kkinstagram` / `uuinstagram`,
     parallel scrapers `instagram-url-direct` + `snapinsta`, and `yt-dlp`
-    with auth cookies) and oversized video re-encoding.
+    with auth cookies) and oversized video re-encoding. **Profile parsing**
+    (`handleInstagramProfile`, gated by `isInstagramProfileUrl`):
+    `instagram.com/<username>` (no `/p/`/`/reel/`/`/tv/`/`/explore/`/
+    `/accounts/`/`/stories/` segment) fetches the profile HTML, extracts
+    `og:title` (display name), `og:description` (bio/follower stats),
+    `og:image` (userpic), and the last 4 posts' thumbnail URLs + shortcodes
+    from the embedded `edge_owner_to_timeline_media`/`timeline_media` JSON,
+    downloads the userpic + up to 4 post thumbnails, and posts a card
+    (userpic + bio blockquote + recent-post links + `[Profile](url)`).
+    This replaces the old behaviour where a profile URL fell through to
+    the media pipeline, failed, and posted a butchered fallback link.
 - **Media compressor:** `src/utils/mediaCompressor.js`. Two-stage pipeline
   (the remote NAS network transcoder at `192.168.0.100` has been REMOVED):
   **local iGPU** (Intel N100/N150 only, gated by `src/utils/cpuDetector.js` +
@@ -57,6 +67,10 @@
     archive, auto-rename sync. Persistence via the
     `[LIBRARIAN_DATA|DM:<id>|ROLE:<id>]` token in the channel topic.
   - Instagram media interception — see `src/services/instagram.js`.
+  - Twitter/X, Facebook, and news-article interception — see
+    `src/handlers/twitterHandler.js`, `facebookHandler.js`,
+    `articleHandler.js` (ported from robot-joe, minus the OCR/Whisper
+    translation/transcription pipeline).
   - Slash commands — 13 commands (see section 7).
   - Text commands `!pin` / `!unpin` for the DM/admin.
   - Reaction-based role self-assignment on campaign OPs (`✋`).
@@ -145,13 +159,22 @@
 │   │   │                         #   active or archived channel is deleted
 │   │   ├── channelUpdate.js      #   Auto-renames the role to match the
 │   │   │                         #   channel when a DM manually renames it
+│   │   ├── articleHandler.js    #   News-article interceptor (og:image +
+│   │   │                         #   body text in thread; ported from robot-joe)
+│   │   ├── facebookHandler.js   #   Facebook/fb.watch interceptor (yt-dlp +
+│   │   │                         #   fdown.net fixer + generic og:video scrape;
+│   │   │                         #   ported from robot-joe, no OCR/translation)
 │   │   ├── interactions.js       #   Slash command dispatcher (13 commands;
 │   │   │                         #   see section 7)
-│   │   ├── messageCreate.js      #   Text dispatcher — Instagram link
+│   │   ├── messageCreate.js      #   Text dispatcher — Twitter/X,
+│   │   │                         #   Facebook, Instagram link, news-article
 │   │   │                         #   detection (instagram.com + dd/kk/ee/uu/rx
 │   │   │                         #   mirror domains, optional protocol, URL
 │   │   │                         #   normalization), @mention → RAG, !pin/!unpin,
 │   │   │                         #   OP auto-pinning + role assignment
+│   │   ├── twitterHandler.js    #   Twitter/X interceptor (fxtwitter API +
+│   │   │                         #   Nitter fallback; ported from robot-joe,
+│   │   │                         #   no OCR/translation)
 │   │   ├── polls.js              #   /poll-librarian + /schedule-poll live
 │   │   │                         #   results: recount number reactions, show
 │   │   │                         #   voter mentions per option, declare winner +
@@ -187,7 +210,8 @@
 │   │   └── instagram.js          #   Instagram link interceptor with
 │   │                             #   multi-source download (fixer domains,
 │   │                             #   parallel scrapers, yt-dlp), media-queue
-│   │                             #   serialization, oversized video re-encoding
+│   │                             #   serialization, oversized video re-encoding,
+│   │                             #   + profile parsing (userpic/bio/last 4 posts)
 │   └── utils/                    # UTILITIES
 │       ├── cpuDetector.js        #   Host CPU / iGPU detection (Intel
 │       │                         #   N100/N150 + /dev/dri/renderD128 probe)
