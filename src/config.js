@@ -40,7 +40,18 @@ const RAG_SEARCH_LIMIT = 5;                           // Number of search result
 const RAG_HISTORY_LIMIT = 100;                        // Number of recent chat history messages to include in LLM context
 const RAG_SEARCH_TIMEOUT = 5000;                      // Timeout for meta-search requests (ms)
 const RAG_OLLAMA_TIMEOUT = 120000;                    // Timeout for local Ollama server generation (ms)
+const RAG_OLLAMA_TIMEOUT_SHORT = 10000;               // Timeout for quick operations (media downloads, fixer fetches)
 const RAG_TYPING_INTERVAL = 5000;                      // Typing status keep-alive interval (ms) — shorter = less residual "typing..." after job completes (Discord shows typing for ~8-10s after the last sendTyping call)
+
+// --- PLATFORM HANDLER CONSTANTS (ported from robot-joe, minus translation/transcription) ---
+// Used by the Twitter / Facebook / Instagram / article interceptors ported into
+// the librarian bot. These mirror robot-joe's values so behaviour is identical.
+const PROGRESS_UPDATE_INTERVAL_MS = 3000;              // How often the "working..." placeholder is updated during long jobs
+const FILE_SIZE_SAFETY_FACTOR = 0.97;                  // Effective file-limit fraction (leave headroom for Discord multipart overhead)
+const DISCORD_FILE_LIMIT_TWITTER = 10 * 1024 * 1024;   // Soft per-file cap for Twitter media (auto-selects lower-bitrate variant)
+const DISCORD_FILE_LIMIT_TWITTER_HARD = 150 * 1024 * 1024; // Hard cap — reject files larger than this outright
+const DISCORD_MESSAGE_LIMIT = 2000;                    // Discord message text length ceiling
+const TWEETS_CACHE_PATH = './tweets_cache.json';       // Persisted seen-tweet IDs for the Twitter scanner (kept for parity; the librarian bot has no scanner cron)
 
 // --- USER QUOTA ---
 // While the user has quota, requests are routed to DeepSeek (cloud) first; otherwise
@@ -245,7 +256,14 @@ module.exports = {
     RAG_HISTORY_LIMIT,
     RAG_SEARCH_TIMEOUT,
     RAG_OLLAMA_TIMEOUT,
+    RAG_OLLAMA_TIMEOUT_SHORT,
     RAG_TYPING_INTERVAL,
+    PROGRESS_UPDATE_INTERVAL_MS,
+    FILE_SIZE_SAFETY_FACTOR,
+    DISCORD_FILE_LIMIT_TWITTER,
+    DISCORD_FILE_LIMIT_TWITTER_HARD,
+    DISCORD_MESSAGE_LIMIT,
+    TWEETS_CACHE_PATH,
     QUOTA_MAX_REQUESTS,
     QUOTA_WINDOW_HOURS,
     QUOTA_ADMIN_MAX_REQUESTS,

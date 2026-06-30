@@ -6,10 +6,268 @@ const { instagramGetUrl } = require('instagram-url-direct');
 const snapinsta = require('snapinsta');
 const { AttachmentBuilder } = require('discord.js');
 const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT } = require('../config');
-const { sendRepostedMessage, sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage } = require('../utils/webhook');
+const { sendRepostedMessage, sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage, finalizePlaceholderClean } = require('../utils/webhook');
 const { runCommand, findYtDlpPath } = require('../utils/shell');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
 const mediaQueue = require('../utils/mediaQueue');
+const { detectFileType } = require('../utils/fileTypeDetector');
+
+const INSTAGRAM_BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// --- Instagram profile parsing ---
+// A profile URL is instagram.com/<username> (optionally with ?igsh=... query),
+// with NO /p/, /reel/, /reels/, /tv/, /explore/, /accounts/, /stories/ segment.
+// When detected, the bot fetches the profile HTML, extracts the user's display
+// name, bio/description, profile picture (og:image), and the last few posts'
+// thumbnail URLs (from the embedded timeline JSON), then reposts them as a card
+// with the userpic attached and the bio quoted. Returns true if it handled the
+// URL (so handleInstagramMessage can early-return), false otherwise.
+function isInstagramProfileUrl(url) {
+    const clean = url.replace(/[?#].*$/, '');
+    // Must be instagram.com/<something> but NOT a known non-profile path.
+    if (!/instagram\.com\/[^/?#]+/i.test(clean)) return false;
+    if (/instagram\.com\/(?:p|reel|reels|tv|explore|accounts|stories|directory|about|developer|legal|help|press|api|oauth|login|signup|emails|captured|embed\.html|query)\b/i.test(clean)) return false;
+    // Strip the leading host; whatever remains is the username (single path segment).
+    const afterHost = clean.replace(/^https?:\/\/(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\//i, '');
+    const username = afterHost.split('/')[0];
+    return !!username && !username.startsWith('.');
+}
+
+// Decode common HTML entities (for og:title / og:description values).
+function decodeEntities(s) {
+    if (!s) return '';
+    return s
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&#x27;/g, "'")
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&#\d+;/g, '');
+}
+
+// Unescape an Instagram JSON-embedded URL (\\u0026 -> &, \/ -> /, etc.).
+function unescapeJsonUrl(url) {
+    if (!url) return url;
+    return url
+        .replace(/\\u0026/g, '&')
+        .replace(/\\u0025/g, '%')
+        .replace(/\\\//g, '/')
+        .replace(/\\\\/g, '\\')
+        .replace(/&amp;/g, '&');
+}
+
+// Extract the last N post thumbnail URLs from the profile HTML's embedded
+// timeline JSON. Instagram embeds `edge_owner_to_timeline_media` (web schema) or
+// `timeline_media` (private API) with each node's `thumbnail_src` / `display_url`.
+// Returns an array of { url, shortcode } (best-quality thumbnail per post).
+function extractRecentPostsFromProfileHtml(html, maxPosts = 4) {
+    const posts = [];
+    const seen = new Set();
+    // Web schema: "edge_owner_to_timeline_media":{... "edges":[{"node":{"shortcode":"...","display_url":"..."...}}]}
+    // Try to locate the timeline media block and walk its edges.
+    const blockRe = /"(?:edge_owner_to_timeline_media|timeline_media|edge_web_feed_timeline)"\s*:\s*\{/g;
+    let m;
+    while ((m = blockRe.exec(html)) !== null) {
+        // Scan forward to capture the node entries. Each node has a shortcode + display_url/thumbnail_src.
+        const windowStart = m.index;
+        const window = html.slice(windowStart, windowStart + 200000);
+        const nodeRe = /"(?:shortcode|code)"\s*:\s*"([^"]+)"[^}]*?"(?:display_url|thumbnail_src)"\s*:\s*"([^"]+)"/g;
+        let nm;
+        while ((nm = nodeRe.exec(window)) !== null && posts.length < maxPosts) {
+            const shortcode = nm[1];
+            const url = unescapeJsonUrl(nm[2]);
+            if (!shortcode || !url || seen.has(shortcode)) continue;
+            seen.add(shortcode);
+            posts.push({ url, shortcode });
+        }
+        if (posts.length > 0) break;
+    }
+    // Fallback: collect display_url/thumbnail_src values near shortcodes in the
+    // whole document (order preserved). This catches the private-API schema where
+    // the timeline is a flat array of media objects.
+    if (posts.length === 0) {
+        const fallbackRe = /"shortcode"\s*:\s*"([^"]+)"[\s\S]{0,800}?"(?:display_url|thumbnail_src)"\s*:\s*"([^"]+)"/g;
+        let fm;
+        while ((fm = fallbackRe.exec(html)) !== null && posts.length < maxPosts) {
+            const shortcode = fm[1];
+            const url = unescapeJsonUrl(fm[2]);
+            if (!shortcode || !url || seen.has(shortcode)) continue;
+            seen.add(shortcode);
+            posts.push({ url, shortcode });
+        }
+    }
+    return posts;
+}
+
+async function handleInstagramProfile(client, message, profileUrl, remadeContent) {
+    console.log(`[Instagram Interceptor] Profile URL detected: ${profileUrl}`);
+    const placeholder = await sendWorkingPlaceholder(client, message, profileUrl);
+    if (message.guild) {
+        await message.delete().catch(() => {});
+    }
+
+    await message.channel.sendTyping().catch(() => { });
+    const typingInterval = setInterval(() => {
+        message.channel.sendTyping().catch(() => { });
+    }, RAG_TYPING_INTERVAL);
+
+    try {
+        await updatePlaceholderStage(placeholder, `working... <${profileUrl}>\nstage: fetching profile`);
+        // Normalize to canonical instagram.com (strip mirror prefix + query for the fetch).
+        const canonicalUrl = profileUrl
+            .replace(/(www\.)?(?:dd|kk|ee|uu|rx)instagram\.com/i, 'instagram.com')
+            .replace(/[?#].*$/, '');
+
+        let html;
+        try {
+            const response = await axios.get(canonicalUrl, {
+                timeout: 15000,
+                maxRedirects: 5,
+                headers: {
+                    'User-Agent': INSTAGRAM_BROWSER_UA,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Upgrade-Insecure-Requests': '1'
+                }
+            });
+            html = response.data;
+        } catch (fetchErr) {
+            console.error('[Instagram Interceptor] Profile fetch failed:', fetchErr.message);
+            const fallbackUrl = canonicalUrl.replace(/^https?:\/\//i, '');
+            await updateWorkingPlaceholder(placeholder, `[${fallbackUrl}](${canonicalUrl})`, [], false, 0, `[${fallbackUrl}](${canonicalUrl})`);
+            return;
+        }
+
+        if (!html || typeof html !== 'string') {
+            const fallbackUrl = canonicalUrl.replace(/^https?:\/\//i, '');
+            await updateWorkingPlaceholder(placeholder, `[${fallbackUrl}](${canonicalUrl})`, [], false, 0, `[${fallbackUrl}](${canonicalUrl})`);
+            return;
+        }
+
+        // Detect a login wall — Instagram returns the login page for some profiles.
+        if (html.includes('"showLoginForm"') || html.includes('"loginForm"') ||
+            /<title[^>]*>\s*Login/i.test(html) || /accounts\/login/i.test(html)) {
+            console.log('[Instagram Interceptor] Profile fetch hit a login wall.');
+        }
+
+        // Extract profile metadata from og: meta tags.
+        const ogTitleMatch = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)
+            || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
+        const ogDescMatch = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i)
+            || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i);
+        const ogImageMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
+            || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+
+        const displayName = ogTitleMatch ? decodeEntities(ogTitleMatch[1]).trim() : '';
+        const description = ogDescMatch ? decodeEntities(ogDescMatch[1]).trim() : '';
+        const profilePicUrl = ogImageMatch ? ogImageMatch[1].trim() : null;
+
+        // Extract the username from the URL for the profile link.
+        const usernameMatch = canonicalUrl.match(/instagram\.com\/([^/?#]+)/i);
+        const username = usernameMatch ? usernameMatch[1] : '';
+
+        // Extract last 4 posts' thumbnails.
+        const recentPosts = extractRecentPostsFromProfileHtml(html, 4);
+        console.log(`[Instagram Interceptor] Profile: name="${displayName}", posts=${recentPosts.length}, hasPic=${!!profilePicUrl}`);
+
+        // Download the profile picture (if available) to attach it.
+        let attachments = [];
+        if (profilePicUrl) {
+            try {
+                const picRes = await axios.get(profilePicUrl, {
+                    responseType: 'arraybuffer',
+                    timeout: 15000,
+                    headers: { 'User-Agent': INSTAGRAM_BROWSER_UA }
+                });
+                const buffer = Buffer.from(picRes.data);
+                const contentType = picRes.headers['content-type'] || '';
+                let ext = 'jpg';
+                if (contentType.includes('image/png')) ext = 'png';
+                else if (contentType.includes('image/webp')) ext = 'webp';
+                else if (contentType.includes('image/gif')) ext = 'gif';
+                attachments.push(new AttachmentBuilder(buffer, { name: `profile_pic.${ext}` }));
+            } catch (picErr) {
+                console.error('[Instagram Interceptor] Failed to download profile pic:', picErr.message);
+            }
+        }
+
+        // Download up to 4 recent post thumbnails and attach them.
+        for (let i = 0; i < recentPosts.length && attachments.length < 5; i++) {
+            const post = recentPosts[i];
+            try {
+                const postRes = await axios.get(post.url, {
+                    responseType: 'arraybuffer',
+                    timeout: 15000,
+                    headers: { 'User-Agent': INSTAGRAM_BROWSER_UA }
+                });
+                const buffer = Buffer.from(postRes.data);
+                const contentType = postRes.headers['content-type'] || '';
+                let ext = 'jpg';
+                if (contentType.includes('image/png')) ext = 'png';
+                else if (contentType.includes('image/webp')) ext = 'webp';
+                else if (contentType.includes('image/gif')) ext = 'gif';
+                attachments.push(new AttachmentBuilder(buffer, { name: `post_${i + 1}.${ext}` }));
+            } catch (postErr) {
+                console.error(`[Instagram Interceptor] Failed to download post ${i + 1} thumbnail:`, postErr.message);
+            }
+        }
+
+        // Build the profile card text.
+        const profileLink = `https://www.instagram.com/${username}/`;
+        const parts = [];
+        // Strip the user's original URL from their commentary so the card shows
+        // their comment (if any) above the profile block.
+        let userComment = '';
+        if (remadeContent) {
+            userComment = remadeContent.replace(profileUrl, ' ').replace(/\s+/g, ' ').trim();
+            if (userComment.length < 2) userComment = '';
+        }
+        if (userComment) parts.push(userComment);
+        if (displayName) {
+            parts.push(`**${displayName}**${username ? ` (@${username})` : ''}`);
+        } else if (username) {
+            parts.push(`**@${username}**`);
+        }
+        if (description) {
+            // og:description is usually "<N> Followers, <M> Following, <K> Posts - See Instagram photos and videos from <name> (@handle)"
+            // Quote it as the bio line.
+            const descLines = description.split('\n').filter(l => l.trim());
+            for (const line of descLines) {
+                parts.push(`> ${line}`);
+            }
+        }
+        // Append links to the last 4 posts (so users can open them even if the thumbnail download failed).
+        if (recentPosts.length > 0) {
+            const postLinks = recentPosts.map(p => `https://www.instagram.com/p/${p.shortcode}/`);
+            parts.push(`Recent posts:\n${postLinks.map(l => `<${l}>`).join('\n')}`);
+        }
+        parts.push(`[Profile](${profileLink})`);
+
+        const finalContent = parts.join('\n\n').substring(0, 2000);
+
+        if (attachments.length > 0) {
+            await updateWorkingPlaceholder(placeholder, finalContent, attachments, true, getGuildFileLimit(message.guild), `<${profileLink}>`);
+        } else {
+            // No attachments — at least show the profile link with embeds enabled so
+            // Discord renders og:image/og:description as a preview card.
+            const fallbackUrl = profileLink.replace(/^https?:\/\//i, '');
+            const fallbackContent = (userComment ? userComment + '\n\n' : '') + `[${fallbackUrl}](${profileLink})`;
+            await updateWorkingPlaceholder(placeholder, fallbackContent, [], false, 0, fallbackContent);
+        }
+    } catch (err) {
+        console.error('[Instagram Interceptor] Profile handler error:', err.message);
+        const canonicalUrl = profileUrl.replace(/(www\.)?(?:dd|kk|ee|uu|rx)instagram\.com/i, 'instagram.com');
+        const fallbackUrl = canonicalUrl.replace(/^https?:\/\//i, '');
+        await updateWorkingPlaceholder(placeholder, `[${fallbackUrl}](${canonicalUrl})`, [], false, 0, `[${fallbackUrl}](${canonicalUrl})`).catch(() => {});
+    } finally {
+        clearInterval(typingInterval);
+    }
+}
 
 async function downloadWithYtDlp(url) {
     const ytDlp = findYtDlpPath();
@@ -327,6 +585,14 @@ async function downloadWithFixer(instagramUrl, domain) {
 }
 
 async function handleInstagramMessage(client, message, instagramUrl, remadeContent) {
+    // Profile URLs (instagram.com/<username>) are handled by a dedicated profile
+    // parser that returns the userpic, bio, and last 4 posts — NOT the media
+    // download pipeline (which expects /p/, /reel/, or /tv/ and would mangle the
+    // profile URL into a broken fallback link).
+    if (isInstagramProfileUrl(instagramUrl)) {
+        return handleInstagramProfile(client, message, instagramUrl, remadeContent);
+    }
+
     // Instantly create the "working" message and delete the original message
     const placeholder = await sendWorkingPlaceholder(client, message, instagramUrl);
     if (message.guild) {
@@ -591,5 +857,6 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
 
 module.exports = {
     handleInstagramMessage,
+    handleInstagramProfile,
     sendRepostedMessage
 };

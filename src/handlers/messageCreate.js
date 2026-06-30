@@ -1,6 +1,9 @@
 const { PermissionFlagsBits } = require('discord.js');
 const { getLibrarianData } = require('../utils/helpers');
 const { handleInstagramMessage } = require('../services/instagram');
+const { handleTwitterMessage } = require('./twitterHandler');
+const { handleFacebookMessage } = require('./facebookHandler');
+const { handleArticleMessage } = require('./articleHandler');
 const { handleRagQuery } = require('../services/rag');
 const {
     SERVER_ID,
@@ -13,6 +16,17 @@ const {
 
 async function handleMessageCreate(client, message) {
     if (message.guild?.id !== SERVER_ID || message.author.bot) return;
+
+    // --- Twitter/X Link Interceptor ---
+    const twitterRegex = /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[a-zA-Z0-9_]+\/status\/\d+[^\s]*/i;
+    const twitterMatch = message.content.match(twitterRegex);
+    if (twitterMatch) {
+        let twitterUrl = twitterMatch[0];
+        twitterUrl = twitterUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
+        twitterUrl = twitterUrl.replace(/[.,:;!?]+$/, '');
+        await handleTwitterMessage(client, message, twitterUrl, message.content);
+        return;
+    }
 
     // --- Instagram Link Interceptor ---
     // Matches instagram.com and all mirror domains (dd/kk/ee/uu/rx instagram),
@@ -36,6 +50,52 @@ async function handleMessageCreate(client, message) {
         const contentNormalized = message.content.replace(originalMatch, instagramUrl);
 
         await handleInstagramMessage(client, message, instagramUrl, contentNormalized);
+        return;
+    }
+
+    // --- Facebook Link Interceptor (facebook.com / fb.watch) ---
+    const facebookRegex = /(?:https?:\/\/)?(?:www\.|m\.)?(?:facebook\.com|fb\.watch)\/[^\s]+/i;
+    const fbMatch = message.content.match(facebookRegex);
+    if (fbMatch) {
+        const originalMatch = fbMatch[0];
+        let facebookUrl = originalMatch;
+        facebookUrl = facebookUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
+        facebookUrl = facebookUrl.replace(/[.,:;!?]+$/, '');
+        if (!/^https?:\/\//i.test(facebookUrl)) {
+            facebookUrl = 'https://' + facebookUrl;
+        }
+        const contentNormalized = message.content.replace(originalMatch, facebookUrl);
+        await handleFacebookMessage(client, message, facebookUrl, contentNormalized);
+        return;
+    }
+
+    // --- News Article Link Interceptor ---
+    // Only links whose host matches one of these known news domains are treated
+    // as articles (so generic links still go through the normal RAG path).
+    const articleDomains = [
+        'themoscowtimes.com',
+        'ru.themoscowtimes.com',
+        'meduza.io',
+        'tjournal.ru',
+        'novayagazeta.eu',
+        'rbc.ru',
+        'lenta.ru',
+        'vedomosti.ru',
+        'kommersant.ru',
+        'interfax.ru',
+        'tass.ru'
+    ];
+    const articleDomainPattern = articleDomains.map(d => d.replace(/\./g, '\\.')).join('|');
+    const articleRegex = new RegExp(`(?:https?:\\/\\/)?(?:[a-z0-9-]+\\.)*(${articleDomainPattern})(?:\\/[^\\s#]*)?`, 'i');
+    const articleMatch = message.content.match(articleRegex);
+    if (articleMatch) {
+        let articleUrl = articleMatch[0];
+        articleUrl = articleUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
+        articleUrl = articleUrl.replace(/[.,:;!?]+$/, '');
+        if (!/^https?:\/\//i.test(articleUrl)) {
+            articleUrl = 'https://' + articleUrl;
+        }
+        await handleArticleMessage(client, message, articleUrl, message.content);
         return;
     }
 
