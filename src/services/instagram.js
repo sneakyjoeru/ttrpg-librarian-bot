@@ -699,6 +699,19 @@ function decodeEntities(s) {
         .replace(/&#\d+;/g, '');
 }
 
+// Clean the og:title value from an Instagram profile page.
+// og:title is typically "Display Name (@handle) • Instagram photos and videos".
+// Strip the trailing suffix and the parenthesized handle, returning just the
+// display name.
+function cleanInstagramOgTitle(title) {
+    if (!title) return '';
+    let cleaned = title;
+    cleaned = cleaned.replace(/\s*[•·]\s*Instagram\s+photos\s+and\s+videos\s*$/i, '');
+    cleaned = cleaned.replace(/\s*[•·]\s*Instagram.*$/i, '');
+    cleaned = cleaned.replace(/\s*\(@[^)]+\)\s*$/, '');
+    return cleaned.trim();
+}
+
 // Unescape an Instagram JSON-embedded URL (\\u0026 -> &, \/ -> /, etc.).
 function unescapeJsonUrl(url) {
     if (!url) return url;
@@ -825,59 +838,73 @@ async function fetchInstagramGraphQLProfile(username, cookieHeader, browserUa) {
     if (freshCsrf) {
         variants.push({ csrf: freshCsrf, cookie: null, label: 'fresh-CSRF (unauthenticated)' });
     }
+    const MAX_ATTEMPTS = 2;
     for (const variant of variants) {
-        try {
-            const headers = {
-                'User-Agent': browserUa,
-                'X-IG-App-ID': '936619743392459',
-                'X-CSRFToken': variant.csrf,
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': '*/*',
-                'Referer': `https://www.instagram.com/${username}/`,
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin'
-            };
-            if (variant.cookie) {
-                headers['Cookie'] = variant.cookie;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                const headers = {
+                    'User-Agent': browserUa,
+                    'X-IG-App-ID': '936619743392459',
+                    'X-CSRFToken': variant.csrf,
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': '*/*',
+                    'Referer': `https://www.instagram.com/${username}/`,
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin'
+                };
+                if (variant.cookie) {
+                    headers['Cookie'] = variant.cookie;
+                }
+                const resp = await axios.get(apiUrl, {
+                    timeout: 15000,
+                    maxRedirects: 0,
+                    headers
+                });
+                const user = resp.data && resp.data.data && resp.data.data.user;
+                if (!user) {
+                    console.log(`[Instagram Interceptor] Profile REST (${variant.label}) returned no user object (attempt ${attempt}/${MAX_ATTEMPTS}).`);
+                    if (attempt < MAX_ATTEMPTS) {
+                        await new Promise((r) => setTimeout(r, 3000));
+                        continue;
+                    }
+                    break;
+                }
+                // Extract the timeline media (recent posts).
+                const timelineMedia = user.edge_owner_to_timeline_media
+                    || user.timeline_media
+                    || (user.edge_web_feed_timeline)
+                    || null;
+                const posts = collectPostsFromTimelineMedia(timelineMedia, 4);
+                // Extract profile fields.
+                const fullName = user.full_name || user.name || '';
+                const bio = user.biography || user.bio || '';
+                const profilePicUrl = user.profile_pic_url_hd || user.profile_pic_url || (user.hd_profile_pic_url_info && user.hd_profile_pic_url_info.uri) || null;
+                const followerCount = user.edge_followed_by ? user.edge_followed_by.count : (user.follower_count || null);
+                const followingCount = user.edge_follow ? user.edge_follow.count : (user.following_count || null);
+                const postCount = timelineMedia ? (timelineMedia.count != null ? timelineMedia.count : null) : (user.media_count || null);
+                console.log(`[Instagram Interceptor] Profile REST (${variant.label}) resolved: name="${fullName}", posts=${posts.length}, hasPic=${!!profilePicUrl}`);
+                return {
+                    user: {
+                        fullName: fullName || '',
+                        bio: bio || '',
+                        profilePicUrl: profilePicUrl || null,
+                        followerCount,
+                        followingCount,
+                        postCount
+                    },
+                    posts
+                };
+            } catch (err) {
+                const status = err.response && err.response.status;
+                console.error(`[Instagram Interceptor] Profile REST (${variant.label}) failed (attempt ${attempt}/${MAX_ATTEMPTS}):`, err.message);
+                // On 429 (rate-limited), wait and retry before moving to the next variant.
+                if (status === 429 && attempt < MAX_ATTEMPTS) {
+                    await new Promise((r) => setTimeout(r, 3000));
+                    continue;
+                }
+                break;
             }
-            const resp = await axios.get(apiUrl, {
-                timeout: 15000,
-                maxRedirects: 0,
-                headers
-            });
-            const user = resp.data && resp.data.data && resp.data.data.user;
-            if (!user) {
-                console.log(`[Instagram Interceptor] Profile REST (${variant.label}) returned no user object.`);
-                continue;
-            }
-            // Extract the timeline media (recent posts).
-            const timelineMedia = user.edge_owner_to_timeline_media
-                || user.timeline_media
-                || (user.edge_web_feed_timeline)
-                || null;
-            const posts = collectPostsFromTimelineMedia(timelineMedia, 4);
-            // Extract profile fields.
-            const fullName = user.full_name || user.name || '';
-            const bio = user.biography || user.bio || '';
-            const profilePicUrl = user.profile_pic_url_hd || user.profile_pic_url || (user.hd_profile_pic_url_info && user.hd_profile_pic_url_info.uri) || null;
-            const followerCount = user.edge_followed_by ? user.edge_followed_by.count : (user.follower_count || null);
-            const followingCount = user.edge_follow ? user.edge_follow.count : (user.following_count || null);
-            const postCount = timelineMedia ? (timelineMedia.count != null ? timelineMedia.count : null) : (user.media_count || null);
-            console.log(`[Instagram Interceptor] Profile REST (${variant.label}) resolved: name="${fullName}", posts=${posts.length}, hasPic=${!!profilePicUrl}`);
-            return {
-                user: {
-                    fullName: fullName || '',
-                    bio: bio || '',
-                    profilePicUrl: profilePicUrl || null,
-                    followerCount,
-                    followingCount,
-                    postCount
-                },
-                posts
-            };
-        } catch (err) {
-            console.error(`[Instagram Interceptor] Profile REST (${variant.label}) failed:`, err.message);
         }
     }
     return null;
@@ -971,7 +998,10 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                     || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i);
                 const ogImageMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
                     || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
-                displayName = ogTitleMatch ? decodeEntities(ogTitleMatch[1]).trim() : '';
+                // og:title is typically "Display Name (@handle) • Instagram photos and videos".
+                // Strip the trailing suffix and parenthesized handle.
+                let rawTitle = ogTitleMatch ? decodeEntities(ogTitleMatch[1]).trim() : '';
+                displayName = cleanInstagramOgTitle(rawTitle);
                 description = ogDescMatch ? decodeEntities(ogDescMatch[1]).trim() : '';
                 profilePicUrl = ogImageMatch ? ogImageMatch[1].trim() : null;
                 recentPosts = extractRecentPostsFromProfileHtml(html, 4);
@@ -997,11 +1027,30 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         let attachments = [];
         if (profilePicUrl) {
             try {
-                const picRes = await axios.get(profilePicUrl, {
-                    responseType: 'arraybuffer',
-                    timeout: 15000,
-                    headers: { 'User-Agent': INSTAGRAM_BROWSER_UA }
-                });
+                // Instagram CDN rejects cookie-less requests for some profile
+                // pics (403). Try with Referer + Cookie headers first, fall back
+                // to a cookie-less request.
+                const picHeaderVariants = [
+                    { 'User-Agent': INSTAGRAM_BROWSER_UA, 'Referer': canonicalUrl, 'Accept': 'image/*,*/*;q=0.8' },
+                    { 'User-Agent': INSTAGRAM_BROWSER_UA, 'Referer': canonicalUrl, 'Accept': 'image/*,*/*;q=0.8', 'Cookie': cookieHeader || '' },
+                ];
+                let picRes = null;
+                let picErr = null;
+                for (const hdrs of picHeaderVariants) {
+                    try {
+                        picRes = await axios.get(profilePicUrl, {
+                            responseType: 'arraybuffer',
+                            timeout: 15000,
+                            headers: hdrs
+                        });
+                        break;
+                    } catch (e) {
+                        picErr = e;
+                        const status = e.response && e.response.status;
+                        if (status !== 403 && status !== 401) break;
+                    }
+                }
+                if (!picRes) throw picErr;
                 const buffer = Buffer.from(picRes.data);
                 const contentType = picRes.headers['content-type'] || '';
                 let ext = detectFileType(buffer) || 'jpg';
