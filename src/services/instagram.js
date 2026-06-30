@@ -925,7 +925,7 @@ async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxP
         const url = `https://www.instagram.com/api/v1/feed/user/${encodeURIComponent(username)}/username/?count=${maxPosts}`;
         const resp = await axios.get(url, {
             timeout: 15000,
-            maxRedirects: 0,
+            maxRedirects: 5,
             headers: {
                 'User-Agent': browserUa,
                 'X-IG-App-ID': '936619743392459',
