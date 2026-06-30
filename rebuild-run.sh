@@ -3,6 +3,11 @@ if [ -f "cookies.txt" ]; then
     cookies_mount="-v $(pwd)/cookies.txt:/usr/src/app/cookies.txt"
 elif [ -f "instagram-cookies.txt" ]; then
     cookies_mount="-v $(pwd)/instagram-cookies.txt:/usr/src/app/instagram-cookies.txt"
+elif [ -f "../robot-joe/cookies.txt" ]; then
+    # Fall back to the sibling robot-joe bot's cookies (same Instagram account).
+    cookies_mount="-v $(pwd)/../robot-joe/cookies.txt:/usr/src/app/cookies.txt"
+elif [ -f "../robot-joe/instagram-cookies.txt" ]; then
+    cookies_mount="-v $(pwd)/../robot-joe/instagram-cookies.txt:/usr/src/app/instagram-cookies.txt"
 fi
 
 ssh_key_mount=""
