@@ -911,6 +911,64 @@ async function fetchInstagramGraphQLProfile(username, cookieHeader, browserUa) {
     return null;
 }
 
+// Fetch a user's recent post shortcodes from imginn.com (a third-party Instagram
+// profile viewer that doesn't rate-limit), then download each post's first image
+// from the Instagram post page (og:image). Returns up to maxPosts
+// { shortcode, thumbnailUrl }. Falls back to the feed API if imginn fails.
+// This avoids Instagram's aggressive rate-limiting on the feed/user API endpoint.
+async function fetchInstagramProfilePostsViaImginn(username, cookieHeader, browserUa, maxPosts = 4) {
+    try {
+        // 1. Get shortcodes from imginn.com
+        const r = await axios.get(`https://imginn.com/${username}/`, {
+            timeout: 15000, maxRedirects: 5,
+            headers: { 'User-Agent': browserUa, 'Accept': 'text/html,*/*;q=0.8' }
+        });
+        const html = r.data;
+        const shortcodes = [...new Set((html.match(/\/p\/([A-Za-z0-9_-]{5,})/g) || [])
+            .map(s => s.match(/\/p\/([A-Za-z0-9_-]+)/)[1]))];
+        if (shortcodes.length === 0) {
+            console.log('[Instagram Interceptor] imginn.com returned no post shortcodes.');
+            return [];
+        }
+        // 2. For each shortcode, fetch the post page and extract og:image
+        const posts = [];
+        for (const sc of shortcodes) {
+            if (posts.length >= maxPosts) break;
+            try {
+                const postUrl = `https://instagram.com/p/${sc}/`;
+                const resp = await axios.get(postUrl, {
+                    timeout: 15000, maxRedirects: 5,
+                    headers: {
+                        'User-Agent': browserUa,
+                        'Accept': 'text/html,*/*;q=0.8',
+                        'Cookie': cookieHeader || '',
+                        'X-IG-App-ID': '936619743392459',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Upgrade-Insecure-Requests': '1'
+                    }
+                });
+                const postHtml = resp.data;
+                const ogI = postHtml.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i);
+                if (ogI) {
+                    const thumbUrl = ogI[1].replace(/&amp;/g, '&').trim();
+                    if (thumbUrl) {
+                        posts.push({ shortcode: sc, thumbnailUrl: thumbUrl });
+                    }
+                }
+            } catch (e) {
+                console.log(`[Instagram Interceptor] imginn post ${sc} fetch failed:`, e.message);
+            }
+        }
+        console.log(`[Instagram Interceptor] imginn.com resolved ${posts.length} post(s).`);
+        return posts;
+    } catch (err) {
+        console.log('[Instagram Interceptor] imginn.com profile fetch failed:', err.message);
+        return [];
+    }
+}
+
 // Fetch a user's recent feed posts via the private API
 // /api/v1/feed/user/{username}/username/?count=N. Returns up to maxPosts
 // { shortcode, thumbnailUrl } (the first media of each post). This endpoint
@@ -1003,18 +1061,21 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         const username = usernameMatch ? usernameMatch[1] : '';
         const profileLink = `https://www.instagram.com/${username}/`;
 
-        // --- Strategy: HTML scrape for name/pic + feed API for post thumbnails ---
-        // The REST API (web_profile_info) consistently 429s and its 4 retry attempts
-        // burn through the rate-limit budget, causing the feed API to also get
-        // 302'd. So we skip the REST API entirely: the HTML page gives us the
-        // display name + profile pic (og: tags), and the feed API gives us the
-        // recent posts. This uses only 1 API call instead of 5+.
+        // --- Fetch recent posts: try imginn.com first (no rate-limit), then
+        // the feed API as fallback. The REST API (web_profile_info) is skipped
+        // entirely since it 429-spams and rate-limits everything. ---
         const cookieHeader = buildInstagramCookieHeader();
         let recentPosts = [];
         {
-            const feedPosts = await fetchInstagramProfileFeed(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
-            if (feedPosts.length > 0) {
-                recentPosts = feedPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
+            const imginnPosts = await fetchInstagramProfilePostsViaImginn(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
+            if (imginnPosts.length > 0) {
+                recentPosts = imginnPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
+            }
+            if (recentPosts.length === 0) {
+                const feedPosts = await fetchInstagramProfileFeed(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
+                if (feedPosts.length > 0) {
+                    recentPosts = feedPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
+                }
             }
         }
 
