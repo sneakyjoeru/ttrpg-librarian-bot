@@ -70,10 +70,11 @@
   - Monthly cron (`CRON_SCHEDULE_MONTHLY_MINI`) — auto-posts the 3D
     printing queue to `GENERAL_CHANNEL_ID` with a ±2h randomized delay,
     tagging `SNEAKYJOE_USER_ID` and linking to `RULES_MESSAGE_ID`.
-- **Character/Persona:** Old, senile but helpful librarian NPC in
-  D&D/TTRPG-centric Discord servers. Persona is steered by a per-query
-  randomly-selected "quirk" line and a numeric seed embedded in the system
-  prompt to keep roleplay output deterministic yet varied.
+- **Character/Persona:** Helpful "old librarian" NPC tone in
+  D&D/TTRPG-centric Discord servers, with concise answers by default.
+  Roleplay remains light unless explicitly requested. Persona is steered
+  by a per-query randomly-selected "quirk" line and a numeric seed embedded
+  in the system prompt to keep tone varied.
 - **Secrets:** `$token` and `$deepseek_api_key` live in
   `secrets_discord.php` (gitignored). The PHP file is regex-parsed at
   startup so the container doesn't need a PHP runtime.
