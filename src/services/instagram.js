@@ -1003,10 +1003,12 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         const username = usernameMatch ? usernameMatch[1] : '';
         const profileLink = `https://www.instagram.com/${username}/`;
 
-        // --- Fetch recent posts FIRST via the private feed API (before the
-        // web_profile_info calls which 429-spam and trigger rate-limiting on
-        // all subsequent API endpoints). The feed API is more reliable and doesn't
-        // rate-limit as aggressively when called early. ---
+        // --- Strategy: HTML scrape for name/pic + feed API for post thumbnails ---
+        // The REST API (web_profile_info) consistently 429s and its 4 retry attempts
+        // burn through the rate-limit budget, causing the feed API to also get
+        // 302'd. So we skip the REST API entirely: the HTML page gives us the
+        // display name + profile pic (og: tags), and the feed API gives us the
+        // recent posts. This uses only 1 API call instead of 5+.
         const cookieHeader = buildInstagramCookieHeader();
         let recentPosts = [];
         {
@@ -1016,26 +1018,12 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
             }
         }
 
-        // --- Strategy 1: GraphQL profile query (cookie-aware, structured JSON) ---
-        const gqlResult = await fetchInstagramGraphQLProfile(username, cookieHeader, INSTAGRAM_BROWSER_UA);
-
         let displayName = '';
         let description = '';
         let profilePicUrl = null;
 
-        if (gqlResult) {
-            displayName = gqlResult.user.fullName;
-            // Only the bio — no follower/following/post counts (the user doesn't
-            // want those in the card).
-            description = gqlResult.user.bio || '';
-            profilePicUrl = gqlResult.user.profilePicUrl;
-            recentPosts = gqlResult.posts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
-        } else {
-            // --- Strategy 2: authenticated HTML profile scrape (fallback) ---
-            // Used when the GraphQL doc_id has rotated or the query returns no user.
-            // Fetches the profile page HTML WITH session cookies so Instagram doesn't
-            // serve a login wall, then extracts og: tags + embedded timeline JSON.
-            console.log('[Instagram Interceptor] GraphQL profile failed; falling back to authenticated HTML scrape.');
+        // --- HTML profile scrape (name + pic + bio from og: tags) ---
+        {
             const fetchHeaders = {
                 'User-Agent': INSTAGRAM_BROWSER_UA,
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -1102,7 +1090,11 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                         profilePicUrl = unescapeInstagramJsonUrl(picMatch[1]);
                     }
                 }
-                recentPosts = extractRecentPostsFromProfileHtml(html, 4);
+                // Only use HTML-extracted posts as fallback if feed API didn't
+                // already get them.
+                if (recentPosts.length === 0) {
+                    recentPosts = extractRecentPostsFromProfileHtml(html, 4);
+                }
             }
         }
 
