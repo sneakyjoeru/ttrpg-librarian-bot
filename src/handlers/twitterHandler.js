@@ -69,6 +69,19 @@ function getBestVideoUrl(video, limitBytes = DISCORD_FILE_LIMIT_TWITTER) {
     return video.url;
 }
 
+// Escape Discord markdown-special characters in Twitter handles/names so that
+// handles like heavenly__body2 (double underscore) don't trigger underline/italic
+// markdown and break the entire quoted message formatting.
+function escapeMarkdown(text) {
+    if (!text) return '';
+    return String(text)
+        .replace(/\\/g, '\\\\')
+        .replace(/\*/g, '\\*')
+        .replace(/_/g, '\\_')
+        .replace(/~/g, '\\~')
+        .replace(/`/g, '\\`')
+        .replace(/\|/g, '\\|');
+}
 
 async function handleTwitterMessage(client, message, twitterUrl, remadeContent, recoveredPlaceholder = null) {
     const job = startJob(message, 'handleTwitterMessage');
@@ -140,8 +153,8 @@ async function handleTwitterMessage(client, message, twitterUrl, remadeContent, 
 
             if (tweet) {
                 const author = tweet.author || {};
-                const authorName = author.name || 'Unknown';
-                const authorHandle = author.screen_name || 'unknown';
+                const authorName = escapeMarkdown(author.name || 'Unknown');
+                const authorHandle = escapeMarkdown(author.screen_name || 'unknown');
 
                 // Build the quote of the post
                 quotedTweet = `\n> **${authorName}** (@${authorHandle}):\n`;
@@ -158,10 +171,11 @@ async function handleTwitterMessage(client, message, twitterUrl, remadeContent, 
                 // nested blockquote so the quoted content is included.
                 if (tweet.quote) {
                     const qAuthor = tweet.quote.author || {};
-                    const qName = qAuthor.name || 'Unknown';
-                    const qHandle = qAuthor.screen_name || 'unknown';
+                    const qHandleRaw = qAuthor.screen_name || 'unknown';
+                    const qName = escapeMarkdown(qAuthor.name || 'Unknown');
+                    const qHandle = escapeMarkdown(qHandleRaw);
                     const qText = tweet.quote.text || '';
-                    const qUrl = tweet.quote.url || (tweet.quote.id ? `https://x.com/${qHandle}/status/${tweet.quote.id}` : '');
+                    const qUrl = tweet.quote.url || (tweet.quote.id ? `https://x.com/${qHandleRaw}/status/${tweet.quote.id}` : '');
                     quotedTweet += `>\n> > **${qName}** (@${qHandle}):\n`;
                     if (qText) {
                         const qLines = qText.split('\n').filter(l => l.trim());
