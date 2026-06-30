@@ -950,12 +950,28 @@ async function fetchInstagramProfilePostsViaImginn(username, cookieHeader, brows
                     }
                 });
                 const postHtml = resp.data;
-                const ogI = postHtml.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i);
-                if (ogI) {
-                    const thumbUrl = ogI[1].replace(/&amp;/g, '&').trim();
-                    if (thumbUrl) {
-                        posts.push({ shortcode: sc, thumbnailUrl: thumbUrl });
+                // Prefer image_versions2 candidates (full-res) over og:image
+                // (cropped s640x640 preview). The candidates array is ordered
+                // by width descending — pick the first URL.
+                let thumbUrl = null;
+                const ivRe = /"image_versions2"\s*:\s*\{[^}]*?"candidates"\s*:\s*\[([\s\S]*?)\]/g;
+                let ivm;
+                while ((ivm = ivRe.exec(postHtml)) !== null) {
+                    const urlMatch = ivm[1].match(/"url"\s*:\s*"([^"]+)"/);
+                    if (urlMatch) {
+                        const url = unescapeInstagramJsonUrl(urlMatch[1]);
+                        // Pick the first candidate (highest width in Instagram's ordering)
+                        if (!thumbUrl) thumbUrl = url;
+                        break;
                     }
+                }
+                // Fallback to og:image if no image_versions2 found
+                if (!thumbUrl) {
+                    const ogI = postHtml.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i);
+                    if (ogI) thumbUrl = ogI[1].replace(/&amp;/g, '&').trim();
+                }
+                if (thumbUrl) {
+                    posts.push({ shortcode: sc, thumbnailUrl: thumbUrl });
                 }
             } catch (e) {
                 console.log(`[Instagram Interceptor] imginn post ${sc} fetch failed:`, e.message);
@@ -1061,11 +1077,25 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         const username = usernameMatch ? usernameMatch[1] : '';
         const profileLink = `https://www.instagram.com/${username}/`;
 
-        // --- Fetch profile name + pic from HTML og: tags only. No posts,
-        // no bio, no follower counts — just name + profile picture. ---
+        // --- Fetch recent post thumbnails via imginn.com (no rate-limit) +
+        // individual post page og:image, with feed API fallback. ---
         const cookieHeader = buildInstagramCookieHeader();
+        let recentPosts = [];
+        {
+            const imginnPosts = await fetchInstagramProfilePostsViaImginn(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
+            if (imginnPosts.length > 0) {
+                recentPosts = imginnPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
+            }
+            if (recentPosts.length === 0) {
+                const feedPosts = await fetchInstagramProfileFeed(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
+                if (feedPosts.length > 0) {
+                    recentPosts = feedPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
+                }
+            }
+        }
 
         let displayName = '';
+        let description = '';
         let profilePicUrl = null;
 
         // --- HTML profile scrape (name + pic from og: tags) ---
@@ -1117,6 +1147,29 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                         profilePicUrl = unescapeInstagramJsonUrl(picMatch[1]);
                     }
                 }
+                // Try to upgrade the profile pic from s100x100 (og:image) to a
+                // larger version via the REST feed API's user data, which returns
+                // profile_pic_url_hd at full resolution. This only works when not
+                // rate-limited. The og:image is s100x100 (tiny 3KB crop).
+                if (profilePicUrl && profilePicUrl.includes('s100x100')) {
+                    try {
+                        const csrf = getCsrftokenFromCookieHeader(cookieHeader);
+                        const freshCsrf = await fetchFreshCsrfToken(INSTAGRAM_BROWSER_UA);
+                        const csrfToken = csrf || freshCsrf;
+                        if (csrfToken) {
+                            const picResp = await axios.get(
+                                `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+                                { timeout: 10000, maxRedirects: 0,
+                                  headers: { 'User-Agent': INSTAGRAM_BROWSER_UA, 'X-IG-App-ID': '936619743392459', 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest', 'Accept': '*/*', 'Referer': canonicalUrl, 'Cookie': cookieHeader || '', 'Sec-Fetch-Dest': 'empty', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Site': 'same-origin' } }
+                            );
+                            const user = picResp.data && picResp.data.data && picResp.data.data.user;
+                            if (user && user.profile_pic_url_hd) {
+                                profilePicUrl = unescapeInstagramJsonUrl(user.profile_pic_url_hd);
+                                console.log('[Instagram Interceptor] Upgraded profile pic to profile_pic_url_hd via REST API.');
+                            }
+                        }
+                    } catch (e) { /* Rate-limited — keep og:image */ }
+                }
             }
         }
 
@@ -1167,6 +1220,27 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                 attachments.push(new AttachmentBuilder(buffer, { name: `profile_pic.${ext}` }));
             } catch (picErr) {
                 console.error('[Instagram Interceptor] Failed to download profile pic:', picErr.message);
+            }
+        }
+
+        // Download up to 4 recent post thumbnails and attach them.
+        for (let i = 0; i < recentPosts.length && attachments.length < 5; i++) {
+            const post = recentPosts[i];
+            try {
+                const postRes = await axios.get(post.url, {
+                    responseType: 'arraybuffer',
+                    timeout: 15000,
+                    headers: { 'User-Agent': INSTAGRAM_BROWSER_UA, 'Referer': `https://www.instagram.com/p/${post.shortcode}/`, 'Cookie': cookieHeader || '' }
+                });
+                const buffer = Buffer.from(postRes.data);
+                const contentType = postRes.headers['content-type'] || '';
+                let ext = detectFileType(buffer) || 'jpg';
+                if (contentType.includes('image/png')) ext = 'png';
+                else if (contentType.includes('image/webp')) ext = 'webp';
+                else if (contentType.includes('image/gif')) ext = 'gif';
+                attachments.push(new AttachmentBuilder(buffer, { name: `post_${i + 1}.${ext}` }));
+            } catch (postErr) {
+                console.error(`[Instagram Interceptor] Failed to download post ${i + 1} thumbnail:`, postErr.message);
             }
         }
 
