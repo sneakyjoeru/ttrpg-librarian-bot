@@ -934,16 +934,17 @@ async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxP
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-origin'
     };
-    // Retry up to 5 times: Instagram intermittently returns 302 redirects
-    // (rate-limit) when the bot's cookie monitor or other API calls have
-    // recently hit the same IP. Using maxRedirects:0 + retry avoids the
-    // redirect-loop that maxRedirects:5 causes. 5s delay between retries.
+    // Retry up to 5 times with increasing delays: Instagram rate-limits the IP
+    // (302 redirects) when too many API calls are made in a short window. The
+    // bot's web_profile_info calls (4x 429) + cookie monitor contribute to this.
+    // Using maxRedirects:0 + retry avoids the redirect-loop. Delays: 3s, 5s, 8s, 12s.
+    const retryDelays = [3000, 5000, 8000, 12000];
     for (let attempt = 1; attempt <= 5; attempt++) {
         try {
             const resp = await axios.get(url, { timeout: 15000, maxRedirects: 0, headers });
             const items = resp.data && resp.data.items;
             if (!Array.isArray(items)) {
-                if (attempt < 5) { await new Promise(r => setTimeout(r, 5000)); continue; }
+                if (attempt < 5) { await new Promise(r => setTimeout(r, retryDelays[attempt - 1] || 12000)); continue; }
                 return [];
             }
             const posts = [];
@@ -969,8 +970,8 @@ async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxP
         } catch (err) {
             const status = err.response && err.response.status;
             if (status === 302 && attempt < 5) {
-                console.log(`[Instagram Interceptor] Profile feed API got 302 (rate-limit), retrying in 5s (attempt ${attempt}/5).`);
-                await new Promise(r => setTimeout(r, 5000));
+                console.log(`[Instagram Interceptor] Profile feed API got 302 (rate-limit), retrying in ${(retryDelays[attempt - 1] || 12000) / 1000}s (attempt ${attempt}/5).`);
+                await new Promise(r => setTimeout(r, retryDelays[attempt - 1] || 12000));
                 continue;
             }
             console.log(`[Instagram Interceptor] Profile feed API failed (attempt ${attempt}):`, err.message);
