@@ -208,10 +208,45 @@ async function handleMessageCreate(client, message) {
                 await restartStatusMsg.edit('⏳ Сборка завершена. Перезапуск контейнера...').catch(() => {});
             }
             const normalizedHostPath = hostPath.replace(/\\/g, '/');
+            // Build the docker run flags matching rebuild-run.sh (cookies mount,
+            // ssh key mount, iGPU passthrough, ollama network, env vars).
+            const { execSync: execSync2 } = require('child_process');
+            let restartFlags = `-e HOST_PATH=\\"${normalizedHostPath}\\" -e SHARE_PASS -e TRANSCODER_CONTAINER -v /var/run/docker.sock:/var/run/docker.sock -v \\"${normalizedHostPath}:/usr/src/app\\" -v /usr/src/app/node_modules`;
+            // Cookies mount (local or sibling robot-joe)
+            try {
+                const cookieCheck = execSync2('ls /usr/src/app/cookies.txt /usr/src/app/instagram-cookies.txt 2>/dev/null || echo NONE', {encoding:'utf8'}).trim();
+                if (cookieCheck !== 'NONE') {
+                    restartFlags += ` -v \\"${normalizedHostPath}/$(basename ${cookieCheck.split('\\n')[0]}):/usr/src/app/$(basename ${cookieCheck.split('\\n')[0]})\\"`;
+                } else {
+                    const siblingCheck = execSync2('ls "' + normalizedHostPath + '/../robot-joe/cookies.txt" 2>/dev/null || echo NONE', {encoding:'utf8'}).trim();
+                    if (siblingCheck !== 'NONE') {
+                        restartFlags += ` -v \\"${normalizedHostPath}/../robot-joe/cookies.txt:/tmp/cookies.txt\\"`;
+                    }
+                }
+            } catch (_) {}
+            // SSH key mount
+            try {
+                const sshKey = execSync2('ls /usr/src/app/id_rsa /usr/src/app/id_ed25519 2>/dev/null || echo NONE', {encoding:'utf8'}).trim();
+                if (sshKey !== 'NONE') {
+                    restartFlags += ` -v \\"${normalizedHostPath}/$(basename ${sshKey.split('\\n')[0]}):/usr/src/app/id_rsa\\"`;
+                }
+            } catch (_) {}
+            // iGPU passthrough
+            try {
+                execSync2('test -e /dev/dri/renderD128', {encoding:'utf8'});
+                const renderGid = execSync2('stat -c %g /dev/dri/renderD128 2>/dev/null || echo 109', {encoding:'utf8'}).trim();
+                restartFlags += ` --device /dev/dri/renderD128 --group-add ${renderGid}`;
+            } catch (_) {}
+            // Ollama network
+            try {
+                execSync2('docker network inspect ollama_default >/dev/null 2>&1');
+                restartFlags += ` --network ollama_default`;
+            } catch (_) {}
+
             // Detached helper container stops+removes the old bot and starts the
             // new one (the bot can't restart itself — its own container would be
             // killed mid-process). Matches the slash /restart approach.
-            const restartCmd = `docker run -d --rm -v /var/run/docker.sock:/var/run/docker.sock docker sh -c "sleep 2 && docker rm -f librarian-bot && docker run -d --name librarian-bot --restart unless-stopped -e HOST_PATH=\\"${normalizedHostPath}\\" -v /var/run/docker.sock:/var/run/docker.sock -v \\"${normalizedHostPath}:/usr/src/app\\" -v /usr/src/app/node_modules discord-librarian-bot"`;
+            const restartCmd = `docker run -d --rm -v /var/run/docker.sock:/var/run/docker.sock docker sh -c "sleep 2 && docker rm -f librarian-bot && docker run -d --name librarian-bot --restart unless-stopped ${restartFlags} discord-librarian-bot"`;
             const { exec } = require('child_process');
             exec(restartCmd, (restartErr) => {
                 if (restartErr) {
