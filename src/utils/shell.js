@@ -16,6 +16,82 @@ function runCommand(cmd, timeoutMs = 20000) {
     });
 }
 
+// Stream a long-running command, invoking line callbacks for stdout/stderr.
+// Used by the /restart rebuild flow to publish live BuildKit progress to chat.
+// Mirrors robot-joe's runCommandStream (CR and LF both treated as line breaks
+// so Docker's carriage-return progress updates are flushed correctly).
+function runCommandStream(cmd, { timeoutMs = 0, onStdout = null, onStderr = null } = {}) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(cmd, { shell: true });
+
+        let stdout = '';
+        let stderr = '';
+        let stdoutBuf = '';
+        let stderrBuf = '';
+        let timeout = null;
+
+        if (timeoutMs && timeoutMs > 0) {
+            timeout = setTimeout(() => {
+                child.kill('SIGKILL');
+                const err = new Error(`Command timed out after ${timeoutMs}ms`);
+                err.stdout = stdout;
+                err.stderr = stderr;
+                reject(err);
+            }, timeoutMs);
+        }
+
+        const flushLines = (buffer, cb, streamName) => {
+            const parts = buffer.split(/\r|\n/);
+            const remainder = parts.pop() || '';
+            if (cb) {
+                for (const part of parts) {
+                    try {
+                        cb(part, streamName);
+                    } catch (_) {}
+                }
+            }
+            return remainder;
+        };
+
+        child.stdout.on('data', (data) => {
+            const chunk = data.toString();
+            stdout += chunk;
+            stdoutBuf += chunk;
+            stdoutBuf = flushLines(stdoutBuf, onStdout, 'stdout');
+        });
+
+        child.stderr.on('data', (data) => {
+            const chunk = data.toString();
+            stderr += chunk;
+            stderrBuf += chunk;
+            stderrBuf = flushLines(stderrBuf, onStderr, 'stderr');
+        });
+
+        child.on('close', (code) => {
+            if (timeout) clearTimeout(timeout);
+            if (stdoutBuf && onStdout) {
+                try { onStdout(stdoutBuf.replace(/\r$/, ''), 'stdout'); } catch (_) {}
+            }
+            if (stderrBuf && onStderr) {
+                try { onStderr(stderrBuf.replace(/\r$/, ''), 'stderr'); } catch (_) {}
+            }
+            if (code !== 0) {
+                const err = new Error(`Command failed with code ${code}`);
+                err.stdout = stdout;
+                err.stderr = stderr;
+                reject(err);
+            } else {
+                resolve({ stdout, stderr });
+            }
+        });
+
+        child.on('error', (err) => {
+            if (timeout) clearTimeout(timeout);
+            reject(err);
+        });
+    });
+}
+
 /**
  * Searches for an SSH private key inside the container, copies it to /tmp/bot_ssh_key,
  * and sets correct 0o600 permissions.
@@ -161,6 +237,7 @@ function findYtDlpPath() {
 
 module.exports = {
     runCommand,
+    runCommandStream,
     buildSshPrefix,
     hasRemoteAccess,
     runCommandWithProgress,

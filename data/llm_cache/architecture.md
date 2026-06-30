@@ -254,10 +254,16 @@
 │       │                         #   VALUE=DATE), and the schedules.json state
 │       │                         #   store (atomic temp-file + rename, in-process
 │       │                         #   write Promise chain).
-│       ├── shell.js              #   runCommand (exec), prepareSshKey /
+│       ├── shell.js              #   runCommand (exec), runCommandStream
+│       │                         #   (spawn + line-callback streaming for the
+│       │                         #   /restart build), prepareSshKey /
 │       │                         #   buildSshPrefix / hasRemoteAccess (SSH
 │       │                         #   key or sshpass), runCommandWithProgress
 │       │                         #   (parses ffmpeg time= stderr), findYtDlpPath
+│       ├── rebuildProgress.js    #   parseRebuildProgressLine — parses BuildKit
+│                                 #   `[n/N]` / `Step n/N` / `N%` lines for the
+│                                 #   /restart live progress (ported from
+│                                 #   robot-joe, identical).
 │       ├── systemState.js        #   Persistent (threadId, updatesMessageId)
 │       │                         #   store for the system-updates thread.
 │       │                         #   Atomic temp-file + rename writes; in-process
@@ -371,8 +377,11 @@ Discord Gateway
    │       ├─ /new-private-thread  — private thread (DM/Admin), add mentioned users
    │       ├─ /update-players      — rename channel & role with new count
    │       ├─ /roll                — dice + (if natural 1) Ollama roast
-   │       └─ /restart             — admin: re-run rebuild-run.sh via the
-   │                                 mounted Docker socket
+   │       └─ /restart             — admin (slash OR text): rebuild the Docker
+   │                                 image via the mounted Docker socket and
+   │                                 swap in a new container; text variant
+   │                                 (messageCreate.js) streams live BuildKit
+   │                                 `[n/N]` progress to chat
    │
    └─ RESTART_TOKEN / RESTART_CHANNEL_ID+RESTART_MESSAGE_ID env vars
      ── patched by index-librarian.js's ClientReady handler so the

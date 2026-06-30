@@ -178,6 +178,7 @@ const helpText = `**Librarian Bot Functions:**
 \`!unpin [message_id]\` - Unpin a message by ID (or the last pinned message if empty) *(DM of this channel or Admin)*
 \`/archive [confirmation]\` - Archive current campaign channel. Requires typing: \`yes, I want to archive channelname\`
 \`/retro-setup\` - Admin tool: Pins first message, generates missing role, and creates bot data in channel topic for old channels.
+\`/restart\` - Rebuild and restart the bot container (text or slash command, Admin only). Shows live BuildKit build progress in chat.
 
 *Note: New game channels auto-delete chat until DM posts OP (which generates role).*`;
 
