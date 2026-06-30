@@ -1061,29 +1061,14 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         const username = usernameMatch ? usernameMatch[1] : '';
         const profileLink = `https://www.instagram.com/${username}/`;
 
-        // --- Fetch recent posts: try imginn.com first (no rate-limit), then
-        // the feed API as fallback. The REST API (web_profile_info) is skipped
-        // entirely since it 429-spams and rate-limits everything. ---
+        // --- Fetch profile name + pic from HTML og: tags only. No posts,
+        // no bio, no follower counts — just name + profile picture. ---
         const cookieHeader = buildInstagramCookieHeader();
-        let recentPosts = [];
-        {
-            const imginnPosts = await fetchInstagramProfilePostsViaImginn(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
-            if (imginnPosts.length > 0) {
-                recentPosts = imginnPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
-            }
-            if (recentPosts.length === 0) {
-                const feedPosts = await fetchInstagramProfileFeed(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
-                if (feedPosts.length > 0) {
-                    recentPosts = feedPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
-                }
-            }
-        }
 
         let displayName = '';
-        let description = '';
         let profilePicUrl = null;
 
-        // --- HTML profile scrape (name + pic + bio from og: tags) ---
+        // --- HTML profile scrape (name + pic from og: tags) ---
         {
             const fetchHeaders = {
                 'User-Agent': INSTAGRAM_BROWSER_UA,
@@ -1117,29 +1102,10 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                 }
                 const ogTitleMatch = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)
                     || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
-                const ogDescMatch = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i)
-                    || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i);
                 const ogImageMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
                     || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
-                // og:title is typically "Display Name (@handle) • Instagram photos and videos".
-                // Strip the trailing suffix and parenthesized handle.
                 let rawTitle = ogTitleMatch ? decodeEntities(ogTitleMatch[1]).trim() : '';
                 displayName = cleanInstagramOgTitle(rawTitle);
-                description = ogDescMatch ? decodeEntities(ogDescMatch[1]).trim() : '';
-                // Strip the follower/following/post counts + the "See Instagram
-                // photos and videos from Name (@handle)" suffix from og:description
-                // so only the bio remains (if any). For profiles with no bio the
-                // og:description is just the counts + suffix, which we strip entirely.
-                description = description
-                    .replace(/^\d+\s*Followers,\s*\d+\s*Following,\s*\d+\s*Posts\s*-\s*See Instagram photos and videos from\s+.*/i, '')
-                    .replace(/\s*-\s*See Instagram photos and videos from\s+.*/i, '')
-                    .replace(/\s*See Instagram photos and videos from\s+.*/i, '')
-                    .trim();
-                // og:image is the TARGET profile's pic (server-rendered meta tag).
-                // The embedded JSON profile_pic_url_hd is the LOGGED-IN viewer's pic
-                // (when cookies are attached), NOT the target's — so prefer og:image.
-                // The og:image URL contains &amp; entities that must be decoded before
-                // downloading (undecoded &amp; → 403).
                 if (ogImageMatch) {
                     profilePicUrl = ogImageMatch[1].replace(/&amp;/g, '&').trim();
                 } else {
@@ -1151,20 +1117,13 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                         profilePicUrl = unescapeInstagramJsonUrl(picMatch[1]);
                     }
                 }
-                // Only use HTML-extracted posts as fallback if feed API didn't
-                // already get them.
-                if (recentPosts.length === 0) {
-                    recentPosts = extractRecentPostsFromProfileHtml(html, 4);
-                }
             }
         }
 
-        console.log(`[Instagram Interceptor] Profile: name="${displayName}", posts=${recentPosts.length}, hasPic=${!!profilePicUrl}`);
+        console.log(`[Instagram Interceptor] Profile: name="${displayName}", hasPic=${!!profilePicUrl}`);
 
-        // If we got nothing useful at all (no name, no pic, no posts), the profile is
-        // likely private and cookies are missing/invalid. Post a clean link instead
-        // of a broken card — but still tell the user cookies are needed.
-        if (!displayName && !profilePicUrl && recentPosts.length === 0) {
+        // If we got nothing useful at all (no name, no pic), post a clean link.
+        if (!displayName && !profilePicUrl) {
             console.log('[Instagram Interceptor] Profile yielded no data (likely private + no cookies). Posting link fallback.');
             const fallbackUrl = profileLink.replace(/^https?:\/\//i, '');
             const fallbackContent = (remadeContent && remadeContent.replace(profileUrl, ' ').replace(/\s+/g, ' ').trim().length >= 2
@@ -1178,9 +1137,6 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         let attachments = [];
         if (profilePicUrl) {
             try {
-                // Instagram CDN rejects cookie-less requests for some profile
-                // pics (403). Try with Referer + Cookie headers first, fall back
-                // to a cookie-less request.
                 const picHeaderVariants = [
                     { 'User-Agent': INSTAGRAM_BROWSER_UA, 'Referer': canonicalUrl, 'Accept': 'image/*,*/*;q=0.8' },
                     { 'User-Agent': INSTAGRAM_BROWSER_UA, 'Referer': canonicalUrl, 'Accept': 'image/*,*/*;q=0.8', 'Cookie': cookieHeader || '' },
@@ -1214,51 +1170,19 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
             }
         }
 
-        // Download up to 4 recent post thumbnails and attach them.
-        for (let i = 0; i < recentPosts.length && attachments.length < 5; i++) {
-            const post = recentPosts[i];
-            try {
-                const postRes = await axios.get(post.url, {
-                    responseType: 'arraybuffer',
-                    timeout: 15000,
-                    headers: { 'User-Agent': INSTAGRAM_BROWSER_UA }
-                });
-                const buffer = Buffer.from(postRes.data);
-                const contentType = postRes.headers['content-type'] || '';
-                let ext = detectFileType(buffer) || 'jpg';
-                if (contentType.includes('image/png')) ext = 'png';
-                else if (contentType.includes('image/webp')) ext = 'webp';
-                else if (contentType.includes('image/gif')) ext = 'gif';
-                attachments.push(new AttachmentBuilder(buffer, { name: `post_${i + 1}.${ext}` }));
-            } catch (postErr) {
-                console.error(`[Instagram Interceptor] Failed to download post ${i + 1} thumbnail:`, postErr.message);
-            }
-        }
-
-        // Build the profile card text.
-        // The original link is preserved at the TOP (with the user's text if any),
-        // followed by the profile name + bio. Follower/following/post counts are
-        // NOT included. The profile pic + last 4 post thumbnails are attached as
-        // image previews (downloaded above).
+        // Build the profile card: original link at top + name + tag.
         const parts = [];
         let userComment = '';
         if (remadeContent) {
             userComment = remadeContent.replace(profileUrl, ' ').replace(/\s+/g, ' ').trim();
             if (userComment.length < 2) userComment = '';
         }
-        // Original link at the top (preserved with user's text).
         const linkLine = userComment ? `${userComment} <${profileLink}>` : `<${profileLink}>`;
         parts.push(linkLine);
         if (displayName) {
             parts.push(`**${displayName}**${username ? ` (@${username})` : ''}`);
         } else if (username) {
             parts.push(`**@${username}**`);
-        }
-        if (description) {
-            const descLines = description.split('\n').filter(l => l.trim());
-            for (const line of descLines) {
-                parts.push(`> ${line}`);
-            }
         }
 
         const finalContent = parts.join('\n\n').substring(0, 2000);

@@ -47,20 +47,21 @@
     with auth cookies) and oversized video re-encoding. **Profile parsing**
     (`handleInstagramProfile`, gated by `isInstagramProfileUrl`):
     `instagram.com/<username>` (no `/p/`/`/reel/`/`/tv/`/`/explore/`/
-    `/accounts/`/`/stories/` segment) queries the GraphQL profile endpoint
-    (`/graphql/query` doc_id `8837846741524836`) FIRST — fresh-CSRF
-    unauthenticated then session-cookie authenticated
-    (`buildInstagramCookieHeader` + `fetchFreshCsrfToken`, reused from the
-    post pipeline) — which returns the full name, bio, follower/following/post
-    counts, profile pic URL, and the last 4 timeline posts as structured JSON.
-    Falls back to an authenticated HTML profile scrape (cookies attached) +
-    `og:` meta tags + `extractRecentPostsFromProfileHtml` if the GraphQL doc_id
-    has rotated. Downloads the userpic + up to 4 post thumbnails and posts a
-    card (userpic + bio blockquote + recent-post links + `[Profile](url)`).
-    If nothing is recovered (private profile + no/invalid cookies), posts a
-    clean link fallback. This replaces the old behaviour where a profile URL
-    fell through to the media pipeline, failed, and posted a butchered fallback
-    link (e.g. `instagram.com/_thehammer__` returned a login-wall card).
+    `/accounts/`/`/stories/` segment) fetches recent post thumbnails via
+    **imginn.com** (third-party Instagram profile viewer, no rate-limit) +
+    individual post page `og:image` scrapes, then scrapes the profile HTML
+    (cookies attached) for `og:title` (display name, hex-entity-decoded via
+    `decodeEntities`) + `og:image` (profile pic, `&amp;`-decoded). The REST
+    API (`/api/v1/users/web_profile_info/`) is skipped (consistently 429s
+    and rate-limits the IP for all subsequent API calls). The feed API
+    (`/api/v1/feed/user/{username}/username/`) is kept as a fallback.
+    Downloads the userpic + up to 4 post thumbnails and posts a card
+    (original link at top + display name + profile pic + post previews).
+    `decodeEntities` decodes hex HTML entities (`&#x2022;` bullet, `&#064;`
+    @) so `cleanInstagramOgTitle` can strip the "• Instagram photos and
+    videos" suffix. If nothing is recovered, posts a clean link fallback.
+    `rebuild-run.sh` falls back to sibling `../robot-joe/cookies.txt`
+    (mounted to `/tmp/cookies.txt` to avoid Docker dir-mount shadowing).
 - **Media compressor:** `src/utils/mediaCompressor.js`. Two-stage pipeline
   (the remote NAS network transcoder at `192.168.0.100` has been REMOVED):
   **local iGPU** (Intel N100/N150 only, gated by `src/utils/cpuDetector.js` +
