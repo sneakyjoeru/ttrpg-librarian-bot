@@ -1009,7 +1009,6 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         let displayName = '';
         let description = '';
         let profilePicUrl = null;
-        let recentPosts = [];
 
         if (gqlResult) {
             displayName = gqlResult.user.fullName;
