@@ -5,7 +5,7 @@ const axios = require('axios');
 const { instagramGetUrl } = require('instagram-url-direct');
 const snapinsta = require('snapinsta');
 const { AttachmentBuilder } = require('discord.js');
-const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT } = require('../config');
+const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT, FILE_SIZE_SAFETY_FACTOR } = require('../config');
 const { sendRepostedMessage, sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage, finalizePlaceholderClean } = require('../utils/webhook');
 const { runCommand, findYtDlpPath } = require('../utils/shell');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
@@ -126,6 +126,544 @@ async function fetchFreshCsrfToken(browserUa) {
         console.log('[Instagram Interceptor] Fresh CSRF fetch failed:', err.message);
     }
     return null;
+}
+
+function unescapeInstagramJsonUrl(url) {
+    return url
+        .replace(/\\\\/g, '\\')
+        .replace(/\\u0026/g, '&')
+        .replace(/\\u0025/g, '%')
+        .replace(/\\\//g, '/')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#x27;/g, "'")
+        .replace(/&#39;/g, "'")
+        .replace(/\\+/g, '');
+}
+
+function pickBestUrlFromVersionsBlock(block, escaped) {
+    if (!block) return null;
+    const heightRe = escaped ? /\\"height\\"\s*:\s*(\d+)/g : /"height"\s*:\s*(\d+)/g;
+    const urlRe = escaped ? /\\"url\\"\s*:\s*\\"([^"]+)\\"/g : /"url"\s*:\s*"([^"]+)"/g;
+    const heights = [];
+    const urls = [];
+    let m;
+    while ((m = heightRe.exec(block)) !== null) heights.push(parseInt(m[1], 10) || 0);
+    while ((m = urlRe.exec(block)) !== null) urls.push(m[1]);
+    if (urls.length === 0) return null;
+    if (heights.length === 0) return urls[urls.length - 1];
+    let bestIdx = 0;
+    for (let i = 1; i < urls.length; i++) {
+        if ((heights[i] || 0) > (heights[bestIdx] || 0)) bestIdx = i;
+    }
+    return urls[bestIdx] || urls[0];
+}
+
+function pickBestSrcFromResourcesBlock(block, escaped) {
+    if (!block) return null;
+    const widthRe = escaped ? /\\"config_width\\"\s*:\s*(\d+)/g : /"config_width"\s*:\s*(\d+)/g;
+    const srcRe = escaped ? /\\"src\\"\s*:\s*\\"([^"]+)\\"/g : /"src"\s*:\s*"([^"]+)"/g;
+    const widths = [];
+    const srcs = [];
+    let m;
+    while ((m = widthRe.exec(block)) !== null) widths.push(parseInt(m[1], 10) || 0);
+    while ((m = srcRe.exec(block)) !== null) srcs.push(m[1]);
+    if (srcs.length === 0) return null;
+    if (widths.length === 0) return srcs[srcs.length - 1];
+    let bestIdx = 0;
+    for (let i = 1; i < srcs.length; i++) {
+        if ((widths[i] || 0) > (widths[bestIdx] || 0)) bestIdx = i;
+    }
+    return srcs[bestIdx] || srcs[0];
+}
+
+function scanJsonValue(text, start) {
+    let i = start;
+    while (i < text.length && /\s/.test(text[i])) i++;
+    const ch = text[i];
+    if (ch === '{' || ch === '[') {
+        let depth = 0, inStr = false, esc = false;
+        for (; i < text.length; i++) {
+            const c = text[i];
+            if (inStr) {
+                if (esc) esc = false;
+                else if (c === '\\') esc = true;
+                else if (c === '"') inStr = false;
+            } else if (c === '"') {
+                inStr = true;
+            } else if (c === '{' || c === '[') {
+                depth++;
+            } else if (c === '}' || c === ']') {
+                depth--;
+                if (depth === 0) { i++; break; }
+            }
+        }
+        try { return JSON.parse(text.slice(start, i)); } catch { return null; }
+    } else if (ch === '"') {
+        let j = i + 1, esc = false;
+        for (; j < text.length; j++) {
+            const c = text[j];
+            if (esc) esc = false;
+            else if (c === '\\') esc = true;
+            else if (c === '"') { j++; break; }
+        }
+        try { return JSON.parse(text.slice(i, j)); } catch { return null; }
+    } else {
+        let j = i;
+        while (j < text.length && !/[\s,}\]]/.test(text[j])) j++;
+        const slice = text.slice(i, j);
+        if (slice === 'true') return true;
+        if (slice === 'false') return false;
+        if (slice === 'null') return null;
+        const n = Number(slice);
+        return isNaN(n) ? null : n;
+    }
+}
+
+function extractJsonValueForKey(text, key) {
+    const keyRe = new RegExp(`"${key}"\\s*:\\s*`, 'g');
+    let m;
+    while ((m = keyRe.exec(text)) !== null) {
+        const val = scanJsonValue(text, m.index + m[0].length);
+        if (val !== null && val !== undefined) return val;
+    }
+    return null;
+}
+
+function pickBestVideoVersion(versions) {
+    if (!Array.isArray(versions) || versions.length === 0) return null;
+    const sorted = [...versions].sort((a, b) => (b.height || 0) - (a.height || 0));
+    return sorted[0].url || null;
+}
+
+function pickBestImageCandidate(candidates) {
+    if (!Array.isArray(candidates) || candidates.length === 0) return null;
+    const sorted = [...candidates].sort((a, b) => (b.width || 0) - (a.width || 0));
+    return sorted[0].url || null;
+}
+
+function pickBestDisplayResource(resources) {
+    if (!Array.isArray(resources) || resources.length === 0) return null;
+    let best = null, bestW = -1;
+    for (const r of resources) {
+        if (!r) continue;
+        const w = r.config_width || r.width || 0;
+        const url = r.src || r.url;
+        if (url && w > bestW) { best = url; bestW = w; }
+    }
+    return best;
+}
+
+function collectMediaItemsFromMediaObject(media) {
+    if (!media || typeof media !== 'object') return null;
+    let nodes = null;
+    if (Array.isArray(media.carousel_media) && media.carousel_media.length) {
+        nodes = media.carousel_media;
+    } else if (media.edge_sidecar_to_children && Array.isArray(media.edge_sidecar_to_children.edges)) {
+        nodes = media.edge_sidecar_to_children.edges.map(e => e && e.node).filter(Boolean);
+    }
+    if (!nodes) nodes = [media];
+    const ordered = [];
+    for (const node of nodes) {
+        if (!node) continue;
+        const videoV = pickBestVideoVersion(node.video_versions) || node.video_url || null;
+        const imageV = pickBestImageCandidate(node.image_versions2 && node.image_versions2.candidates)
+            || pickBestDisplayResource(node.display_resources)
+            || pickBestDisplayResource(node.thumbnail_resources)
+            || node.display_url || null;
+        if (videoV) {
+            ordered.push({ url: unescapeInstagramJsonUrl(videoV), isVideo: true });
+        } else if (imageV) {
+            ordered.push({ url: unescapeInstagramJsonUrl(imageV), isVideo: false });
+        }
+    }
+    return ordered.length ? ordered : null;
+}
+
+function extractMediaFromEmbeddedJson(html) {
+    const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+    let m;
+    while ((m = scriptRe.exec(html)) !== null) {
+        const raw = m[1];
+        if (raw.indexOf('shortcode_media') === -1) continue;
+        const text = raw
+            .replace(/&quot;/g, '"')
+            .replace(/&amp;/g, '&')
+            .replace(/&#x27;/g, "'")
+            .replace(/&#39;/g, "'")
+            .replace(/&gt;/g, '>')
+            .replace(/&lt;/g, '<');
+        const media = extractJsonValueForKey(text, 'xdt_shortcode_media')
+            || extractJsonValueForKey(text, 'shortcode_media');
+        if (media) {
+            const items = collectMediaItemsFromMediaObject(media);
+            if (items && items.length) return items;
+        }
+    }
+    return null;
+}
+
+function extractMediaByShortcodeFromHtml(html, shortcode) {
+    if (!shortcode) return null;
+    const codeRe = new RegExp('"(?:code|shortcode)"\\s*:\\s*"' + shortcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"', 'g');
+    let m;
+    while ((m = codeRe.exec(html)) !== null) {
+        let brace = m.index, depth = 0;
+        for (let i = m.index; i >= 0; i--) {
+            const c = html[i];
+            if (c === '}') depth++;
+            else if (c === '{') { if (depth === 0) { brace = i; break; } depth--; }
+        }
+        const obj = scanJsonValue(html, brace);
+        if (obj && typeof obj === 'object' &&
+            (obj.code === shortcode || obj.shortcode === shortcode) &&
+            (obj.image_versions2 || obj.video_versions || obj.carousel_media || obj.edge_sidecar_to_children)) {
+            const items = collectMediaItemsFromMediaObject(obj);
+            if (items && items.length) return items;
+        }
+    }
+    return null;
+}
+
+function extractInstagramMediaFromHtml(html, shortcode) {
+    const structured = extractMediaFromEmbeddedJson(html);
+    if (structured && structured.length > 0) {
+        return structured;
+    }
+
+    const byShortcode = extractMediaByShortcodeFromHtml(html, shortcode);
+    if (byShortcode && byShortcode.length > 0) {
+        return byShortcode;
+    }
+
+    const ordered = [];
+    const seen = new Set();
+    const push = (url, isVideo, index) => {
+        if (!url) return;
+        if (seen.has(url)) return;
+        seen.add(url);
+        ordered.push({ url, isVideo, index });
+    };
+
+    let m;
+    const vvBlockRe = /"video_versions"\s*:\s*(\[(?:[^\[\]])*\])/g;
+    while ((m = vvBlockRe.exec(html)) !== null) {
+        const best = pickBestUrlFromVersionsBlock(m[1], false);
+        if (best) push(unescapeInstagramJsonUrl(best), true, m.index);
+    }
+    const vvBlockEscRe = /\\"video_versions\\"\s*:\s*(\[(?:[^\[\]])*\])/g;
+    while ((m = vvBlockEscRe.exec(html)) !== null) {
+        const best = pickBestUrlFromVersionsBlock(m[1], true);
+        if (best) push(unescapeInstagramJsonUrl(best), true, m.index);
+    }
+    const videoJsonRe = /"video_url"\s*:\s*"([^"]+)"/g;
+    while ((m = videoJsonRe.exec(html)) !== null) {
+        push(unescapeInstagramJsonUrl(m[1]), true, m.index);
+    }
+    const dispResRe = /"(?:display_resources|thumbnail_resources)"\s*:\s*(\[[^\]]*\])/g;
+    while ((m = dispResRe.exec(html)) !== null) {
+        const best = pickBestSrcFromResourcesBlock(m[1], false);
+        if (best) push(unescapeInstagramJsonUrl(best), false, m.index);
+    }
+    const displayUrlRe = /"display_url"\s*:\s*"([^"]+)"/g;
+    while ((m = displayUrlRe.exec(html)) !== null) {
+        push(unescapeInstagramJsonUrl(m[1]), false, m.index);
+    }
+    const videoJsonEscRe = /\\"video_url\\"\s*:\s*\\"([^"]+)\\"/g;
+    while ((m = videoJsonEscRe.exec(html)) !== null) {
+        push(unescapeInstagramJsonUrl(m[1]), true, m.index);
+    }
+    const dispResEscRe = /\\"(?:display_resources|thumbnail_resources)\\"\s*:\s*(\[[^\]]*\])/g;
+    while ((m = dispResEscRe.exec(html)) !== null) {
+        const best = pickBestSrcFromResourcesBlock(m[1], true);
+        if (best) push(unescapeInstagramJsonUrl(best), false, m.index);
+    }
+    const displayUrlEscRe = /\\"display_url\\"\s*:\s*\\"([^"]+)\\"/g;
+    while ((m = displayUrlEscRe.exec(html)) !== null) {
+        push(unescapeInstagramJsonUrl(m[1]), false, m.index);
+    }
+    const metaVideoRe = /<meta[^>]+(?:property|name)=["'](?:og:video(?:\.(?:secure_url|url))?|twitter:player:stream)["'][^>]*content=["']([^"']+)["']/gi;
+    while ((m = metaVideoRe.exec(html)) !== null) {
+        push(unescapeInstagramJsonUrl(m[1]), true, m.index);
+    }
+    const metaVideoReRev = /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:video(?:\.(?:secure_url|url))?|twitter:player:stream)["']/gi;
+    while ((m = metaVideoReRev.exec(html)) !== null) {
+        push(unescapeInstagramJsonUrl(m[1]), true, m.index);
+    }
+    const metaImageRe = /<meta[^>]+(?:property|name)=["']og:image["'][^>]*content=["']([^"']+)["']/gi;
+    while ((m = metaImageRe.exec(html)) !== null) {
+        push(unescapeInstagramJsonUrl(m[1]), false, m.index);
+    }
+    const metaImageReRev = /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image["']/gi;
+    while ((m = metaImageReRev.exec(html)) !== null) {
+        push(unescapeInstagramJsonUrl(m[1]), false, m.index);
+    }
+
+    ordered.sort((a, b) => a.index - b.index);
+    return ordered.map(o => ({ url: o.url, isVideo: o.isVideo }));
+}
+
+function getShortcodeFromUrl(url) {
+    const m = url.match(/instagram\.com\/(?:p|reel|reels|tv)\/([^/?#&]+)/i);
+    return m ? m[1] : null;
+}
+
+// Authenticated GraphQL query for a post/reel. Uses the same endpoint and doc_id
+// as the instagram-url-direct library. Tries an UNAUTHENTICATED request with a
+// fresh CSRF token FIRST (Instagram now returns an empty xdt_shortcode_media when
+// session cookies are attached to /graphql/query), then falls back to the
+// authenticated request with the session cookies. Returns an ordered array of
+// { url, isVideo } (full carousel) or null. Ported from robot-joe.
+async function fetchInstagramGraphQLMedia(shortcode, cookieHeader, browserUa) {
+    const sessionCsrftoken = getCsrftokenFromCookieHeader(cookieHeader);
+    const freshCsrf = await fetchFreshCsrfToken(browserUa);
+    if (!freshCsrf && !sessionCsrftoken) {
+        console.log('[Instagram Interceptor] GraphQL scrape skipped: no csrftoken available.');
+        return null;
+    }
+    const variables = JSON.stringify({
+        shortcode,
+        fetch_tagged_user_count: null,
+        hoisted_comment_id: null,
+        hoisted_reply_id: null
+    });
+    const body = `variables=${encodeURIComponent(variables)}&doc_id=9510064595728286`;
+    const variants = [];
+    if (freshCsrf) {
+        variants.push({ csrf: freshCsrf, cookie: null, label: 'fresh-CSRF (unauthenticated)' });
+    }
+    if (sessionCsrftoken && cookieHeader) {
+        variants.push({ csrf: sessionCsrftoken, cookie: cookieHeader, label: 'session-cookie (authenticated)' });
+    }
+    const MAX_ATTEMPTS = 2;
+    for (const variant of variants) {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                const headers = {
+                    'User-Agent': browserUa,
+                    'X-CSRFToken': variant.csrf,
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Accept': '*/*',
+                    'Referer': `https://www.instagram.com/p/${shortcode}/`,
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin'
+                };
+                if (variant.cookie) {
+                    headers['Cookie'] = variant.cookie;
+                    headers['X-IG-App-ID'] = '936619743392459';
+                }
+                const resp = await axios.post('https://www.instagram.com/graphql/query', body, {
+                    timeout: 15000,
+                    maxRedirects: 0,
+                    headers
+                });
+                const media = resp.data && resp.data.data && resp.data.data.xdt_shortcode_media;
+                if (!media) {
+                    console.log(`[Instagram Interceptor] GraphQL scrape (${variant.label}) returned no xdt_shortcode_media (attempt ${attempt}/${MAX_ATTEMPTS}).`);
+                    if (attempt < MAX_ATTEMPTS) {
+                        await new Promise((r) => setTimeout(r, 800));
+                        continue;
+                    }
+                    break;
+                }
+                console.log(`[Instagram Interceptor] GraphQL scrape (${variant.label}) resolved media.`);
+                const ordered = [];
+                let items = null;
+                if (Array.isArray(media.carousel_media) && media.carousel_media.length > 0) {
+                    items = media.carousel_media;
+                } else if (media.edge_sidecar_to_children && Array.isArray(media.edge_sidecar_to_children.edges)) {
+                    items = media.edge_sidecar_to_children.edges.map(e => e && e.node).filter(Boolean);
+                }
+                if (!items) items = [media];
+                for (const item of items) {
+                    const videoUrl = pickBestVideoVersion(item.video_versions) ||
+                        (item.video_url ? unescapeInstagramJsonUrl(item.video_url) : null);
+                    const imageUrl = pickBestImageCandidate(item.image_versions2 && item.image_versions2.candidates) ||
+                        pickBestDisplayResource(item.display_resources) ||
+                        pickBestDisplayResource(item.thumbnail_resources) ||
+                        (item.display_url ? unescapeInstagramJsonUrl(item.display_url) : null);
+                    const chosen = videoUrl || imageUrl;
+                    if (chosen) {
+                        ordered.push({ url: unescapeInstagramJsonUrl(chosen), isVideo: !!videoUrl });
+                    }
+                }
+                return ordered.length > 0 ? ordered : null;
+            } catch (err) {
+                console.error(`[Instagram Interceptor] GraphQL scrape (${variant.label}) failed (attempt ${attempt}/${MAX_ATTEMPTS}):`, err.message);
+                if (attempt < MAX_ATTEMPTS) {
+                    await new Promise((r) => setTimeout(r, 800));
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+    return null;
+}
+
+// Direct authenticated scrape of the Instagram post/reel page using session
+// cookies. This is the reliable path for image-only / carousel posts that yt-dlp
+// and the unauthenticated scrapers fail on. Returns AttachmentBuilder[] or null.
+// Ported from robot-joe.
+async function downloadWithDirectInstagram(instagramUrl) {
+    const cookieHeader = buildInstagramCookieHeader();
+    if (!cookieHeader) {
+        console.log('[Instagram Interceptor] Direct scrape skipped: no Instagram cookies available.');
+        return null;
+    }
+
+    const canonicalUrl = instagramUrl.replace(/(www\.)?(?:dd|kk|ee|uu|rx)instagram\.com/i, 'instagram.com');
+    console.log(`[Instagram Interceptor] Attempting direct authenticated scrape: ${canonicalUrl}`);
+
+    const isReelOrTv = /\/(?:reels?|tv)\//i.test(canonicalUrl);
+    const shortcode = getShortcodeFromUrl(canonicalUrl);
+
+    // 1. Preferred: GraphQL query — returns structured, full-carousel data.
+    let ordered = [];
+    if (shortcode) {
+        const gqlMedia = await fetchInstagramGraphQLMedia(shortcode, cookieHeader, INSTAGRAM_BROWSER_UA);
+        if (gqlMedia && gqlMedia.length > 0) {
+            ordered = gqlMedia;
+            console.log(`[Instagram Interceptor] GraphQL scrape resolved ${ordered.length} media item(s).`);
+        }
+    }
+
+    // 2. Fallback: scrape the post HTML and parse embedded media.
+    if (ordered.length === 0) {
+        let html;
+        try {
+            const response = await axios.get(canonicalUrl, {
+                timeout: 15000,
+                maxRedirects: 5,
+                headers: {
+                    'User-Agent': INSTAGRAM_BROWSER_UA,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Cookie': cookieHeader,
+                    'X-IG-App-ID': '936619743392459',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Upgrade-Insecure-Requests': '1'
+                }
+            });
+            html = response.data;
+        } catch (err) {
+            console.error('[Instagram Interceptor] Direct scrape HTML fetch failed:', err.message);
+        }
+
+        if (html && typeof html === 'string') {
+            if (html.includes('"showLoginForm"') || html.includes('"loginForm"') ||
+                /<title[^>]*>\s*Login/i.test(html) || /accounts\/login/i.test(html)) {
+                console.log('[Instagram Interceptor] Direct scrape hit a login wall. Cookies may be invalid for this request.');
+            }
+            const extracted = extractInstagramMediaFromHtml(html, shortcode);
+            if (extracted.length > 0) {
+                ordered = extracted;
+                console.log(`[Instagram Interceptor] HTML scrape resolved ${ordered.length} media item(s).`);
+            }
+        }
+    }
+
+    if (ordered.length === 0) {
+        console.log('[Instagram Interceptor] Direct scrape found no media URLs.');
+        return null;
+    }
+
+    // For Reels/TV we only want a real video; keep only the first video in
+    // document order (the target reel appears before preloaded feed content).
+    let finalOrdered;
+    if (isReelOrTv) {
+        const vids = ordered.filter(o => o.isVideo);
+        finalOrdered = vids.length > 0 ? vids.slice(0, 1) : ordered.slice(0, 1);
+    } else {
+        finalOrdered = ordered;
+    }
+
+    console.log(`[Instagram Interceptor] Direct scrape downloading ${finalOrdered.length} item(s) (videos=${finalOrdered.filter(o=>o.isVideo).length}, images=${finalOrdered.filter(o=>!o.isVideo).length}).`);
+
+    const attachments = [];
+    for (let i = 0; i < finalOrdered.length; i++) {
+        const { url: mUrl, isVideo } = finalOrdered[i];
+        const headerVariants = [
+            {
+                'User-Agent': INSTAGRAM_BROWSER_UA,
+                'Accept': isVideo
+                    ? 'video/webp,video/ogg,video/*;q=0.9,*/*;q=0.8'
+                    : 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': canonicalUrl,
+                'Sec-Fetch-Dest': isVideo ? 'video' : 'image',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'cross-site',
+                'Range': 'bytes=0-'
+            },
+            {
+                'User-Agent': INSTAGRAM_BROWSER_UA,
+                'Accept': isVideo
+                    ? 'video/webp,video/ogg,video/*;q=0.9,*/*;q=0.8'
+                    : 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': canonicalUrl,
+                'Cookie': cookieHeader,
+                'Sec-Fetch-Dest': isVideo ? 'video' : 'image',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'cross-site',
+                'Range': 'bytes=0-'
+            }
+        ];
+
+        let response = null;
+        let lastErr = null;
+        for (const hdrs of headerVariants) {
+            try {
+                response = await axios.get(mUrl, {
+                    responseType: 'arraybuffer',
+                    timeout: 20000,
+                    maxRedirects: 5,
+                    headers: hdrs
+                });
+                break;
+            } catch (dlErr) {
+                lastErr = dlErr;
+                const status = dlErr.response && dlErr.response.status;
+                if (status !== 403 && status !== 401) break;
+            }
+        }
+        if (!response) {
+            console.error(`[Instagram Interceptor] Direct scrape failed to download item ${i}:`, lastErr ? lastErr.message : 'unknown error');
+            continue;
+        }
+        try {
+            const buffer = Buffer.from(response.data);
+            const contentType = response.headers['content-type'] || '';
+            let ext = detectFileType(buffer) || (isVideo ? 'mp4' : 'jpg');
+            if (contentType.includes('video/mp4')) ext = 'mp4';
+            else if (contentType.includes('video/')) ext = 'mp4';
+            else if (contentType.includes('image/png')) ext = 'png';
+            else if (contentType.includes('image/gif')) ext = 'gif';
+            else if (contentType.includes('image/webp')) ext = 'webp';
+            else if (contentType.includes('image/')) ext = 'jpg';
+            attachments.push(new AttachmentBuilder(buffer, { name: `instagram_media_${i}.${ext}` }));
+        } catch (dlErr) {
+            console.error(`[Instagram Interceptor] Direct scrape failed to process item ${i}:`, dlErr.message);
+        }
+    }
+
+    if (attachments.length === 0) {
+        return null;
+    }
+
+    if (isReelOrTv && !attachments.some(a => (a.name || '').match(/\.(mp4|webm|mov)$/i))) {
+        console.log('[Instagram Interceptor] Direct scrape resolved only images for a Reel/TV. Marking as restricted fallback.');
+        attachments.isRestrictedVideoFallback = true;
+    }
+
+    return attachments;
 }
 
 // --- Instagram profile parsing ---
@@ -262,36 +800,38 @@ function pickBestDisplayResource(resources) {
 // recent timeline posts (with shortcodes + thumbnail URLs) as structured JSON —
 // far more reliable than scraping og: tags from a login-walled HTML page.
 //
-// We try two variants (mirroring fetchInstagramGraphQLMedia for posts):
-//   1. fresh-CSRF unauthenticated (sometimes works for public profiles)
-//   2. session-cookie authenticated (works for private/gated profiles)
+// Uses Instagram's web REST endpoint `/api/v1/users/web_profile_info/` (NOT the
+// GraphQL persisted-query endpoint — the ProfilePage doc_id rotates and is
+// unreliable). This REST endpoint returns the full profile JSON including
+// `edge_owner_to_timeline_media` (recent posts). It requires an `X-IG-App-ID`
+// header and a csrftoken. Tries:
+//   1. session-cookie authenticated (works for all profiles, requires cookies.txt)
+//   2. fresh-CSRF unauthenticated (sometimes works for public profiles)
 // Returns { user, posts } or null.
 async function fetchInstagramGraphQLProfile(username, cookieHeader, browserUa) {
     const sessionCsrftoken = getCsrftokenFromCookieHeader(cookieHeader);
     const freshCsrf = await fetchFreshCsrfToken(browserUa);
     if (!freshCsrf && !sessionCsrftoken) {
-        console.log('[Instagram Interceptor] Profile GraphQL skipped: no csrftoken available.');
+        console.log('[Instagram Interceptor] Profile fetch skipped: no csrftoken available.');
         return null;
     }
-    // The web app's ProfilePage persisted query. doc_id 8837846741524836 is the
-    // known ProfilePage query (variable: {username}). If it rotates, the
-    // authenticated HTML-profile fallback below still works.
-    const variables = JSON.stringify({ username });
-    const body = `variables=${encodeURIComponent(variables)}&doc_id=8837846741524836`;
+    const apiUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
+    // Try session-cookie authenticated FIRST (the REST endpoint requires cookies
+    // for most profiles), then fresh-CSRF unauthenticated as a fallback.
     const variants = [];
-    if (freshCsrf) {
-        variants.push({ csrf: freshCsrf, cookie: null, label: 'fresh-CSRF (unauthenticated)' });
-    }
     if (sessionCsrftoken && cookieHeader) {
         variants.push({ csrf: sessionCsrftoken, cookie: cookieHeader, label: 'session-cookie (authenticated)' });
+    }
+    if (freshCsrf) {
+        variants.push({ csrf: freshCsrf, cookie: null, label: 'fresh-CSRF (unauthenticated)' });
     }
     for (const variant of variants) {
         try {
             const headers = {
                 'User-Agent': browserUa,
+                'X-IG-App-ID': '936619743392459',
                 'X-CSRFToken': variant.csrf,
                 'X-Requested-With': 'XMLHttpRequest',
-                'Content-Type': 'application/x-www-form-urlencoded',
                 'Accept': '*/*',
                 'Referer': `https://www.instagram.com/${username}/`,
                 'Sec-Fetch-Dest': 'empty',
@@ -300,39 +840,31 @@ async function fetchInstagramGraphQLProfile(username, cookieHeader, browserUa) {
             };
             if (variant.cookie) {
                 headers['Cookie'] = variant.cookie;
-                headers['X-IG-App-ID'] = '936619743392459';
             }
-            const resp = await axios.post('https://www.instagram.com/graphql/query', body, {
+            const resp = await axios.get(apiUrl, {
                 timeout: 15000,
                 maxRedirects: 0,
                 headers
             });
-            const data = resp.data && resp.data.data;
-            if (!data) {
-                console.log(`[Instagram Interceptor] Profile GraphQL (${variant.label}) returned no data.`);
-                continue;
-            }
-            // The ProfilePage query returns the user under several possible keys.
-            const user = data.user || data.xdt_api__v1__users__web_profile_info
-                || (data.contentType && data.contentType.user) || null;
+            const user = resp.data && resp.data.data && resp.data.data.user;
             if (!user) {
-                console.log(`[Instagram Interceptor] Profile GraphQL (${variant.label}) returned no user object.`);
+                console.log(`[Instagram Interceptor] Profile REST (${variant.label}) returned no user object.`);
                 continue;
             }
-            // Extract the timeline media (recent posts). The key varies by schema version.
+            // Extract the timeline media (recent posts).
             const timelineMedia = user.edge_owner_to_timeline_media
                 || user.timeline_media
                 || (user.edge_web_feed_timeline)
                 || null;
             const posts = collectPostsFromTimelineMedia(timelineMedia, 4);
-            // Extract profile fields with broad key coverage across schema versions.
-            const fullName = user.full_name || user.name || (user.edge_owner_to_timeline_media && user.full_name) || '';
+            // Extract profile fields.
+            const fullName = user.full_name || user.name || '';
             const bio = user.biography || user.bio || '';
-            const profilePicUrl = user.profile_pic_url_hd || user.profile_pic_url || user.hd_profile_pic_url_info?.uri || null;
+            const profilePicUrl = user.profile_pic_url_hd || user.profile_pic_url || (user.hd_profile_pic_url_info && user.hd_profile_pic_url_info.uri) || null;
             const followerCount = user.edge_followed_by ? user.edge_followed_by.count : (user.follower_count || null);
             const followingCount = user.edge_follow ? user.edge_follow.count : (user.following_count || null);
             const postCount = timelineMedia ? (timelineMedia.count != null ? timelineMedia.count : null) : (user.media_count || null);
-            console.log(`[Instagram Interceptor] Profile GraphQL (${variant.label}) resolved: name="${fullName}", posts=${posts.length}, hasPic=${!!profilePicUrl}`);
+            console.log(`[Instagram Interceptor] Profile REST (${variant.label}) resolved: name="${fullName}", posts=${posts.length}, hasPic=${!!profilePicUrl}`);
             return {
                 user: {
                     fullName: fullName || '',
@@ -345,7 +877,7 @@ async function fetchInstagramGraphQLProfile(username, cookieHeader, browserUa) {
                 posts
             };
         } catch (err) {
-            console.error(`[Instagram Interceptor] Profile GraphQL (${variant.label}) failed:`, err.message);
+            console.error(`[Instagram Interceptor] Profile REST (${variant.label}) failed:`, err.message);
         }
     }
     return null;
@@ -968,20 +1500,70 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                 }
             };
 
+            const hasCookies = !!buildInstagramCookieHeader();
+
             try {
                 console.log(`[Instagram Interceptor] Instagram URL detected: ${instagramUrl} (downloading from ${downloadUrl})`);
 
+                // 1. For Reels/TV: try fixers FIRST — they return properly-sized MP4s.
                 if (isReelOrTv) {
                     await runFixers();
-                    if (!downloadSuccess) {
+                }
+
+                // 2. If fixers didn't succeed (not a Reel/TV, or fixers failed), try
+                //    direct authenticated scrape (best for full slideshows + reels, requires cookies).
+                if (!downloadSuccess && hasCookies) {
+                    try {
+                        await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: direct instagram scrape`);
+                        const directAttachments = await downloadWithDirectInstagram(downloadUrl);
+                        if (directAttachments && directAttachments.length > 0) {
+                            if (directAttachments.isRestrictedVideoFallback) {
+                                fallbackAttachments = directAttachments;
+                                console.log(`[Instagram Interceptor] Direct scrape produced restricted fallback.`);
+                            } else {
+                                attachments = directAttachments;
+                                downloadSuccess = true;
+                                console.log(`[Instagram Interceptor] Direct scrape successfully downloaded ${attachments.length} item(s).`);
+                            }
+                        }
+                    } catch (directErr) {
+                        console.error('[Instagram Interceptor] Direct scrape failed, falling back:', directErr.message);
+                    }
+                }
+
+                // 3. If still not successful, try the remaining strategy based on content type
+                if (!downloadSuccess) {
+                    if (isReelOrTv) {
                         console.log(`[Instagram Interceptor] Fixers failed or returned restricted fallback. Trying parallel scrapers...`);
                         await runParallelScrapers();
+                    } else {
+                        await runParallelScrapers();
+                        if (!downloadSuccess) {
+                            console.log(`[Instagram Interceptor] Parallel scrapers failed. Falling back to fixers...`);
+                            await runFixers();
+                        }
                     }
-                } else {
-                    await runParallelScrapers();
-                    if (!downloadSuccess) {
-                        console.log(`[Instagram Interceptor] Parallel scrapers failed. Falling back to fixers...`);
-                        await runFixers();
+                }
+
+                // 4. Final fallback: if direct scrape wasn't run because cookies were unavailable, try it as a last resort
+                if (!downloadSuccess && !hasCookies) {
+                    try {
+                        await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: direct instagram scrape`);
+                        const directAttachments = await downloadWithDirectInstagram(downloadUrl);
+                        if (directAttachments && directAttachments.length > 0) {
+                            if (directAttachments.isRestrictedVideoFallback) {
+                                if (!fallbackAttachments) {
+                                    fallbackAttachments = directAttachments;
+                                    console.log(`[Instagram Interceptor] Direct scrape produced restricted fallback.`);
+                                }
+                            } else {
+                                attachments = directAttachments;
+                                downloadSuccess = true;
+                                console.log(`[Instagram Interceptor] Direct scrape successfully downloaded ${attachments.length} item(s).`);
+                            }
+                        }
+                    } catch (directErr) {
+                        console.error('[Instagram Interceptor] Final fallback direct scrape failed:', directErr.message);
                     }
                 }
 
@@ -996,7 +1578,7 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
             }
 
             // --- Post-download: compress oversized videos with ffmpeg ---
-            const effectiveFileLimit = Math.floor(fileLimit * 0.97);
+            const effectiveFileLimit = Math.floor(fileLimit * FILE_SIZE_SAFETY_FACTOR);
             if (downloadSuccess && attachments.length > 0) {
                 const needsCompression = attachments.some(att => {
                     const buf = att.attachment;
