@@ -559,29 +559,27 @@ async function handleInteraction(client, interaction) {
 
             // Build the docker run flags matching rebuild-run.sh (cookies mount,
             // ssh key mount, iGPU passthrough, ollama network, env vars).
-            // We detect each mount the same way rebuild-run.sh does.
+            // The helper container runs on the HOST via the Docker socket, so
+            // -v source paths are HOST paths (from HOST_PATH env var).
             const { execSync } = require('child_process');
             let restartFlags = `-e HOST_PATH=\\"${normalizedHostPath}\\" -e SHARE_PASS -e TRANSCODER_CONTAINER -v /var/run/docker.sock:/var/run/docker.sock -v \\"${normalizedHostPath}:/usr/src/app\\" -v /usr/src/app/node_modules`;
-            // Cookies mount (local or sibling robot-joe)
-            try {
-                const cookieCheck = execSync('ls /usr/src/app/cookies.txt /usr/src/app/instagram-cookies.txt 2>/dev/null || echo NONE', {encoding:'utf8'}).trim();
-                if (cookieCheck !== 'NONE') {
-                    restartFlags += ` -v \\"${normalizedHostPath}/$(basename ${cookieCheck.split('\\n')[0]}):/usr/src/app/$(basename ${cookieCheck.split('\\n')[0]})\\"`;
-                } else {
-                    // Try sibling robot-joe cookies
-                    const siblingCheck = execSync('ls "' + normalizedHostPath + '/../robot-joe/cookies.txt" 2>/dev/null || echo NONE', {encoding:'utf8'}).trim();
-                    if (siblingCheck !== 'NONE') {
-                        restartFlags += ` -v \\"${normalizedHostPath}/../robot-joe/cookies.txt:/tmp/cookies.txt\\"`;
-                    }
-                }
-            } catch (_) {}
+            // Cookies mount: check if cookies are available in the container
+            // (either at /tmp/cookies.txt from sibling, or /usr/src/app/cookies.txt
+            // from local repo). The -v source is a HOST path.
+            if (fs.existsSync('/tmp/cookies.txt')) {
+                // Cookies are mounted from sibling robot-joe
+                restartFlags += ` -v \\"${normalizedHostPath}/../robot-joe/cookies.txt:/tmp/cookies.txt\\"`;
+            } else if (fs.existsSync('/usr/src/app/cookies.txt')) {
+                restartFlags += ` -v \\"${normalizedHostPath}/cookies.txt:/usr/src/app/cookies.txt\\"`;
+            } else if (fs.existsSync('/usr/src/app/instagram-cookies.txt')) {
+                restartFlags += ` -v \\"${normalizedHostPath}/instagram-cookies.txt:/usr/src/app/instagram-cookies.txt\\"`;
+            }
             // SSH key mount
-            try {
-                const sshKey = execSync('ls /usr/src/app/id_rsa /usr/src/app/id_ed25519 2>/dev/null || echo NONE', {encoding:'utf8'}).trim();
-                if (sshKey !== 'NONE') {
-                    restartFlags += ` -v \\"${normalizedHostPath}/$(basename ${sshKey.split('\\n')[0]}):/usr/src/app/id_rsa\\"`;
-                }
-            } catch (_) {}
+            if (fs.existsSync('/usr/src/app/id_rsa')) {
+                restartFlags += ` -v \\"${normalizedHostPath}/id_rsa:/usr/src/app/id_rsa\\"`;
+            } else if (fs.existsSync('/usr/src/app/id_ed25519')) {
+                restartFlags += ` -v \\"${normalizedHostPath}/id_ed25519:/usr/src/app/id_ed25519\\"`;
+            }
             // iGPU passthrough
             try {
                 execSync('test -e /dev/dri/renderD128', {encoding:'utf8'});
