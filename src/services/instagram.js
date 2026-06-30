@@ -14,6 +14,120 @@ const { detectFileType } = require('../utils/fileTypeDetector');
 
 const INSTAGRAM_BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
+// --- Instagram cookie header (Netscape cookies.txt → Cookie header) ---
+// Reused for BOTH the post media pipeline (yt-dlp already gets the file path)
+// and the profile parser's authenticated GraphQL profile query. Instagram gates
+// profile pages behind a login wall for unauthenticated requests, so the cookie
+// header is required to fetch profile data (userpic, bio, recent posts).
+const INSTAGRAM_COOKIE_PATHS = [
+    path.join(process.cwd(), 'instagram-cookies.txt'),
+    path.join(process.cwd(), 'cookies.txt'),
+    path.join(process.cwd(), 'data', 'instagram-cookies.txt'),
+    path.join(process.cwd(), 'data', 'cookies.txt'),
+    path.join(__dirname, '../../instagram-cookies.txt'),
+    path.join(__dirname, '../../cookies.txt'),
+    path.join(__dirname, '../../data/instagram-cookies.txt'),
+    path.join(__dirname, '../../data/cookies.txt'),
+    '/usr/src/app/instagram-cookies.txt',
+    '/usr/src/app/cookies.txt',
+    '/usr/src/app/data/instagram-cookies.txt',
+    '/usr/src/app/data/cookies.txt',
+    '/tmp/instagram-cookies.txt',
+    '/tmp/cookies.txt'
+];
+
+let cachedCookieHeader = null;
+let cachedCookieHeaderTime = 0;
+const COOKIE_HEADER_CACHE_TTL = 60000; // 60s
+
+function buildInstagramCookieHeader() {
+    const now = Date.now();
+    if (cachedCookieHeader && (now - cachedCookieHeaderTime) < COOKIE_HEADER_CACHE_TTL) {
+        return cachedCookieHeader;
+    }
+
+    let cookieFile = null;
+    for (const p of INSTAGRAM_COOKIE_PATHS) {
+        if (fs.existsSync(p)) {
+            cookieFile = p;
+            break;
+        }
+    }
+    if (!cookieFile) {
+        return null;
+    }
+
+    try {
+        const content = fs.readFileSync(cookieFile, 'utf8');
+        const pairs = [];
+        const seen = new Set();
+        for (const line of content.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            const parts = trimmed.split('\t');
+            if (parts.length < 7) continue;
+            const domain = parts[0] || '';
+            const name = parts[5];
+            const value = parts[6];
+            if (!name || !value) continue;
+            if (!domain.includes('instagram.com')) continue;
+            if (seen.has(name)) continue;
+            seen.add(name);
+            pairs.push(`${name}=${value}`);
+        }
+        const header = pairs.length > 0 ? pairs.join('; ') : null;
+        cachedCookieHeader = header;
+        cachedCookieHeaderTime = now;
+        return header;
+    } catch (err) {
+        console.error('[Instagram Interceptor] Failed to parse cookies for profile scrape:', err.message);
+        return null;
+    }
+}
+
+function getCsrftokenFromCookieHeader(header) {
+    if (!header) return null;
+    const m = header.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : null;
+}
+
+// Fetch a fresh csrftoken from instagram.com (for unauthenticated GraphQL variants).
+let cachedFreshCsrf = null;
+let cachedFreshCsrfTime = 0;
+const FRESH_CSRF_TTL = 300000; // 5 min
+async function fetchFreshCsrfToken(browserUa) {
+    const now = Date.now();
+    if (cachedFreshCsrf && (now - cachedFreshCsrfTime) < FRESH_CSRF_TTL) {
+        return cachedFreshCsrf;
+    }
+    try {
+        const resp = await axios.get('https://www.instagram.com/', {
+            timeout: 10000,
+            maxRedirects: 5,
+            headers: {
+                'User-Agent': browserUa,
+                'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none'
+            }
+        });
+        const setCookies = resp.headers['set-cookie'] || [];
+        for (const c of setCookies) {
+            const m = c.match(/csrftoken=([^;]+)/);
+            if (m) {
+                cachedFreshCsrf = m[1];
+                cachedFreshCsrfTime = now;
+                return cachedFreshCsrf;
+            }
+        }
+    } catch (err) {
+        console.log('[Instagram Interceptor] Fresh CSRF fetch failed:', err.message);
+    }
+    return null;
+}
+
 // --- Instagram profile parsing ---
 // A profile URL is instagram.com/<username> (optionally with ?igsh=... query),
 // with NO /p/, /reel/, /reels/, /tv/, /explore/, /accounts/, /stories/ segment.
@@ -101,6 +215,142 @@ function extractRecentPostsFromProfileHtml(html, maxPosts = 4) {
     return posts;
 }
 
+// Walk a parsed GraphQL timeline media block (edge_owner_to_timeline_media or
+// the private-API timeline_media) and return up to maxPosts { shortcode, thumbnailUrl }.
+function collectPostsFromTimelineMedia(media, maxPosts) {
+    const posts = [];
+    if (!media || typeof media !== 'object') return posts;
+    let edges = null;
+    if (media.edges && Array.isArray(media.edges)) {
+        edges = media.edges;
+    } else if (Array.isArray(media.nodes)) {
+        edges = media.nodes;
+    }
+    if (!edges) return posts;
+    for (const edge of edges) {
+        if (posts.length >= maxPosts) break;
+        const node = edge && edge.node ? edge.node : edge;
+        if (!node) continue;
+        const shortcode = node.shortcode || node.code || null;
+        const thumb = node.thumbnail_src || (node.display_resources && pickBestDisplayResource(node.display_resources))
+            || node.display_url || (node.thumbnail_resources && pickBestDisplayResource(node.thumbnail_resources)) || null;
+        if (shortcode && thumb) {
+            posts.push({ shortcode, thumbnailUrl: unescapeJsonUrl(thumb) });
+        }
+    }
+    return posts;
+}
+
+// Pick the highest-resolution entry from `display_resources` / `thumbnail_resources`
+// (web GraphQL schema: array of {src, config_width, config_height}). The largest
+// entry is the full-resolution original.
+function pickBestDisplayResource(resources) {
+    if (!Array.isArray(resources) || resources.length === 0) return null;
+    let best = null, bestW = -1;
+    for (const r of resources) {
+        if (!r) continue;
+        const w = r.config_width || r.width || 0;
+        const url = r.src || r.url;
+        if (url && w > bestW) { best = url; bestW = w; }
+    }
+    return best;
+}
+
+// Authenticated GraphQL profile query. Instagram's web app fetches the profile
+// page via /graphql/query with a persisted-query doc_id. This returns the user's
+// display name, bio, follower/following/post counts, profile picture URL, and the
+// recent timeline posts (with shortcodes + thumbnail URLs) as structured JSON —
+// far more reliable than scraping og: tags from a login-walled HTML page.
+//
+// We try two variants (mirroring fetchInstagramGraphQLMedia for posts):
+//   1. fresh-CSRF unauthenticated (sometimes works for public profiles)
+//   2. session-cookie authenticated (works for private/gated profiles)
+// Returns { user, posts } or null.
+async function fetchInstagramGraphQLProfile(username, cookieHeader, browserUa) {
+    const sessionCsrftoken = getCsrftokenFromCookieHeader(cookieHeader);
+    const freshCsrf = await fetchFreshCsrfToken(browserUa);
+    if (!freshCsrf && !sessionCsrftoken) {
+        console.log('[Instagram Interceptor] Profile GraphQL skipped: no csrftoken available.');
+        return null;
+    }
+    // The web app's ProfilePage persisted query. doc_id 8837846741524836 is the
+    // known ProfilePage query (variable: {username}). If it rotates, the
+    // authenticated HTML-profile fallback below still works.
+    const variables = JSON.stringify({ username });
+    const body = `variables=${encodeURIComponent(variables)}&doc_id=8837846741524836`;
+    const variants = [];
+    if (freshCsrf) {
+        variants.push({ csrf: freshCsrf, cookie: null, label: 'fresh-CSRF (unauthenticated)' });
+    }
+    if (sessionCsrftoken && cookieHeader) {
+        variants.push({ csrf: sessionCsrftoken, cookie: cookieHeader, label: 'session-cookie (authenticated)' });
+    }
+    for (const variant of variants) {
+        try {
+            const headers = {
+                'User-Agent': browserUa,
+                'X-CSRFToken': variant.csrf,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': '*/*',
+                'Referer': `https://www.instagram.com/${username}/`,
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin'
+            };
+            if (variant.cookie) {
+                headers['Cookie'] = variant.cookie;
+                headers['X-IG-App-ID'] = '936619743392459';
+            }
+            const resp = await axios.post('https://www.instagram.com/graphql/query', body, {
+                timeout: 15000,
+                maxRedirects: 0,
+                headers
+            });
+            const data = resp.data && resp.data.data;
+            if (!data) {
+                console.log(`[Instagram Interceptor] Profile GraphQL (${variant.label}) returned no data.`);
+                continue;
+            }
+            // The ProfilePage query returns the user under several possible keys.
+            const user = data.user || data.xdt_api__v1__users__web_profile_info
+                || (data.contentType && data.contentType.user) || null;
+            if (!user) {
+                console.log(`[Instagram Interceptor] Profile GraphQL (${variant.label}) returned no user object.`);
+                continue;
+            }
+            // Extract the timeline media (recent posts). The key varies by schema version.
+            const timelineMedia = user.edge_owner_to_timeline_media
+                || user.timeline_media
+                || (user.edge_web_feed_timeline)
+                || null;
+            const posts = collectPostsFromTimelineMedia(timelineMedia, 4);
+            // Extract profile fields with broad key coverage across schema versions.
+            const fullName = user.full_name || user.name || (user.edge_owner_to_timeline_media && user.full_name) || '';
+            const bio = user.biography || user.bio || '';
+            const profilePicUrl = user.profile_pic_url_hd || user.profile_pic_url || user.hd_profile_pic_url_info?.uri || null;
+            const followerCount = user.edge_followed_by ? user.edge_followed_by.count : (user.follower_count || null);
+            const followingCount = user.edge_follow ? user.edge_follow.count : (user.following_count || null);
+            const postCount = timelineMedia ? (timelineMedia.count != null ? timelineMedia.count : null) : (user.media_count || null);
+            console.log(`[Instagram Interceptor] Profile GraphQL (${variant.label}) resolved: name="${fullName}", posts=${posts.length}, hasPic=${!!profilePicUrl}`);
+            return {
+                user: {
+                    fullName: fullName || '',
+                    bio: bio || '',
+                    profilePicUrl: profilePicUrl || null,
+                    followerCount,
+                    followingCount,
+                    postCount
+                },
+                posts
+            };
+        } catch (err) {
+            console.error(`[Instagram Interceptor] Profile GraphQL (${variant.label}) failed:`, err.message);
+        }
+    }
+    return null;
+}
+
 async function handleInstagramProfile(client, message, profileUrl, remadeContent) {
     console.log(`[Instagram Interceptor] Profile URL detected: ${profileUrl}`);
     const placeholder = await sendWorkingPlaceholder(client, message, profileUrl);
@@ -119,61 +369,97 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         const canonicalUrl = profileUrl
             .replace(/(www\.)?(?:dd|kk|ee|uu|rx)instagram\.com/i, 'instagram.com')
             .replace(/[?#].*$/, '');
-
-        let html;
-        try {
-            const response = await axios.get(canonicalUrl, {
-                timeout: 15000,
-                maxRedirects: 5,
-                headers: {
-                    'User-Agent': INSTAGRAM_BROWSER_UA,
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Upgrade-Insecure-Requests': '1'
-                }
-            });
-            html = response.data;
-        } catch (fetchErr) {
-            console.error('[Instagram Interceptor] Profile fetch failed:', fetchErr.message);
-            const fallbackUrl = canonicalUrl.replace(/^https?:\/\//i, '');
-            await updateWorkingPlaceholder(placeholder, `[${fallbackUrl}](${canonicalUrl})`, [], false, 0, `[${fallbackUrl}](${canonicalUrl})`);
-            return;
-        }
-
-        if (!html || typeof html !== 'string') {
-            const fallbackUrl = canonicalUrl.replace(/^https?:\/\//i, '');
-            await updateWorkingPlaceholder(placeholder, `[${fallbackUrl}](${canonicalUrl})`, [], false, 0, `[${fallbackUrl}](${canonicalUrl})`);
-            return;
-        }
-
-        // Detect a login wall — Instagram returns the login page for some profiles.
-        if (html.includes('"showLoginForm"') || html.includes('"loginForm"') ||
-            /<title[^>]*>\s*Login/i.test(html) || /accounts\/login/i.test(html)) {
-            console.log('[Instagram Interceptor] Profile fetch hit a login wall.');
-        }
-
-        // Extract profile metadata from og: meta tags.
-        const ogTitleMatch = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)
-            || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
-        const ogDescMatch = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i)
-            || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i);
-        const ogImageMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
-            || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
-
-        const displayName = ogTitleMatch ? decodeEntities(ogTitleMatch[1]).trim() : '';
-        const description = ogDescMatch ? decodeEntities(ogDescMatch[1]).trim() : '';
-        const profilePicUrl = ogImageMatch ? ogImageMatch[1].trim() : null;
-
-        // Extract the username from the URL for the profile link.
         const usernameMatch = canonicalUrl.match(/instagram\.com\/([^/?#]+)/i);
         const username = usernameMatch ? usernameMatch[1] : '';
+        const profileLink = `https://www.instagram.com/${username}/`;
 
-        // Extract last 4 posts' thumbnails.
-        const recentPosts = extractRecentPostsFromProfileHtml(html, 4);
+        // --- Strategy 1: GraphQL profile query (cookie-aware, structured JSON) ---
+        const cookieHeader = buildInstagramCookieHeader();
+        const gqlResult = await fetchInstagramGraphQLProfile(username, cookieHeader, INSTAGRAM_BROWSER_UA);
+
+        let displayName = '';
+        let description = '';
+        let profilePicUrl = null;
+        let recentPosts = [];
+
+        if (gqlResult) {
+            displayName = gqlResult.user.fullName;
+            const bio = gqlResult.user.bio;
+            // Build the description from bio + follower/following/post counts (mirrors
+            // the og:description format that the HTML scrape used to provide).
+            const descParts = [];
+            if (bio) descParts.push(bio);
+            const countParts = [];
+            if (gqlResult.user.followerCount != null) countParts.push(`${formatCount(gqlResult.user.followerCount)} Followers`);
+            if (gqlResult.user.followingCount != null) countParts.push(`${formatCount(gqlResult.user.followingCount)} Following`);
+            if (gqlResult.user.postCount != null) countParts.push(`${formatCount(gqlResult.user.postCount)} Posts`);
+            if (countParts.length) descParts.push(countParts.join(', '));
+            description = descParts.join(' - ');
+            profilePicUrl = gqlResult.user.profilePicUrl;
+            recentPosts = gqlResult.posts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
+        } else {
+            // --- Strategy 2: authenticated HTML profile scrape (fallback) ---
+            // Used when the GraphQL doc_id has rotated or the query returns no user.
+            // Fetches the profile page HTML WITH session cookies so Instagram doesn't
+            // serve a login wall, then extracts og: tags + embedded timeline JSON.
+            console.log('[Instagram Interceptor] GraphQL profile failed; falling back to authenticated HTML scrape.');
+            const fetchHeaders = {
+                'User-Agent': INSTAGRAM_BROWSER_UA,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Upgrade-Insecure-Requests': '1'
+            };
+            if (cookieHeader) {
+                fetchHeaders['Cookie'] = cookieHeader;
+                fetchHeaders['X-IG-App-ID'] = '936619743392459';
+            }
+            let html = null;
+            try {
+                const response = await axios.get(canonicalUrl, {
+                    timeout: 15000,
+                    maxRedirects: 5,
+                    headers: fetchHeaders
+                });
+                html = response.data;
+            } catch (fetchErr) {
+                console.error('[Instagram Interceptor] Profile HTML fetch failed:', fetchErr.message);
+            }
+
+            if (html && typeof html === 'string') {
+                if (html.includes('"showLoginForm"') || html.includes('"loginForm"') ||
+                    /<title[^>]*>\s*Login/i.test(html) || /accounts\/login/i.test(html)) {
+                    console.log('[Instagram Interceptor] Profile HTML scrape hit a login wall. Cookies may be invalid or missing.');
+                }
+                const ogTitleMatch = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)
+                    || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
+                const ogDescMatch = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i)
+                    || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i);
+                const ogImageMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
+                    || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+                displayName = ogTitleMatch ? decodeEntities(ogTitleMatch[1]).trim() : '';
+                description = ogDescMatch ? decodeEntities(ogDescMatch[1]).trim() : '';
+                profilePicUrl = ogImageMatch ? ogImageMatch[1].trim() : null;
+                recentPosts = extractRecentPostsFromProfileHtml(html, 4);
+            }
+        }
+
         console.log(`[Instagram Interceptor] Profile: name="${displayName}", posts=${recentPosts.length}, hasPic=${!!profilePicUrl}`);
+
+        // If we got nothing useful at all (no name, no pic, no posts), the profile is
+        // likely private and cookies are missing/invalid. Post a clean link instead
+        // of a broken card — but still tell the user cookies are needed.
+        if (!displayName && !profilePicUrl && recentPosts.length === 0) {
+            console.log('[Instagram Interceptor] Profile yielded no data (likely private + no cookies). Posting link fallback.');
+            const fallbackUrl = profileLink.replace(/^https?:\/\//i, '');
+            const fallbackContent = (remadeContent && remadeContent.replace(profileUrl, ' ').replace(/\s+/g, ' ').trim().length >= 2
+                ? remadeContent.replace(profileUrl, ' ').replace(/\s+/g, ' ').trim() + '\n\n' : '')
+                + `[${fallbackUrl}](${profileLink})`;
+            await updateWorkingPlaceholder(placeholder, fallbackContent, [], false, 0, fallbackContent);
+            return;
+        }
 
         // Download the profile picture (if available) to attach it.
         let attachments = [];
@@ -186,7 +472,7 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                 });
                 const buffer = Buffer.from(picRes.data);
                 const contentType = picRes.headers['content-type'] || '';
-                let ext = 'jpg';
+                let ext = detectFileType(buffer) || 'jpg';
                 if (contentType.includes('image/png')) ext = 'png';
                 else if (contentType.includes('image/webp')) ext = 'webp';
                 else if (contentType.includes('image/gif')) ext = 'gif';
@@ -207,7 +493,7 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                 });
                 const buffer = Buffer.from(postRes.data);
                 const contentType = postRes.headers['content-type'] || '';
-                let ext = 'jpg';
+                let ext = detectFileType(buffer) || 'jpg';
                 if (contentType.includes('image/png')) ext = 'png';
                 else if (contentType.includes('image/webp')) ext = 'webp';
                 else if (contentType.includes('image/gif')) ext = 'gif';
@@ -218,10 +504,7 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         }
 
         // Build the profile card text.
-        const profileLink = `https://www.instagram.com/${username}/`;
         const parts = [];
-        // Strip the user's original URL from their commentary so the card shows
-        // their comment (if any) above the profile block.
         let userComment = '';
         if (remadeContent) {
             userComment = remadeContent.replace(profileUrl, ' ').replace(/\s+/g, ' ').trim();
@@ -234,14 +517,11 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
             parts.push(`**@${username}**`);
         }
         if (description) {
-            // og:description is usually "<N> Followers, <M> Following, <K> Posts - See Instagram photos and videos from <name> (@handle)"
-            // Quote it as the bio line.
             const descLines = description.split('\n').filter(l => l.trim());
             for (const line of descLines) {
                 parts.push(`> ${line}`);
             }
         }
-        // Append links to the last 4 posts (so users can open them even if the thumbnail download failed).
         if (recentPosts.length > 0) {
             const postLinks = recentPosts.map(p => `https://www.instagram.com/p/${p.shortcode}/`);
             parts.push(`Recent posts:\n${postLinks.map(l => `<${l}>`).join('\n')}`);
@@ -253,8 +533,6 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         if (attachments.length > 0) {
             await updateWorkingPlaceholder(placeholder, finalContent, attachments, true, getGuildFileLimit(message.guild), `<${profileLink}>`);
         } else {
-            // No attachments — at least show the profile link with embeds enabled so
-            // Discord renders og:image/og:description as a preview card.
             const fallbackUrl = profileLink.replace(/^https?:\/\//i, '');
             const fallbackContent = (userComment ? userComment + '\n\n' : '') + `[${fallbackUrl}](${profileLink})`;
             await updateWorkingPlaceholder(placeholder, fallbackContent, [], false, 0, fallbackContent);
@@ -267,6 +545,12 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
     } finally {
         clearInterval(typingInterval);
     }
+}
+
+// Format a count (e.g. 1234 -> "1,234", 1200000 -> "1,200,000") for the bio line.
+function formatCount(n) {
+    if (n == null) return '';
+    return Number(n).toLocaleString('en-US');
 }
 
 async function downloadWithYtDlp(url) {
