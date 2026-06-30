@@ -1004,18 +1004,21 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                 let rawTitle = ogTitleMatch ? decodeEntities(ogTitleMatch[1]).trim() : '';
                 displayName = cleanInstagramOgTitle(rawTitle);
                 description = ogDescMatch ? decodeEntities(ogDescMatch[1]).trim() : '';
-                // Prefer profile_pic_url_hd / profile_pic_url from the embedded JSON
-                // (full-resolution, stp=dst-jpg) over og:image (cropped s100x100
-                // preview). The og:image URL also contains &amp; entities that must be
-                // decoded before downloading (undecoded &amp; → 403).
-                const hdPicMatch = html.match(/"profile_pic_url_hd"\s*:\s*"([^"]+)"/);
-                const picMatch = html.match(/"profile_pic_url"\s*:\s*"([^"]+)"/);
-                if (hdPicMatch) {
-                    profilePicUrl = unescapeInstagramJsonUrl(hdPicMatch[1]);
-                } else if (picMatch) {
-                    profilePicUrl = unescapeInstagramJsonUrl(picMatch[1]);
-                } else if (ogImageMatch) {
+                // og:image is the TARGET profile's pic (server-rendered meta tag).
+                // The embedded JSON profile_pic_url_hd is the LOGGED-IN viewer's pic
+                // (when cookies are attached), NOT the target's — so prefer og:image.
+                // The og:image URL contains &amp; entities that must be decoded before
+                // downloading (undecoded &amp; → 403).
+                if (ogImageMatch) {
                     profilePicUrl = ogImageMatch[1].replace(/&amp;/g, '&').trim();
+                } else {
+                    const hdPicMatch = html.match(/"profile_pic_url_hd"\s*:\s*"([^"]+)"/);
+                    const picMatch = html.match(/"profile_pic_url"\s*:\s*"([^"]+)"/);
+                    if (hdPicMatch) {
+                        profilePicUrl = unescapeInstagramJsonUrl(hdPicMatch[1]);
+                    } else if (picMatch) {
+                        profilePicUrl = unescapeInstagramJsonUrl(picMatch[1]);
+                    }
                 }
                 recentPosts = extractRecentPostsFromProfileHtml(html, 4);
             }
