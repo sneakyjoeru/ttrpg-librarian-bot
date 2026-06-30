@@ -990,8 +990,20 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
         const username = usernameMatch ? usernameMatch[1] : '';
         const profileLink = `https://www.instagram.com/${username}/`;
 
-        // --- Strategy 1: GraphQL profile query (cookie-aware, structured JSON) ---
+        // --- Fetch recent posts FIRST via the private feed API (before the
+        // web_profile_info calls which 429-spam and trigger rate-limiting on
+        // all subsequent API endpoints). The feed API is more reliable and doesn't
+        // rate-limit as aggressively when called early. ---
         const cookieHeader = buildInstagramCookieHeader();
+        let recentPosts = [];
+        {
+            const feedPosts = await fetchInstagramProfileFeed(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
+            if (feedPosts.length > 0) {
+                recentPosts = feedPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
+            }
+        }
+
+        // --- Strategy 1: GraphQL profile query (cookie-aware, structured JSON) ---
         const gqlResult = await fetchInstagramGraphQLProfile(username, cookieHeader, INSTAGRAM_BROWSER_UA);
 
         let displayName = '';
@@ -1079,16 +1091,6 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
                     }
                 }
                 recentPosts = extractRecentPostsFromProfileHtml(html, 4);
-            }
-        }
-
-        // If the GraphQL/HTML strategies didn't yield recent posts, try the
-        // private feed API (/api/v1/feed/user/{username}/username/) which is
-        // more reliable and doesn't rate-limit as aggressively.
-        if (recentPosts.length === 0) {
-            const feedPosts = await fetchInstagramProfileFeed(username, cookieHeader, INSTAGRAM_BROWSER_UA, 4);
-            if (feedPosts.length > 0) {
-                recentPosts = feedPosts.map(p => ({ url: p.thumbnailUrl, shortcode: p.shortcode }));
             }
         }
 
