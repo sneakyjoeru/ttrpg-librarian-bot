@@ -35,6 +35,7 @@ RUN if [ "$INSTALL_INTEL_IGPU_DRIVER" = "1" ]; then \
 
 WORKDIR /usr/src/app
 
+RUN echo $CACHEBUST > /dev/null  # cache bust point
 RUN git config --global --add safe.directory '*'
 
 COPY package*.json ./
