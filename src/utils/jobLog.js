@@ -37,7 +37,7 @@ function startJob(message, kind) {
 
     const prefix = `kind=${kind} channel=${channelId} author=${authorTag} len=${rawContent.length} attach=${hasAttachments} content="${content}"`;
     const isRecoveryJob = typeof kind === 'string' && kind.startsWith('recover:');
-    const startEmoji = isRecoveryJob ? '♻️' : '▶️▶️▶️▶️▶️';
+    const startEmoji = isRecoveryJob ? '♻️' : '▶️';
     const okEmoji = isRecoveryJob ? '♻️' : '✅';
 
     console.log(`[JOB] ${startEmoji} ${msgId} START  ${prefix}`);
