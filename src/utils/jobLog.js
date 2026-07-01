@@ -37,8 +37,8 @@ function startJob(message, kind) {
 
     const prefix = `kind=${kind} channel=${channelId} author=${authorTag} len=${rawContent.length} attach=${hasAttachments} content="${content}"`;
     const isRecoveryJob = typeof kind === 'string' && kind.startsWith('recover:');
-    const startEmoji = isRecoveryJob ? '♻️' : '🟡';
-    const okEmoji = isRecoveryJob ? '♻️' : '🟢';
+    const startEmoji = isRecoveryJob ? '♻️' : '▶️▶️▶️▶️▶️';
+    const okEmoji = isRecoveryJob ? '♻️' : '✅';
 
     console.log(`[JOB] ${startEmoji} ${msgId} START  ${prefix}`);
 
@@ -61,7 +61,11 @@ function startJob(message, kind) {
 
     return {
         success(meta) {
-            console.log(`[JOB] ${okEmoji} ${msgId} OK     ${prefix} ${fmt(meta)}`);
+            const stageStr = meta && typeof meta.stage === 'string' ? meta.stage : '';
+            const isFallback = stageStr.includes('fallback');
+            const emoji = isFallback ? '⚠️' : okEmoji;
+            const label = isFallback ? 'FALLBACK' : 'OK';
+            console.log(`[JOB] ${emoji} ${msgId} ${label.padEnd(5)} ${prefix} ${fmt(meta)}`);
         },
         failure(reason, meta) {
             const m = Object.assign({ reason: safeStr(reason).substring(0, 200) }, meta || {});

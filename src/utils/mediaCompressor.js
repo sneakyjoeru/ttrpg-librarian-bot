@@ -167,7 +167,7 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                         console.log(`[FFmpeg Compress] Local iGPU bitrate-cap still too large; trying CQP ladder...`);
                     }
                 } catch (bcErr) {
-                    console.warn(`[FFmpeg Compress] Local iGPU bitrate-cap failed (${bcErr.message}); trying CQP ladder...`);
+                    console.warn(`❌🎦 [FFmpeg Compress] Local iGPU bitrate-cap failed (${bcErr.message}); trying CQP ladder...`);
                 } finally {
                     try { if (fs.existsSync(igpuBcPath)) fs.unlinkSync(igpuBcPath); } catch (e) {}
                 }
@@ -196,7 +196,7 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                         const stats = fs.statSync(igpuMp4Path);
                         console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1} produced ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
                         if (stats.size === 0) {
-                            console.warn('[FFmpeg Compress] Local iGPU produced a 0-byte file; marking iGPU unavailable and falling through to CPU.');
+                            console.warn('❌🎦 [FFmpeg Compress] Local iGPU produced a 0-byte file; marking iGPU unavailable and falling through to CPU.');
                             isIgpuAvailable = false;
                             break;
                         }
@@ -208,17 +208,17 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                             console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1} still too large (${(stats.size / 1024 / 1024).toFixed(1)}MB > ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB). Trying next QP...`);
                         }
                     } else {
-                        console.warn('[FFmpeg Compress] Local iGPU produced no output; marking iGPU unavailable and falling through to CPU.');
+                        console.warn('❌🎦 [FFmpeg Compress] Local iGPU produced no output; marking iGPU unavailable and falling through to CPU.');
                         isIgpuAvailable = false;
                         break;
                     }
                 } catch (igpuErr) {
-                    console.error('[FFmpeg Compress] Local iGPU transcoding error:', igpuErr.message);
+                    console.error('❌🎦 [FFmpeg Compress] Local iGPU transcoding error:', igpuErr.message);
                     if (igpuErr && igpuErr.stderr) {
                         const tail = String(igpuErr.stderr).split('\n').filter(Boolean).slice(-6).join(' | ');
                         if (tail) console.error('[FFmpeg Compress] ffmpeg stderr (tail):', tail);
                     }
-                    console.warn('[FFmpeg Compress] Marking iGPU as unavailable and falling through to CPU.');
+                    console.warn('❌🎦 [FFmpeg Compress] Marking iGPU as unavailable and falling through to CPU.');
                     isIgpuAvailable = false;
                     break;
                 } finally {
