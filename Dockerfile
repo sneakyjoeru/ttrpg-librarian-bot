@@ -1,5 +1,7 @@
 FROM node:20-alpine
 
+ARG CACHEBUST=1
+
 # Bust the cache for yt-dlp download when there's a new release
 ADD https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest /tmp/yt-dlp-latest.json
 RUN apk add --no-cache curl python3 git ffmpeg sshpass openssh-client docker-cli && \

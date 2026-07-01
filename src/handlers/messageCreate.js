@@ -195,7 +195,7 @@ async function handleMessageCreate(client, message) {
         // The build runs locally (Docker socket is mounted into the container).
         // We stream the build output and parse BuildKit [n/N] lines for progress,
         // then launch a detached helper container to swap in the new image.
-        const buildCmd = 'BUILDX_GIT_INFO=false docker build --provenance=false -t discord-librarian-bot /usr/src/app';
+        const buildCmd = `BUILDX_GIT_INFO=false docker build --build-arg CACHEBUST=${Math.floor(Date.now() / 1000)} -t discord-librarian-bot /usr/src/app`;
         console.log('[Restart Command] Starting local docker build...');
 
         runCommandStream(buildCmd, {

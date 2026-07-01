@@ -549,7 +549,7 @@ async function handleInteraction(client, interaction) {
         const { exec } = require('child_process');
 
         console.log('[Restart Command] Starting docker build...');
-        exec('BUILDX_GIT_INFO=false docker build -t discord-librarian-bot /usr/src/app', (buildErr, stdout, stderr) => {
+        exec(`BUILDX_GIT_INFO=false docker build --build-arg CACHEBUST=${Math.floor(Date.now() / 1000)} -t discord-librarian-bot /usr/src/app`, (buildErr, stdout, stderr) => {
             if (buildErr) {
                 console.error('[Restart Command] Build failed:', buildErr);
                 return interaction.followUp({ content: `❌ Rebuild failed:\n\`\`\`\n${buildErr.message}\n\`\`\``, ephemeral: true });
