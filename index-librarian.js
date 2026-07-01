@@ -51,7 +51,7 @@ client.once(Events.ClientReady, async () => {
         }],
         status: 'online'
     });
-    console.log(`🚩🚩🚩🚩🚩 Online as ${client.user.tag}`);
+    console.log(`🏁🏁🏁🏁🏁 Online as ${client.user.tag}`);
 
     // iGPU passthrough check: log at startup whether /dev/dri is present so
     // the user can immediately see if they need to rebuild (Docker restart
