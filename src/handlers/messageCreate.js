@@ -283,6 +283,14 @@ async function handleMessageCreate(client, message) {
         return;
     }
 
+    // --- !pin / !unpin outside active category or in thread ---
+    const pinRegex = /^!(pin|unpin)\b/i;
+    if (pinRegex.test(message.content.trim())) {
+        const isInActiveCategory = message.channel.parentId === ACTIVE_CATEGORY_ID;
+        const isThread = message.channel.isThread();
+        console.log(`[Pin Command] ${message.content.trim().split(/\s+/)[0]} by ${message.author.tag} (${message.author.id}) in channel ${message.channel.id} — IGNORED: ${isThread ? 'is thread' : !isInActiveCategory ? 'not in active category' : 'unknown reason'}`);
+    }
+
     if (message.channel.parentId === ACTIVE_CATEGORY_ID && !message.channel.isThread()) {
         const topic = message.channel.topic || '';
         const content = message.content.trim();
@@ -291,6 +299,7 @@ async function handleMessageCreate(client, message) {
             const isPin = content.startsWith('!pin');
             const args = content.split(/\s+/);
             const messageId = args[1];
+            console.log(`[Pin Command] ${isPin ? '!pin' : '!unpin'} by ${message.author.tag} (${message.author.id}) in channel ${message.channel.id}${messageId ? `, target: ${messageId}` : ', no ID (last)'}`);
 
             const metaData = await getLibrarianData(message.channel);
 

@@ -162,25 +162,25 @@ const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 // --- HELP TEXT ---
 const helpText = `**Librarian Bot Functions:**
 \`/librarian-bot\` - Show this help message
-\`/new-thread [threadname]\` - Create a public thread
-\`/roll [formula] [class] [context]\` - Roll dice (e.g. 1d20+5). Custom critical roll text through LLM
-**@LibrarianBot [question]** - Ask a question (add "no bs" for a short, direct answer)
-\`/poll-librarian [question] [options]\` - Create a poll. Options must be comma-separated (max 10). *(Anyone — players and DMs)*
+\`/new-thread [name]\` - Create a public thread
+\`/roll [formula] [class] [context]\` - Roll dice (e.g. 1d20+5)
+**@LibrarianBot [question]** - Ask a question (add "no bs" for short answer)
+\`/poll-librarian [question] [options]\` - Create a poll (max 10 options)
 
 **🔒 DM / Admin Commands:**
-\`/new-campaign [campaign_name] [usernames]\` - Create new campaign channel *(DM or Admin)*
-\`/new-private-campaign [campaign_name] [usernames]\` - Create private campaign channel *(DM or Admin)*
-\`/new-private-thread [usernames]\` - Create a private thread and invite mentioned users *(DM or Admin)*
-\`/schedule-poll [input]\` - Auto-scheduling poll. Input: days + optional per-day time + weeks, e.g. \`Wednesday Friday 4\`, \`Wed Fri 18:00-22:00 4\`, or \`Wed 14:00-16:00 Fri 18:00-22:00 4\`. Accepts the group tokens \`weekdays\`/\`wdy\` (Mon–Fri) and \`weekends\`/\`wke\`/\`wkd\` (Sat–Sun) in place of weekday names. Builds one poll option per weekday for each of the next N weeks (up to 10 weeks / 20 options). When more than 9 dates, random emojis are used for voting. *(DM or Admin)*
-\`/set-topic [text]\` - Set a new channel topic while preserving bot metadata *(DM or Admin)*
-\`/update-players [count]\` - Change the number of players in the channel and role name *(DM or Admin)*
-\`!pin [message_id]\` - Pin a message by ID (or the last message if empty) *(DM of this channel or Admin)*
-\`!unpin [message_id]\` - Unpin a message by ID (or the last pinned message if empty) *(DM of this channel or Admin)*
-\`/archive [confirmation]\` - Archive current campaign channel. Requires typing: \`yes, I want to archive channelname\`
-\`/retro-setup\` - Admin tool: Pins first message, generates missing role, and creates bot data in channel topic for old channels.
-\`/restart\` - Rebuild and restart the bot container (text or slash command, Admin only). Shows live BuildKit build progress in chat.
+\`/new-campaign [name] [users]\` - Create campaign channel
+\`/new-private-campaign [name] [users]\` - Create private campaign channel
+\`/new-private-thread [users]\` - Create private thread
+\`/schedule-poll [input]\` - Scheduling poll (e.g. \`Wed Fri 18:00-22:00 4\`)
+\`/set-topic [text]\` - Set channel topic (preserves bot metadata)
+\`/update-players [count]\` - Change player count and role name
+\`!pin [message_id]\` - Pin a message (or last message if empty)
+\`!unpin [message_id]\` - Unpin a message (or last pinned if empty)
+\`/archive [confirmation]\` - Archive campaign channel
+\`/retro-setup\` - Setup old channels (pins OP, creates role, metadata)
+\`/restart\` - Rebuild and restart bot (Admin only)
 
-*Note: New game channels auto-delete chat until DM posts OP (which generates role).*`;
+*Note: New game channels auto-delete chat until DM posts OP.*`;
 
 // --- SLASH COMMAND BUILDERS ---
 const commands = [
