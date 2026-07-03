@@ -531,6 +531,76 @@ async function handleInteraction(client, interaction) {
         return await interaction.reply({ embeds: [rollEmbed] });
     }
 
+    if (commandName === 'pin' || commandName === 'unpin') {
+        if (interaction.channel.parentId !== ACTIVE_CATEGORY_ID) {
+            return interaction.reply({ content: 'This command can only be used in an active campaign channel.', ephemeral: true });
+        }
+        if (interaction.channel.isThread()) {
+            return interaction.reply({ content: 'This command cannot be used in a thread.', ephemeral: true });
+        }
+
+        const isPin = commandName === 'pin';
+        const messageId = interaction.options.getString('message_id');
+        console.log(`[Pin Command] /${commandName} by ${interaction.user.tag} (${interaction.user.id}) in channel ${interaction.channel.id}${messageId ? `, target: ${messageId}` : ', no ID (last)'}`);
+
+        const metaData = await getLibrarianData(interaction.channel);
+
+        // Access permission check
+        if (!metaData) {
+            const topic = interaction.channel.topic || '';
+            if (topic.startsWith('SETUP|')) {
+                const setupMatch = topic.match(/DM:(\d+)/);
+                const setupDmId = setupMatch ? setupMatch[1] : null;
+                if (interaction.user.id !== setupDmId && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.reply({ content: 'Only the DM who created this campaign (or an Admin) can pin/unpin messages before the OP is posted.', ephemeral: true });
+                }
+            } else if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({ content: 'Metadata missing in channel topic. Only Admins can pin/unpin here.', ephemeral: true });
+            }
+        } else {
+            if (metaData.dmId !== interaction.user.id && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({ content: 'Only the DM who created the campaign (or an Admin) can pin/unpin messages in this channel.', ephemeral: true });
+            }
+        }
+
+        try {
+            let targetMessage;
+
+            if (messageId) {
+                targetMessage = await interaction.channel.messages.fetch(messageId).catch(() => null);
+            } else {
+                if (isPin) {
+                    const lastMessages = await interaction.channel.messages.fetch({ limit: 1 });
+                    targetMessage = lastMessages.first();
+                } else {
+                    const pinnedMessages = await interaction.channel.messages.fetchPinned().catch(() => null);
+                    targetMessage = pinnedMessages ? pinnedMessages.first() : null;
+                }
+            }
+
+            if (!targetMessage) {
+                return interaction.reply({ content: `Could not find a message to ${isPin ? 'pin' : 'unpin'}.`, ephemeral: true });
+            }
+
+            if (isPin) {
+                await targetMessage.pin();
+                return interaction.reply({ content: `📌 Pinned [message](<${targetMessage.url}>).`, ephemeral: true });
+            } else {
+                const firstMessages = await interaction.channel.messages.fetch({ after: DISCORD_START_SNOWFLAKE, limit: 1 });
+                const opMessage = firstMessages.first();
+
+                if (opMessage && targetMessage.id === opMessage.id && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.reply({ content: 'Only Admins can unpin the OP message.', ephemeral: true });
+                }
+                await targetMessage.unpin();
+                return interaction.reply({ content: `📌 Unpinned [message](<${targetMessage.url}>).`, ephemeral: true });
+            }
+        } catch (err) {
+            console.error(`/${commandName} error:`, err);
+            return interaction.reply({ content: `Failed to ${isPin ? 'pin' : 'unpin'} the message. Check bot permissions.`, ephemeral: true });
+        }
+    }
+
     if (commandName === 'restart') {
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
             return interaction.reply({ content: 'Only Administrators can trigger a restart.', ephemeral: true });

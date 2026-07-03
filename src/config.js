@@ -174,8 +174,8 @@ const helpText = `**Librarian Bot Functions:**
 \`/schedule-poll [input]\` - Scheduling poll (e.g. \`Wed Fri 18:00-22:00 4\`)
 \`/set-topic [text]\` - Set channel topic (preserves bot metadata)
 \`/update-players [count]\` - Change player count and role name
-\`!pin [message_id]\` - Pin a message (or last message if empty)
-\`!unpin [message_id]\` - Unpin a message (or last pinned if empty)
+\`/pin [message_id]\` - Pin a message (or last message if empty)
+\`/unpin [message_id]\` - Unpin a message (or last pinned if empty)
 \`/archive [confirmation]\` - Archive campaign channel
 \`/retro-setup\` - Setup old channels (pins OP, creates role, metadata)
 \`/restart\` - Rebuild and restart bot (Admin only)
@@ -226,6 +226,14 @@ const commands = [
         .setName('restart')
         .setDescription('Rebuild and restart the bot container (Admin only)')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    new SlashCommandBuilder()
+        .setName('pin')
+        .setDescription('Pin a message by ID (or the last message if empty)')
+        .addStringOption(opt => opt.setName('message_id').setDescription('Message ID to pin (leave empty for last message)').setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('unpin')
+        .setDescription('Unpin a message by ID (or the last pinned message if empty)')
+        .addStringOption(opt => opt.setName('message_id').setDescription('Message ID to unpin (leave empty for last pinned)').setRequired(false)),
 ].map(command => command.toJSON());
 
 module.exports = {

@@ -13,7 +13,6 @@ const {
     ACTIVE_CATEGORY_ID,
     EMOJI_ROBOT,
     EMOJI_HAND,
-    DISCORD_START_SNOWFLAKE,
     SNEAKYJOE_USER_ID,
     helpText
 } = require('../config');
@@ -283,86 +282,9 @@ async function handleMessageCreate(client, message) {
         return;
     }
 
-    // --- !pin / !unpin outside active category or in thread ---
-    const pinRegex = /^!(pin|unpin)\b/i;
-    if (pinRegex.test(message.content.trim())) {
-        const isInActiveCategory = message.channel.parentId === ACTIVE_CATEGORY_ID;
-        const isThread = message.channel.isThread();
-        console.log(`[Pin Command] ${message.content.trim().split(/\s+/)[0]} by ${message.author.tag} (${message.author.id}) in channel ${message.channel.id} — IGNORED: ${isThread ? 'is thread' : !isInActiveCategory ? 'not in active category' : 'unknown reason'}`);
-    }
-
     if (message.channel.parentId === ACTIVE_CATEGORY_ID && !message.channel.isThread()) {
         const topic = message.channel.topic || '';
         const content = message.content.trim();
-
-        if (content === '!pin' || content === '!unpin' || content.startsWith('!pin ') || content.startsWith('!unpin ')) {
-            const isPin = content.startsWith('!pin');
-            const args = content.split(/\s+/);
-            const messageId = args[1];
-            console.log(`[Pin Command] ${isPin ? '!pin' : '!unpin'} by ${message.author.tag} (${message.author.id}) in channel ${message.channel.id}${messageId ? `, target: ${messageId}` : ', no ID (last)'}`);
-
-            const metaData = await getLibrarianData(message.channel);
-
-            // Access permission check
-            if (!metaData) {
-                const currentTopic = message.channel.topic || '';
-                if (currentTopic.startsWith('SETUP|')) {
-                    const setupMatch = currentTopic.match(/DM:(\d+)/);
-                    const setupDmId = setupMatch ? setupMatch[1] : null;
-                    if (message.author.id !== setupDmId && !message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                        await message.delete().catch(() => { });
-                        return;
-                    }
-                } else if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                    await message.delete().catch(() => { });
-                    return;
-                }
-            } else {
-                if (metaData.dmId !== message.author.id && !message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                    await message.delete().catch(() => { });
-                    return;
-                }
-            }
-
-            try {
-                let targetMessage;
-
-                if (messageId) {
-                    targetMessage = await message.channel.messages.fetch(messageId).catch(() => null);
-                } else {
-                    if (isPin) {
-                        const lastMessages = await message.channel.messages.fetch({ before: message.id, limit: 1 });
-                        targetMessage = lastMessages.first();
-                    } else {
-                        const pinnedMessages = await message.channel.messages.fetchPinned().catch(() => null);
-                        targetMessage = pinnedMessages ? pinnedMessages.first() : null;
-                    }
-                }
-
-                if (!targetMessage) {
-                    await message.delete().catch(() => { });
-                    return;
-                }
-
-                if (isPin) {
-                    await targetMessage.pin();
-                } else {
-                    const firstMessages = await message.channel.messages.fetch({ after: DISCORD_START_SNOWFLAKE, limit: 1 });
-                    const opMessage = firstMessages.first();
-
-                    if (opMessage && targetMessage.id === opMessage.id && !message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                        await message.delete().catch(() => { });
-                        return;
-                    }
-                    await targetMessage.unpin();
-                }
-            } catch (err) {
-                console.error('Text pin/unpin error:', err);
-            }
-
-            await message.delete().catch(() => { });
-            return;
-        }
 
         if (topic.startsWith('SETUP|')) {
             const dmMatch = topic.match(/DM:(\d+)/);
