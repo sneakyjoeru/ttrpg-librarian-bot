@@ -17,10 +17,17 @@ const {
     THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY,
     DISCORD_START_SNOWFLAKE,
     EMOJI_ROBOT,
-    EMOJI_HAND
+    EMOJI_HAND,
+    SNEAKYJOE_USER_ID
 } = require('../config');
 const { refreshPoll } = require('./polls');
 const { createSchedulePoll } = require('./scheduling');
+const { isMessageTiedToUser, removeTrackedMessage } = require('../utils/messageTracker');
+const { buildRecoveredPlaceholder } = require('../utils/webhook');
+const { handleInstagramMessage } = require('../services/instagram');
+const { handleTwitterMessage } = require('./twitterHandler');
+const { handleFacebookMessage } = require('./facebookHandler');
+const { handleArticleMessage } = require('./articleHandler');
 
 async function handleInteraction(client, interaction) {
     if (!interaction.isChatInputCommand()) return;
@@ -672,6 +679,292 @@ async function handleInteraction(client, interaction) {
                 console.log('[Restart Command] Helper container started successfully.');
             });
         });
+        return;
+    }
+
+    // --- /delete slash command ---
+    if (commandName === 'delete') {
+        const count = interaction.options.getInteger('count');
+        if (count === null) {
+            // No count: delete the last bot/webhook message tied to the calling user.
+            try { interaction.deferReply({ ephemeral: true }).catch(() => { }); } catch (_) {}
+            try {
+                const fetched = await interaction.channel.messages.fetch({ limit: 50 }).catch(() => null);
+                if (fetched && fetched.size > 0) {
+                    let deletedTarget = false;
+                    for (const msg of fetched.values()) {
+                        const isUserMessage = msg.author.id === interaction.user.id;
+                        const username = interaction.user.username;
+                        const displayName = interaction.member ? interaction.member.displayName : interaction.user.username;
+                        const isTied = await isMessageTiedToUser(msg, interaction.user.id, username, displayName, client);
+                        if (isUserMessage || isTied) {
+                            await msg.delete().catch(() => {});
+                            console.log(`[Slash Delete] Deleted message ${msg.id} in channel ${interaction.channel.id} triggered by ${interaction.user.tag} (${interaction.user.id})`);
+                            removeTrackedMessage(msg.id);
+                            deletedTarget = true;
+                            break;
+                        }
+                    }
+                    if (deletedTarget) {
+                        await interaction.editReply({ content: '✅ Успешно удалено последнее сообщение.' }).catch(() => { });
+                    } else {
+                        await interaction.editReply({ content: 'Не найдено подходящих сообщений для удаления.' }).catch(() => { });
+                    }
+                } else {
+                    await interaction.editReply({ content: 'Не найдено сообщений в истории канала.' }).catch(() => { });
+                }
+            } catch (err) {
+                console.error('[Slash Delete] Error during zero-argument deletion:', err.message);
+                await interaction.editReply({ content: 'Произошла ошибка при удалении сообщений.' }).catch(() => { });
+            }
+            return;
+        }
+
+        // Count provided: only admin can bulk delete
+        if (interaction.user.id !== SNEAKYJOE_USER_ID) {
+            await interaction.reply({ content: 'У тебя нет прав для выполнения этой команды с аргументами.', ephemeral: true }).catch(() => { });
+            return;
+        }
+
+        if (isNaN(count) || count <= 0) {
+            await interaction.reply({ content: 'Укажи корректное число сообщений для удаления.', ephemeral: true }).catch(() => { });
+            return;
+        }
+
+        await interaction.deferReply({ ephemeral: true }).catch(() => { });
+        if (interaction.guild) {
+            try {
+                const fetched = await interaction.channel.messages.fetch({ limit: count }).catch(() => null);
+                if (fetched && fetched.size > 0) {
+                    await interaction.channel.bulkDelete(fetched, true).then(() => {
+                        console.log(`[Slash Delete] Bulk deleted ${fetched.size} messages in channel ${interaction.channel.id} triggered by admin ${interaction.user.tag}`);
+                    }).catch(async (err) => {
+                        console.warn('[Slash Delete] bulkDelete failed, falling back to manual delete:', err.message);
+                        for (const msg of fetched.values()) { await msg.delete().catch(() => { }); }
+                    });
+                    await interaction.editReply({ content: `Успешно удалено сообщений: ${fetched.size}.` }).catch(() => { });
+                } else {
+                    await interaction.editReply({ content: 'Не найдено сообщений для удаления.' }).catch(() => { });
+                }
+            } catch (err) {
+                console.error('[Slash Delete] Error during deletion:', err.message);
+                await interaction.editReply({ content: 'Произошла ошибка при удалении сообщений.' }).catch(() => { });
+            }
+        }
+        return;
+    }
+
+    // --- /edit-last slash command ---
+    if (commandName === 'edit-last') {
+        try {
+            const newText = (interaction.options.getString('text') || '').trim();
+            if (!newText) {
+                await interaction.reply({ content: 'Укажи новый текст.', ephemeral: true });
+                return;
+            }
+            const isUserAdmin = interaction.user.id === SNEAKYJOE_USER_ID || !!(interaction.member && interaction.member.permissions && interaction.member.permissions.has(PermissionFlagsBits.Administrator));
+
+            let targetMsg = null;
+            const channel = interaction.channel;
+            if (channel && channel.isThread && channel.isThread()) {
+                try { targetMsg = await channel.fetchStarterMessage(); } catch (_) {}
+            }
+            if (!targetMsg && channel && channel.messages) {
+                const fetched = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+                if (fetched) {
+                    for (const msg of fetched.values()) {
+                        if (msg.author.bot || msg.webhookId) {
+                            const tied = await isMessageTiedToUser(msg, interaction.user.id, interaction.user.username, interaction.member ? interaction.member.displayName : interaction.user.username, client);
+                            if (tied) { targetMsg = msg; break; }
+                        }
+                    }
+                    if (!targetMsg && isUserAdmin) {
+                        for (const msg of fetched.values()) {
+                            if (msg.author.bot || msg.webhookId) { targetMsg = msg; break; }
+                        }
+                    }
+                }
+            }
+            if (!targetMsg) {
+                await interaction.reply({ content: 'Не найдено подходящего сообщения бота для редактирования.', ephemeral: true });
+                return;
+            }
+
+            let authorized = isUserAdmin;
+            if (!authorized) {
+                authorized = await isMessageTiedToUser(targetMsg, interaction.user.id, interaction.user.username, interaction.member ? interaction.member.displayName : interaction.user.username, client);
+            }
+            if (!authorized) {
+                await interaction.reply({ content: 'Ты можешь редактировать только свои собственные посты, заменённые ботом.', ephemeral: true });
+                return;
+            }
+
+            const haystack = (targetMsg.content || '') + '\n' + newText;
+            const twitterRe = /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[a-zA-Z0-9_]+\/status\/\d+[^\s)\]>]*/i;
+            const instagramRe = /(?:https?:\/\/)?(?:www\.|m\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s)\]>]+/i;
+            const facebookRe = /(?:https?:\/\/)?(?:www\.|m\.)?(?:facebook\.com|fb\.watch)\/[^\s)\]>]+/i;
+            const articleDomains = ['themoscowtimes.com','ru.themoscowtimes.com','meduza.io','tjournal.ru','novayagazeta.eu','rbc.ru','lenta.ru','vedomosti.ru','kommersant.ru','interfax.ru','tass.ru'];
+            const articleDomainPattern = articleDomains.map(d => d.replace(/\./g, '\\.')).join('|');
+            const articleRe = new RegExp(`(?:https?:\\/\\/)?(?:[a-z0-9-]+\\.)*(${articleDomainPattern})(?:\\/[^\\s)>#]*)?`, 'i');
+
+            const allMatches = [];
+            const twM = haystack.match(twitterRe);
+            if (twM) allMatches.push({ url: twM[0].replace(/[.,:;!?]+$/, ''), kind: 'twitter' });
+            const igM = haystack.match(instagramRe);
+            if (igM) { let u = igM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; u = u.replace(/(www\.|m\.)?(?:dd|kk|ee|uu|rx)instagram\.com/i, 'instagram.com'); allMatches.push({ url: u, kind: 'instagram' }); }
+            const fbM = haystack.match(facebookRe);
+            if (fbM) { let u = fbM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'facebook' }); }
+            const artM = haystack.match(articleRe);
+            if (artM) { let u = artM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'article' }); }
+
+            await interaction.deferReply({ ephemeral: true }).catch(() => {});
+
+            if (allMatches.length === 0) {
+                try {
+                    await targetMsg.edit(newText).catch(() => {});
+                    await interaction.editReply({ content: '✅ Текст отредактирован.' }).catch(() => {});
+                } catch (e) {
+                    await interaction.editReply({ content: 'Не удалось отредактировать: ' + e.message }).catch(() => {});
+                }
+                return;
+            }
+
+            let recoveredPlaceholder = null;
+            try { recoveredPlaceholder = await buildRecoveredPlaceholder(client, targetMsg); } catch (_) {}
+            const synthId = `synth_editlast_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+            const synthMsg = new Proxy(targetMsg, {
+                get(target, prop) {
+                    if (prop === 'id') return synthId;
+                    if (prop === 'content' || prop === 'cleanContent') return newText;
+                    if (prop === 'attachments') return { size: 0 };
+                    if (prop === 'webhookId') return null;
+                    if (prop === 'delete') return async () => true;
+                    if (prop === 'edit') return async () => target;
+                    if (prop === 'react') return async () => true;
+                    if (prop === 'reply') return async (options) => target.channel.send(options).catch(() => null);
+                    return target[prop];
+                }
+            });
+
+            for (let i = 0; i < allMatches.length; i++) {
+                const { url: matchUrl, kind: matchKind } = allMatches[i];
+                const placeholder = i === 0 ? recoveredPlaceholder : null;
+                if (matchKind === 'twitter') await handleTwitterMessage(client, synthMsg, matchUrl, newText, placeholder);
+                else if (matchKind === 'instagram') await handleInstagramMessage(client, synthMsg, matchUrl, newText, placeholder);
+                else if (matchKind === 'facebook') await handleFacebookMessage(client, synthMsg, matchUrl, newText, placeholder);
+                else if (matchKind === 'article') await handleArticleMessage(client, synthMsg, matchUrl, newText, placeholder);
+            }
+            await interaction.editReply({ content: `✅ Редактирование выполнено (${allMatches.map(m => m.kind).join(', ')}).` }).catch(() => {});
+        } catch (err) {
+            console.error('[Edit-Last Slash] Error:', err.message);
+            try { await interaction.editReply({ content: 'Ошибка при редактировании: ' + err.message }).catch(() => {}); } catch (_) {}
+        }
+        return;
+    }
+
+    // --- /process slash command ---
+    if (commandName === 'process') {
+        try {
+            const channel = interaction.channel;
+            if (!channel || !channel.isThread()) {
+                await interaction.reply({ content: 'Команда `/process` работает только внутри треда обработанного поста.', ephemeral: true });
+                return;
+            }
+            const thread = channel;
+            const isUserAdmin = interaction.user.id === SNEAKYJOE_USER_ID || !!(interaction.member && interaction.member.permissions && interaction.member.permissions.has(PermissionFlagsBits.Administrator));
+
+            let starterMsg = null;
+            try { starterMsg = await thread.fetchStarterMessage(); } catch (_) {}
+            if (!starterMsg) {
+                await interaction.reply({ content: 'Не удалось найти исходное сообщение треда для обработки.', ephemeral: true });
+                return;
+            }
+
+            let authorized = isUserAdmin;
+            if (!authorized) {
+                try {
+                    authorized = await isMessageTiedToUser(starterMsg, interaction.user.id, interaction.user.username, interaction.member ? interaction.member.displayName : interaction.user.username, client);
+                } catch (_) {}
+                if (!authorized) {
+                    try {
+                        const threadMsgs = await thread.messages.fetch({ limit: 50 }).catch(() => null);
+                        if (threadMsgs) {
+                            for (const m of threadMsgs.values()) {
+                                if (!m.author.bot) { if (m.author.id === interaction.user.id) authorized = true; break; }
+                            }
+                        }
+                    } catch (_) {}
+                }
+            }
+            if (!authorized) {
+                await interaction.reply({ content: 'Эту команду может использовать только автор поста или администратор сервера.', ephemeral: true });
+                return;
+            }
+
+            let haystack = (starterMsg.content || '') + '\n';
+            try {
+                const threadMsgs = await thread.messages.fetch({ limit: 50 }).catch(() => null);
+                if (threadMsgs) for (const m of threadMsgs.values()) haystack += (m.content || '') + '\n';
+            } catch (_) {}
+
+            const twitterRe = /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[a-zA-Z0-9_]+\/status\/\d+[^\s)\]>]*/i;
+            const instagramRe = /(?:https?:\/\/)?(?:www\.|m\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s)\]>]+/i;
+            const facebookRe = /(?:https?:\/\/)?(?:www\.|m\.)?(?:facebook\.com|fb\.watch)\/[^\s)\]>]+/i;
+            const articleDomains = ['themoscowtimes.com','ru.themoscowtimes.com','meduza.io','tjournal.ru','novayagazeta.eu','rbc.ru','lenta.ru','vedomosti.ru','kommersant.ru','interfax.ru','tass.ru'];
+            const articleDomainPattern = articleDomains.map(d => d.replace(/\./g, '\\.')).join('|');
+            const articleRe = new RegExp(`(?:https?:\\/\\/)?(?:[a-z0-9-]+\\.)*(${articleDomainPattern})(?:\\/[^\\s)>#]*)?`, 'i');
+
+            let foundUrl = null, foundKind = null;
+            const twM = haystack.match(twitterRe);
+            if (twM) { foundUrl = twM[0].replace(/[.,:;!?]+$/, ''); foundKind = 'twitter'; }
+            if (!foundUrl) {
+                const igM = haystack.match(instagramRe);
+                if (igM) { let u = igM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; u = u.replace(/(www\.|m\.)?(?:dd|kk|ee|uu|rx)instagram\.com/i, 'instagram.com'); foundUrl = u; foundKind = 'instagram'; }
+            }
+            if (!foundUrl) {
+                const fbM = haystack.match(facebookRe);
+                if (fbM) { let u = fbM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'facebook'; }
+            }
+            if (!foundUrl) {
+                const artM = haystack.match(articleRe);
+                if (artM) { let u = artM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'article'; }
+            }
+
+            if (!foundUrl) {
+                await interaction.reply({ content: 'Не удалось найти исходную ссылку для повторной обработки в этом треде.', ephemeral: true });
+                return;
+            }
+
+            console.log(`[Process Slash] Re-processing ${foundKind} link for ${interaction.user.tag} (${interaction.user.id}) in thread ${thread.id}: ${foundUrl}`);
+            await interaction.deferReply({ ephemeral: true }).catch(() => {});
+
+            let recoveredPlaceholder = null;
+            try { recoveredPlaceholder = await buildRecoveredPlaceholder(client, starterMsg); } catch (_) {}
+            const synthId = `synth_process_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+            const synthMsg = new Proxy(starterMsg, {
+                get(target, prop) {
+                    if (prop === 'id') return synthId;
+                    if (prop === 'content' || prop === 'cleanContent') return foundUrl;
+                    if (prop === 'attachments') return { size: 0 };
+                    if (prop === 'webhookId') return null;
+                    if (prop === 'delete') return async () => true;
+                    if (prop === 'edit') return async () => target;
+                    if (prop === 'react') return async () => true;
+                    if (prop === 'reply') return async (options) => target.channel.send(options).catch(() => null);
+                    return target[prop];
+                }
+            });
+
+            const remadeForProcess = foundUrl;
+            if (foundKind === 'twitter') await handleTwitterMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
+            else if (foundKind === 'instagram') await handleInstagramMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
+            else if (foundKind === 'facebook') await handleFacebookMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
+            else if (foundKind === 'article') await handleArticleMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
+            await interaction.editReply({ content: `✅ Повторная обработка выполнена (${foundKind}).` }).catch(() => {});
+        } catch (err) {
+            console.error('[Process Slash] Error:', err.message);
+            try { await interaction.editReply({ content: 'Ошибка при повторной обработке: ' + err.message }).catch(() => {}); } catch (_) {}
+        }
         return;
     }
 }

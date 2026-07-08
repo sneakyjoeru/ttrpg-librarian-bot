@@ -180,6 +180,11 @@ const helpText = `**Librarian Bot Functions:**
 \`/retro-setup\` - Setup old channels (pins OP, creates role, metadata)
 \`/restart\` - Rebuild and restart bot (Admin only)
 
+**Media Commands:**
+\`/delete\` - Delete your last bot-reposted message (admin: \`/delete [count]\` for bulk)
+\`/edit-last [text]\` - Edit the last bot-replaced message with new text
+\`/process\` - Re-process the link in the current thread (author or admin)
+
 *Note: New game channels auto-delete chat until DM posts OP.*`;
 
 // --- SLASH COMMAND BUILDERS ---
@@ -234,6 +239,17 @@ const commands = [
         .setName('unpin')
         .setDescription('Unpin a message by ID (or the last pinned message if empty)')
         .addStringOption(opt => opt.setName('message_id').setDescription('Message ID to unpin (leave empty for last pinned)').setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('delete')
+        .setDescription('Delete your last bot-reposted message (or bulk delete for admin)')
+        .addIntegerOption(opt => opt.setName('count').setDescription('Number of messages to bulk delete (admin only, 1-100)').setRequired(false).setMinValue(1).setMaxValue(100)),
+    new SlashCommandBuilder()
+        .setName('edit-last')
+        .setDescription('Edit the last bot-replaced message with new text')
+        .addStringOption(opt => opt.setName('text').setDescription('New text (include link if re-processing needed)').setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('process')
+        .setDescription('Re-process the link in the current thread (author or admin only)'),
 ].map(command => command.toJSON());
 
 module.exports = {

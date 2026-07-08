@@ -85,8 +85,13 @@
     `src/handlers/twitterHandler.js`, `facebookHandler.js`,
     `articleHandler.js` (ported from robot-joe, minus the OCR/Whisper
     translation/transcription pipeline).
-  - Slash commands — 13 commands (see section 7).
-  - Text commands `!pin` / `!unpin` for the DM/admin.
+  - Slash commands — 16 commands (see section 7).
+  - Text commands: `/restart`, `/delete [count]`, `/edit-last [text]`,
+    `/process` (re-process link in thread), `!pin` / `!unpin` for DM/admin.
+  - The `messageCreate` guard skips `message.author.bot` AND
+    `message.webhookId` — webhook messages have `author.bot = null` (not
+    `true`) in discord.js v14, so without the `webhookId` check the bot
+    re-intercepts its own webhook reposts → infinite loop.
   - Reaction-based role self-assignment on campaign OPs (`✋`).
   - System help message + updates thread — see section 6. The system
     message itself is minimal (no commit history): just a `/librarian-bot`

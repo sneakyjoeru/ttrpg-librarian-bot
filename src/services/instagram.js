@@ -1055,9 +1055,16 @@ async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxP
     return [];
 }
 
-async function handleInstagramProfile(client, message, profileUrl, remadeContent) {
+async function handleInstagramProfile(client, message, profileUrl, remadeContent, recoveredPlaceholder = null) {
     console.log(`[Instagram Interceptor] Profile URL detected: ${profileUrl}`);
-    const placeholder = await sendWorkingPlaceholder(client, message, profileUrl);
+    const isRecovery = !!recoveredPlaceholder;
+    let placeholder;
+    if (isRecovery) {
+        placeholder = recoveredPlaceholder;
+        await updatePlaceholderStage(placeholder, `working... <${profileUrl}>\nstage: recovery restart`);
+    } else {
+        placeholder = await sendWorkingPlaceholder(client, message, profileUrl);
+    }
     // Original message is preserved during processing (like robot-joe).
 
     await message.channel.sendTyping().catch(() => { });
@@ -1597,18 +1604,25 @@ async function downloadWithFixer(instagramUrl, domain) {
     }
 }
 
-async function handleInstagramMessage(client, message, instagramUrl, remadeContent) {
+async function handleInstagramMessage(client, message, instagramUrl, remadeContent, recoveredPlaceholder = null) {
     // Profile URLs (instagram.com/<username>) are handled by a dedicated profile
     // parser that returns the userpic, bio, and last 4 posts — NOT the media
     // download pipeline (which expects /p/, /reel/, or /tv/ and would mangle the
     // profile URL into a broken fallback link).
     if (isInstagramProfileUrl(instagramUrl)) {
-        return handleInstagramProfile(client, message, instagramUrl, remadeContent);
+        return handleInstagramProfile(client, message, instagramUrl, remadeContent, recoveredPlaceholder);
     }
 
-    // Instantly create the "working" message. Original message is preserved
-    // during processing (like robot-joe).
-    const placeholder = await sendWorkingPlaceholder(client, message, instagramUrl);
+    const isRecovery = !!recoveredPlaceholder;
+    let placeholder;
+    if (isRecovery) {
+        placeholder = recoveredPlaceholder;
+        await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: recovery restart`);
+    } else {
+        // Instantly create the "working" message. Original message is preserved
+        // during processing (like robot-joe).
+        placeholder = await sendWorkingPlaceholder(client, message, instagramUrl);
+    }
 
     // Start typing indicator
     await message.channel.sendTyping().catch(() => { });

@@ -704,7 +704,7 @@ async function catchUpMissedInstagramLinks() {
                 if (!fetched || fetched.size === 0) continue;
                 const fetchedArray = Array.from(fetched.values());
                 const missedLinks = fetchedArray.filter(msg => {
-                    if (msg.author.bot) return false;
+                    if (msg.author.bot || msg.webhookId) return false;
                     if (msg.createdTimestamp < startTimestamp) return false;
                     if (!instagramRegex.test(msg.content)) return false;
                     // Check if a bot/webhook response already exists for this message
