@@ -103,6 +103,16 @@ async function handleTwitterMessage(client, message, twitterUrl, remadeContent, 
         placeholderMessageId = placeholder && placeholder.sentMsg ? placeholder.sentMsg.id : null;
         if (placeholderMessageId) inFlightPlaceholders.add(placeholderMessageId);
 
+        // Delete the original user message so the channel doesn't show two copies
+        // of the same link. Best-effort: skipped during recovery (synthetic message).
+        if (!isRecovery && message.guild) {
+            try {
+                await message.delete();
+            } catch (delErr) {
+                console.error('[Twitter Interceptor] Could not delete original message (bot needs Manage Messages permission):', delErr.message);
+            }
+        }
+
         // Start typing indicator on the correct channel
         const typingChannel = placeholder.sentMsg ? placeholder.sentMsg.channel : message.channel;
         await typingChannel.sendTyping().catch(() => { });

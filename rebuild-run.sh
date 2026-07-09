@@ -3,11 +3,16 @@ if [ -f "cookies.txt" ]; then
     cookies_mount="-v $(pwd)/cookies.txt:/usr/src/app/cookies.txt"
 elif [ -f "instagram-cookies.txt" ]; then
     cookies_mount="-v $(pwd)/instagram-cookies.txt:/usr/src/app/instagram-cookies.txt"
-elif [ -f "../robot-joe/cookies.txt" ]; then
-    # Fall back to the sibling robot-joe bot's cookies (same Instagram account).
+elif [ -f "../robot-joe-dev/discord-joe/cookies.txt" ]; then
+    # Fall back to the sibling discord-joe bot's cookies (same Instagram account).
     # Mount to /tmp/cookies.txt (NOT /usr/src/app/cookies.txt) because /usr/src/app
     # is already a bind mount of the repo dir, and Docker can shadow a file mount
     # on top of a directory mount. /tmp/cookies.txt is in INSTAGRAM_COOKIE_PATHS.
+    cookies_mount="-v $(pwd)/../robot-joe-dev/discord-joe/cookies.txt:/tmp/cookies.txt"
+elif [ -f "../robot-joe-dev/discord-joe/instagram-cookies.txt" ]; then
+    cookies_mount="-v $(pwd)/../robot-joe-dev/discord-joe/instagram-cookies.txt:/tmp/instagram-cookies.txt"
+elif [ -f "../robot-joe/cookies.txt" ]; then
+    # Legacy fallback for older deployments where the sibling dir was named robot-joe.
     cookies_mount="-v $(pwd)/../robot-joe/cookies.txt:/tmp/cookies.txt"
 elif [ -f "../robot-joe/instagram-cookies.txt" ]; then
     cookies_mount="-v $(pwd)/../robot-joe/instagram-cookies.txt:/tmp/instagram-cookies.txt"
