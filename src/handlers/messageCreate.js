@@ -10,6 +10,7 @@ const { runCommandStream } = require('../utils/shell');
 const { parseRebuildProgressLine } = require('../utils/rebuildProgress');
 const { isMessageTiedToUser, removeTrackedMessage } = require('../utils/messageTracker');
 const { buildRecoveredPlaceholder } = require('../utils/webhook');
+const { inFlightMessages } = require('../utils/inFlightTracker');
 const {
     SERVER_ID,
     ACTIVE_CATEGORY_ID,
@@ -22,6 +23,23 @@ const {
 const BULK_DELETE_MAX = 100;
 
 async function handleMessageCreate(client, message) {
+    // Mark message as in-flight to prevent catch-up re-dispatch (mirrors
+    // discord-joe). If a real Discord message event is already being
+    // processed, the startup catch-up scanner must not re-dispatch the same
+    // message id — that would run the Instagram/Twitter/Facebook/article
+    // parsers a second time on the same link.
+    if (inFlightMessages.has(message.id)) {
+        return;
+    }
+    inFlightMessages.add(message.id);
+    try {
+        return await _handleMessageCreateInner(client, message);
+    } finally {
+        inFlightMessages.delete(message.id);
+    }
+}
+
+async function _handleMessageCreateInner(client, message) {
     // Skip messages from bots AND webhook messages (webhook authors have
     // author.bot = null, not true, so we must check webhookId separately).
     // Without the webhookId check, the bot re-intercepts its own webhook

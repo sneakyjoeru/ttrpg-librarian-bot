@@ -1,3 +1,34 @@
+// Force unbuffered stdout/stderr logging in non-TTY environments (like Docker)
+if (process.stdout._handle && typeof process.stdout._handle.setBlocking === 'function') {
+    process.stdout._handle.setBlocking(true);
+}
+if (process.stderr._handle && typeof process.stderr._handle.setBlocking === 'function') {
+    process.stderr._handle.setBlocking(true);
+}
+
+// Override console logging to prepend UTC timestamp (mirrors discord-joe's index.js)
+const originalLog = console.log;
+const originalWarn = console.warn;
+const originalError = console.error;
+const originalInfo = console.info;
+
+function getUTCTimestamp() {
+    return `[${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC]`;
+}
+
+console.log = function(...args) {
+    originalLog.apply(console, [getUTCTimestamp(), ...args]);
+};
+console.warn = function(...args) {
+    originalWarn.apply(console, [getUTCTimestamp(), ...args]);
+};
+console.error = function(...args) {
+    originalError.apply(console, [getUTCTimestamp(), ...args]);
+};
+console.info = function(...args) {
+    originalInfo.apply(console, [getUTCTimestamp(), ...args]);
+};
+
 const { Client, GatewayIntentBits, Partials, REST, Routes, ActivityType, Events } = require('discord.js');
 const fs = require('fs');
 const cron = require('node-cron');
@@ -30,6 +61,7 @@ const handleMessageCreate = require('./src/handlers/messageCreate');
 const handleChannelUpdate = require('./src/handlers/channelUpdate');
 const handleChannelDelete = require('./src/handlers/channelDelete');
 const { handleReactionAdd, handleReactionRemove } = require('./src/handlers/reactions');
+const { inFlightMessages } = require('./src/utils/inFlightTracker');
 
 const client = new Client({
     intents: [
@@ -723,6 +755,10 @@ async function catchUpMissedInstagramLinks() {
                 // Process missed links oldest-first
                 missedLinks.reverse();
                 for (const req of missedLinks) {
+                    if (inFlightMessages.has(req.id)) {
+                        console.log(`[Catch-Up] Skipping already-in-flight message ${req.id} from ${req.author.tag}`);
+                        continue;
+                    }
                     console.log(`[Catch-Up] Found missed Instagram link from ${req.author.tag} in ${channelId}`);
                     handleMessageCreate(client, req).catch(err => {
                         console.error('[Catch-Up] Error handling missed link:', err.message);
