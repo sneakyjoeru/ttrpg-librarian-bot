@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const axios = require('axios');
-const { instagramGetUrl } = require('instagram-url-direct');
 const snapinsta = require('snapinsta');
 const { AttachmentBuilder } = require('discord.js');
 const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT, FILE_SIZE_SAFETY_FACTOR } = require('../config');
@@ -1420,19 +1419,18 @@ function raceToBestSuccess(promises) {
 async function downloadWithScrapers(downloadUrl) {
     let mediaUrls = [];
 
-    // A. Try primary scraper (instagram-url-direct)
+    // Try snapinsta scraper (instagram-url-direct removed — its GraphQL doc_id
+    // is stale and always fails; snapinsta is the surviving scraper).
     try {
-        console.log(`[Instagram Interceptor] Trying primary scraper for: ${downloadUrl}`);
-        const scraperPromise = instagramGetUrl(downloadUrl);
+        console.log(`[Instagram Interceptor] Trying snapinsta scraper for: ${downloadUrl}`);
+        const snapPromise = snapinsta.getLinks(downloadUrl);
         const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Scraper timeout (10s)')), 10000)
+            setTimeout(() => reject(new Error('Snapinsta timeout (10s)')), 10000)
         );
-        const scrapeRes = await Promise.race([scraperPromise, timeoutPromise]);
+        const scrapeRes = await Promise.race([snapPromise, timeoutPromise]);
 
         if (scrapeRes) {
-            if (scrapeRes.url_list && Array.isArray(scrapeRes.url_list)) {
-                mediaUrls = scrapeRes.url_list.map(item => typeof item === 'object' && item.url ? item.url : item);
-            } else if (Array.isArray(scrapeRes)) {
+            if (Array.isArray(scrapeRes)) {
                 mediaUrls = scrapeRes.map(item => typeof item === 'object' && item.url ? item.url : item);
             } else if (typeof scrapeRes === 'object' && scrapeRes.url) {
                 mediaUrls = [scrapeRes.url];
@@ -1440,35 +1438,11 @@ async function downloadWithScrapers(downloadUrl) {
                 mediaUrls = [scrapeRes];
             }
         }
-    } catch (err) {
-        console.error('[Instagram Interceptor] Primary scraper failed:', err.message);
+    } catch (snapErr) {
+        console.error('[Instagram Interceptor] Snapinsta scraper failed:', snapErr.message);
     }
 
-    // B. Try fallback scraper (snapinsta) if primary scraper found nothing
-    if (mediaUrls.length === 0) {
-        try {
-            console.log(`[Instagram Interceptor] Trying snapinsta fallback for: ${downloadUrl}`);
-            const snapPromise = snapinsta.getLinks(downloadUrl);
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Snapinsta timeout (10s)')), 10000)
-            );
-            const scrapeRes = await Promise.race([snapPromise, timeoutPromise]);
-
-            if (scrapeRes) {
-                if (Array.isArray(scrapeRes)) {
-                    mediaUrls = scrapeRes.map(item => typeof item === 'object' && item.url ? item.url : item);
-                } else if (typeof scrapeRes === 'object' && scrapeRes.url) {
-                    mediaUrls = [scrapeRes.url];
-                } else if (typeof scrapeRes === 'string') {
-                    mediaUrls = [scrapeRes];
-                }
-            }
-        } catch (snapErr) {
-            console.error('[Instagram Interceptor] Snapinsta fallback failed:', snapErr.message);
-        }
-    }
-
-    // C. Download media from resolved URLs
+    // B. Download media from resolved URLs
     if (mediaUrls.length > 0) {
         console.log(`[Instagram Interceptor] Downloading ${mediaUrls.length} media items via scrapers...`);
         const attachments = [];
