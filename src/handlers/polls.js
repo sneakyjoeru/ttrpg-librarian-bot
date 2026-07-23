@@ -7,6 +7,7 @@ const {
     RANDOM_EMOJIS,
     EMBED_COLOR
 } = require('../config');
+const { getSchedule } = require('../utils/scheduling');
 
 // A message is one of our polls if it was authored by the bot and its embed
 // title starts with a poll marker and footer carries the creator marker.
@@ -143,11 +144,23 @@ async function refreshPoll(message, clientUserId) {
     const sorted = [...counts].sort((a, b) => b.count - a.count);
     const resultsField = buildResultsField(sorted);
 
+    const fields = resultsField ? [resultsField] : [];
+
+    // If this is a scheduling poll that has reached consensus, show a
+    // consensus field so the poll message itself carries the confirmed
+    // dates info alongside the ICS attachment.
+    if (embed.title && embed.title.startsWith('📅 ')) {
+        const schedState = getSchedule(message.id);
+        if (schedState && schedState.consensusField) {
+            fields.push(schedState.consensusField);
+        }
+    }
+
     const newEmbed = {
         color: EMBED_COLOR,
         title: embed.title,
         description: descriptionText,
-        fields: resultsField ? [resultsField] : []
+        fields
     };
 
     try {

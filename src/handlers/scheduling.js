@@ -18,6 +18,11 @@ const {
 } = require('../utils/scheduling');
 const { refreshPoll } = require('./polls');
 
+// In-flight lock map: prevents concurrent handleSchedulingVoteChange calls
+// for the same poll message from racing past the lastEmittedConfirmed check
+// and emitting duplicate calendar messages. Keyed by poll message ID.
+const _schedulingInFlight = new Map();
+
 // Scheduling polls reuse the live-results machinery from polls.js. They are
 // identified by an embed title prefixed with `📅 ` (vs `📊 ` for regular
 // polls). The full option list (emoji + ISO datetime + time window) is
@@ -137,6 +142,7 @@ async function createSchedulePoll(interaction) {
         roleId,
         options: options.map((o, i) => ({ emoji: emojis[i], isoDate: o.isoDate, start: o.start, end: o.end, allDay: o.allDay, label: o.label })),
         lastEmittedConfirmed: null,
+        consensusField: null,
         createdAt: Date.now()
     });
 
@@ -144,7 +150,7 @@ async function createSchedulePoll(interaction) {
     await refreshPoll(pollMessage, interaction.client.user.id).catch(console.error);
 
     return interaction.followUp({
-        content: `📅 Scheduling poll posted with ${options.length} date${options.length === 1 ? '' : 's'}${roleId ? '. When every campaign-role member has voted for the same date(s) (the DM may abstain), a Google-importable calendar (.ics) is posted automatically — and re-posted whenever the confirmed set of dates changes.' : '.'}`,
+        content: `📅 Scheduling poll posted with ${options.length} date${options.length === 1 ? '' : 's'}${roleId ? '. When every campaign-role member has voted for the same date(s) (the DM may abstain), a Google-importable calendar (.ics) is attached to this poll automatically — and updated whenever the confirmed set of dates changes.' : '.'}`,
         ephemeral: true
     }).catch(() => {});
 }
@@ -167,6 +173,21 @@ async function handleSchedulingVoteChange(message, clientUserId) {
     const embed = message.embeds[0];
     if (!isScheduleEmbed(embed)) return;
 
+    // Prevent concurrent execution for the same poll. If another call is
+    // already in-flight for this message, skip — it will either emit the
+    // calendar (updating lastEmittedConfirmed) or decide no consensus yet.
+    // Either way, re-evaluating concurrently would only race the check.
+    if (_schedulingInFlight.has(message.id)) return;
+    _schedulingInFlight.set(message.id, true);
+
+    try {
+        await _handleSchedulingVoteChangeInner(message, clientUserId);
+    } finally {
+        _schedulingInFlight.delete(message.id);
+    }
+}
+
+async function _handleSchedulingVoteChangeInner(message, clientUserId) {
     const state = getSchedule(message.id);
     if (!state) return;
     if (!state.roleId) return; // no campaign group → never auto-emit
@@ -218,7 +239,22 @@ async function handleSchedulingVoteChange(message, clientUserId) {
         if (allVoted) confirmed.push(opt);
     }
 
-    if (confirmed.length === 0) return;
+    if (confirmed.length === 0) {
+        // Consensus lost — if we previously had a consensus (attachment +
+        // consensus field on the poll), clear them so the poll reverts to
+        // its plain vote-tracking state.
+        if (state.lastEmittedConfirmed) {
+            updateSchedule(message.id, { lastEmittedConfirmed: null, consensusField: null });
+            try {
+                await message.edit({ attachments: [] }).catch(() => {});
+                await refreshPoll(message, clientUserId).catch(() => {});
+                console.log(`[Scheduling] Consensus lost for poll ${message.id}; cleared calendar attachment and consensus field.`);
+            } catch (e) {
+                console.error('[Scheduling] Failed to clear consensus from poll:', e.message);
+            }
+        }
+        return;
+    }
 
     // Signature of the confirmed set — changes whenever the unanimously-
     // confirmed dates change (grow, shrink, or swap). We emit a fresh .ics
@@ -228,6 +264,13 @@ async function handleSchedulingVoteChange(message, clientUserId) {
         .sort()
         .join('::');
     if (state.lastEmittedConfirmed === signature) return;
+
+    // Optimistically update lastEmittedConfirmed BEFORE the async edit() so
+    // that any concurrent (or immediately subsequent) handleSchedulingVoteChange
+    // call sees the new signature and skips. If the edit fails, we roll back.
+    const previousSig = state.lastEmittedConfirmed || null;
+    const previousConsensusField = state.consensusField || null;
+    updateSchedule(message.id, { lastEmittedConfirmed: signature });
 
     // Build the .ics with the unanimous options (chronological).
     confirmed.sort((a, b) => a.isoDate.localeCompare(b.isoDate));
@@ -250,21 +293,37 @@ async function handleSchedulingVoteChange(message, clientUserId) {
     const dateStamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const attachmentName = `schedule-${message.id}-${dateStamp}.ics`;
 
+    // Build a consensus field for the embed so the poll message itself
+    // shows the confirmed dates. Stored in schedule state so refreshPoll
+    // can re-include it when it rebuilds the embed on subsequent votes.
+    const dmNote = dmId && !confirmed.every(o => {
+        const reaction = message.reactions.cache.get(o.emoji);
+        if (!reaction) return false;
+        const voters = new Set(reaction.users.cache.filter(u => !u.bot).map(u => u.id));
+        return voters.has(dmId);
+    }) ? ' (DM abstained)' : '';
+    const consensusField = {
+        name: '📅 Consensus Reached',
+        value: `All ${requiredIds.size} campaign-role member${requiredIds.size === 1 ? '' : 's'}${dmId ? ' + DM' : ''} voted for ${confirmed.length === 1 ? 'this date' : 'these dates'}${dmNote}:\n${confirmed.map(o => `• ${o.label}`).join('\n')}\n*Calendar (.ics) attached — import to Google Calendar → Settings → Import & export.*`
+    };
+    updateSchedule(message.id, { consensusField });
+
     try {
-        const dmNote = dmId && !confirmed.every(o => {
-            const reaction = message.reactions.cache.get(o.emoji);
-            if (!reaction) return false;
-            const voters = new Set(reaction.users.cache.filter(u => !u.bot).map(u => u.id));
-            return voters.has(dmId);
-        }) ? ' (DM abstained)' : '';
-        await message.channel.send({
-            content: `📅 **Consensus reached!** All ${requiredIds.size} campaign-role member${requiredIds.size === 1 ? '' : 's'}${dmId ? ' + DM' : ''} voted for ${confirmed.length === 1 ? 'this date' : 'these dates'}${dmNote}:\n${confirmed.map(o => `• ${o.label}`).join('\n')}\nHere is a Google-importable calendar (.ics) — open Google Calendar → Settings → Import & export → select this file.`,
-            files: [{ attachment: buf, name: attachmentName }]
+        // Edit the poll message in place: attach the ICS file. attachments: []
+        // clears any previously-attached .ics so the new one replaces it.
+        await message.edit({
+            files: [{ attachment: buf, name: attachmentName }],
+            attachments: []
         });
-        updateSchedule(message.id, { lastEmittedConfirmed: signature });
-        console.log(`[Scheduling] Emitted ${attachmentName} for poll ${message.id} (${confirmed.length} unanimous option(s), signature ${signature}).`);
+        // Rebuild the embed so it includes the consensus field we just
+        // stored in schedule state. refreshPoll reads the consensus field
+        // from getSchedule() and appends it to the embed fields.
+        await refreshPoll(message, clientUserId).catch(() => {});
+        console.log(`[Scheduling] Updated poll ${message.id} with calendar ${attachmentName} (${confirmed.length} unanimous option(s), signature ${signature}).`);
     } catch (e) {
-        console.error('[Scheduling] Failed to post calendar file:', e.message);
+        // Roll back the optimistic update so the next vote change retries.
+        updateSchedule(message.id, { lastEmittedConfirmed: previousSig, consensusField: previousConsensusField });
+        console.error('[Scheduling] Failed to attach calendar file to poll:', e.message);
     }
 }
 

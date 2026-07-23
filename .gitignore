@@ -11,6 +11,7 @@ rebuild.lock
 watch.pid
 git-info.json
 message_counts.json
+data/schedules.json
 scratch/
 scratch
 .github/agents/Opilot.agent.md
