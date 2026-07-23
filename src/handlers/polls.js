@@ -146,9 +146,8 @@ async function refreshPoll(message, clientUserId) {
 
     const fields = resultsField ? [resultsField] : [];
 
-    // If this is a scheduling poll that has reached consensus, show a
-    // consensus field so the poll message itself carries the confirmed
-    // dates info alongside the ICS attachment.
+    // If this is a scheduling poll that has reached consensus, show the
+    // consensus field so the poll message carries the confirmed dates info.
     if (embed.title && embed.title.startsWith('📅 ')) {
         const schedState = getSchedule(message.id);
         if (schedState && schedState.consensusField) {

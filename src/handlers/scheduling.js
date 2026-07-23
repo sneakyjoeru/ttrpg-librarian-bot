@@ -18,10 +18,67 @@ const {
 } = require('../utils/scheduling');
 const { refreshPoll } = require('./polls');
 
-// In-flight lock map: prevents concurrent handleSchedulingVoteChange calls
-// for the same poll message from racing past the lastEmittedConfirmed check
-// and emitting duplicate calendar messages. Keyed by poll message ID.
+// In-flight lock: prevents concurrent handleSchedulingVoteChange calls for the
+// same poll from racing past the lastEmittedConfirmed check and posting
+// duplicate calendar attachments.
 const _schedulingInFlight = new Map();
+
+// Month lookup for reconstructing schedule state from embed labels.
+const MONTH_LOOKUP = { Jan:1, Feb:2, Mar:3, Apr:4, May:5, Jun:6, Jul:7, Aug:8, Sep:9, Oct:10, Nov:11, Dec:12 };
+
+// Reconstructs schedule state from a poll embed + channel metadata when the
+// persisted state was lost (e.g. schedules.json deleted by SMB watcher
+// before the exclude was added, or container restart). Parses the embed
+// description blocks to recover emoji + label + isoDate + time window.
+function reconstructScheduleFromEmbed(message, embed, roleId) {
+    const description = embed.description || '';
+    const blocks = description.split('\n\n').filter(Boolean);
+    const allEmojis = [...NUMBER_EMOJIS, ...RANDOM_EMOJIS];
+    const options = [];
+    const now = new Date();
+    const currentYear = now.getUTCFullYear();
+
+    for (const block of blocks) {
+        const firstLine = block.split('\n')[0];
+        for (const emoji of allEmojis) {
+            if (firstLine.startsWith(emoji)) {
+                const label = firstLine.slice(emoji.length).trim();
+                // Label format: "Sat 25 Jul" or "Sat 25 Jul 18:00-22:00"
+                const m = label.match(/^(\w{3})\s+(\d+)\s+(\w{3})(?:\s+(\d{1,2}:\d{2})-(\d{1,2}:\d{2}))?$/);
+                if (!m) break;
+                const day = parseInt(m[2], 10);
+                const month = MONTH_LOOKUP[m[3]];
+                if (!month) break;
+                // Determine the year: use current year, or next year if the
+                // date has already passed.
+                let year = currentYear;
+                const candidate = new Date(Date.UTC(year, month - 1, day));
+                if (candidate < new Date(Date.UTC(currentYear, now.getUTCMonth(), now.getUTCDate()))) {
+                    year = currentYear + 1;
+                }
+                const isoDate = `${year}${String(month).padStart(2, '0')}${String(day).padStart(2, '0')}`;
+                const start = m[4] || null;
+                const end = m[5] || null;
+                options.push({ emoji, isoDate, start, end, allDay: !start, label });
+                break;
+            }
+        }
+    }
+
+    if (options.length === 0) return null;
+
+    return {
+        channelId: message.channelId || message.channel?.id,
+        guildId: message.guildId || message.guild?.id,
+        creatorId: null,
+        roleId,
+        options,
+        lastEmittedConfirmed: null,
+        consensusField: null,
+        createdAt: Date.now(),
+        reconstructed: true
+    };
+}
 
 // Scheduling polls reuse the live-results machinery from polls.js. They are
 // identified by an embed title prefixed with `📅 ` (vs `📊 ` for regular
@@ -173,38 +230,69 @@ async function handleSchedulingVoteChange(message, clientUserId) {
     const embed = message.embeds[0];
     if (!isScheduleEmbed(embed)) return;
 
-    // Prevent concurrent execution for the same poll. If another call is
-    // already in-flight for this message, skip — it will either emit the
-    // calendar (updating lastEmittedConfirmed) or decide no consensus yet.
-    // Either way, re-evaluating concurrently would only race the check.
+    // Prevent concurrent execution for the same poll — avoids a TOCTOU race
+    // where two simultaneous reactions both pass the lastEmittedConfirmed
+    // check and each posts a calendar attachment.
     if (_schedulingInFlight.has(message.id)) return;
     _schedulingInFlight.set(message.id, true);
-
     try {
-        await _handleSchedulingVoteChangeInner(message, clientUserId);
+        await _doSchedulingVoteChange(message, clientUserId);
     } finally {
         _schedulingInFlight.delete(message.id);
     }
 }
 
-async function _handleSchedulingVoteChangeInner(message, clientUserId) {
-    const state = getSchedule(message.id);
-    if (!state) return;
+async function _doSchedulingVoteChange(message, clientUserId) {
+    let state = getSchedule(message.id);
+
+    // If the persisted state was lost (schedules.json deleted by the SMB
+    // watcher or never written), reconstruct it from the poll embed +
+    // channel metadata so the calendar can still be attached.
+    if (!state) {
+        const embed = message.embeds[0];
+        if (!embed) return;
+        // Resolve the channel's campaign role from metadata.
+        let roleId = null;
+        if (message.channel && message.channel.parentId === ACTIVE_CATEGORY_ID) {
+            const metaData = await getLibrarianData(message.channel).catch(() => null);
+            if (metaData && metaData.roleId) roleId = metaData.roleId;
+        }
+        if (!roleId) return;
+        state = reconstructScheduleFromEmbed(message, embed, roleId);
+        if (!state) return;
+        setSchedule(message.id, state);
+        console.log(`[Scheduling] Reconstructed state for poll ${message.id} from embed (${state.options.length} options, roleId ${roleId}).`);
+    }
+
     if (!state.roleId) return; // no campaign group → never auto-emit
 
-    const role = message.guild.roles.cache.get(state.roleId);
+    let role = message.guild.roles.cache.get(state.roleId);
     if (!role) return;
 
     // Consensus group = campaign role members (REQUIRED voters) + the
     // channel's DM (OPTIONAL voter). Mirrors the eligible-voter set from
     // isAllowedVoter (polls.js), excluding generic admins (server
-    // moderators, not required for campaign consensus). The DM's non-vote
+    // moderators, not required for campaign participants). The DM's non-vote
     // does NOT block consensus — if every role member voted for a date,
     // it counts as unanimous even when the DM abstained. A DM who does
     // vote is still counted toward the eligible total in the announcement.
-    const requiredIds = new Set(
+    let requiredIds = new Set(
         role.members.filter(m => !m.user.bot).map(m => m.id)
     );
+    // If the role member cache is empty, fetch all guild members to
+    // populate it (discord.js doesn't always cache all members at startup).
+    if (requiredIds.size === 0) {
+        try {
+            await message.guild.members.fetch();
+            role = message.guild.roles.cache.get(state.roleId);
+            if (!role) return;
+            requiredIds = new Set(
+                role.members.filter(m => !m.user.bot).map(m => m.id)
+            );
+        } catch (e) {
+            console.error('[Scheduling] Failed to fetch guild members:', e.message);
+        }
+    }
     if (requiredIds.size === 0) return;
     const metaData = await getLibrarianData(message.channel).catch(() => null);
     const dmId = (metaData && metaData.dmId) ? metaData.dmId : null;
@@ -240,15 +328,14 @@ async function _handleSchedulingVoteChangeInner(message, clientUserId) {
     }
 
     if (confirmed.length === 0) {
-        // Consensus lost — if we previously had a consensus (attachment +
-        // consensus field on the poll), clear them so the poll reverts to
-        // its plain vote-tracking state.
+        // Consensus lost — if we previously had a consensus, remove the
+        // calendar attachment and consensus field from the poll message.
         if (state.lastEmittedConfirmed) {
             updateSchedule(message.id, { lastEmittedConfirmed: null, consensusField: null });
             try {
                 await message.edit({ attachments: [] }).catch(() => {});
                 await refreshPoll(message, clientUserId).catch(() => {});
-                console.log(`[Scheduling] Consensus lost for poll ${message.id}; cleared calendar attachment and consensus field.`);
+                console.log(`[Scheduling] Consensus lost for poll ${message.id}; cleared calendar attachment.`);
             } catch (e) {
                 console.error('[Scheduling] Failed to clear consensus from poll:', e.message);
             }
@@ -265,11 +352,9 @@ async function _handleSchedulingVoteChangeInner(message, clientUserId) {
         .join('::');
     if (state.lastEmittedConfirmed === signature) return;
 
-    // Optimistically update lastEmittedConfirmed BEFORE the async edit() so
-    // that any concurrent (or immediately subsequent) handleSchedulingVoteChange
-    // call sees the new signature and skips. If the edit fails, we roll back.
+    // Optimistically update lastEmittedConfirmed BEFORE the async edit so a
+    // concurrent call sees the new signature and skips. Roll back on failure.
     const previousSig = state.lastEmittedConfirmed || null;
-    const previousConsensusField = state.consensusField || null;
     updateSchedule(message.id, { lastEmittedConfirmed: signature });
 
     // Build the .ics with the unanimous options (chronological).
@@ -295,7 +380,7 @@ async function _handleSchedulingVoteChangeInner(message, clientUserId) {
 
     // Build a consensus field for the embed so the poll message itself
     // shows the confirmed dates. Stored in schedule state so refreshPoll
-    // can re-include it when it rebuilds the embed on subsequent votes.
+    // re-includes it when rebuilding the embed on subsequent votes.
     const dmNote = dmId && !confirmed.every(o => {
         const reaction = message.reactions.cache.get(o.emoji);
         if (!reaction) return false;
@@ -309,21 +394,20 @@ async function _handleSchedulingVoteChangeInner(message, clientUserId) {
     updateSchedule(message.id, { consensusField });
 
     try {
-        // Edit the poll message in place: attach the ICS file. attachments: []
-        // clears any previously-attached .ics so the new one replaces it.
+        // Attach the .ics to the POLL MESSAGE itself (not a new message).
+        // attachments: [] clears any previously-attached .ics so the new one
+        // replaces it when the consensus changes.
         await message.edit({
             files: [{ attachment: buf, name: attachmentName }],
             attachments: []
         });
-        // Rebuild the embed so it includes the consensus field we just
-        // stored in schedule state. refreshPoll reads the consensus field
-        // from getSchedule() and appends it to the embed fields.
+        // Rebuild the embed so it includes the consensus field.
         await refreshPoll(message, clientUserId).catch(() => {});
-        console.log(`[Scheduling] Updated poll ${message.id} with calendar ${attachmentName} (${confirmed.length} unanimous option(s), signature ${signature}).`);
+        console.log(`[Scheduling] Attached ${attachmentName} to poll ${message.id} (${confirmed.length} unanimous option(s), signature ${signature}).`);
     } catch (e) {
-        // Roll back the optimistic update so the next vote change retries.
-        updateSchedule(message.id, { lastEmittedConfirmed: previousSig, consensusField: previousConsensusField });
-        console.error('[Scheduling] Failed to attach calendar file to poll:', e.message);
+        // Roll back the optimistic update so the next vote retries.
+        updateSchedule(message.id, { lastEmittedConfirmed: previousSig, consensusField: null });
+        console.error('[Scheduling] Failed to attach calendar to poll:', e.message);
     }
 }
 
