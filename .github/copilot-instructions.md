@@ -1,5 +1,11 @@
 # Repository Rules for AI Agents
 
+## Always Read This File First
+
+Before starting any work, **always read this file** (`.github/copilot-instructions.md`). It contains project-wide rules for AI agents and must be followed.
+
+## Agent Rules
+
 - **Integrity verification:** Start every reply with `# **---- Starting ----**` (H1 bold). Every reply MUST include a `# **==== Summary ====`` section (mandatory, never skip). The integrity separator `# **==== My Integrity is stable ====**` must appear EXACTLY ONCE per response — ONLY inside the `task_complete` tool's `summary` parameter as its last line. NEVER write it in the message text. NEVER write it twice. NEVER write any text after the `task_complete` call.
 - **Auto-Commit Changes:** When your session is over and the modifications are complete, you MUST automatically commit and push all recent changes to the Git repository. Do not leave the workspace dirty. Write a concise and clear commit message.
 - **No Local Debugging (on dev machine):** Do not attempt to run or debug the bot on the local dev machine using Docker, Node, or other execution commands. The bot is hosted and executed on a different machine instance.
