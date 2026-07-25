@@ -107,6 +107,16 @@ ollama_network_args=""
 if docker network inspect ollama_default >/dev/null 2>&1; then
     ollama_network_args="--network ollama_default"
 fi
-docker run -d --name librarian-bot --restart unless-stopped $ollama_network_args -e SHARE_PASS -e HOST_PATH="$(pwd)" -e TRANSCODER_CONTAINER -v /var/run/docker.sock:/var/run/docker.sock -v "$(pwd):/usr/src/app" -v /usr/src/app/node_modules $cookies_mount $ssh_key_mount $igpu_mount discord-librarian-bot && \
+
+# One-time extended catch-up: if CATCHUP_EXTENDED_HOURS is set in the
+# environment, pass it through to the container so the bot runs an extended
+# catch-up scan on boot (covers links posted during long outages >6h).
+catchup_env=""
+if [ -n "${CATCHUP_EXTENDED_HOURS:-}" ]; then
+    catchup_env="-e CATCHUP_EXTENDED_HOURS=${CATCHUP_EXTENDED_HOURS}"
+    echo "[rebuild-run] CATCHUP_EXTENDED_HOURS=${CATCHUP_EXTENDED_HOURS} — running extended catch-up on boot."
+fi
+
+docker run -d --name librarian-bot --restart unless-stopped $ollama_network_args -e SHARE_PASS -e HOST_PATH="$(pwd)" -e TRANSCODER_CONTAINER $catchup_env -v /var/run/docker.sock:/var/run/docker.sock -v "$(pwd):/usr/src/app" -v /usr/src/app/node_modules $cookies_mount $ssh_key_mount $igpu_mount discord-librarian-bot && \
 sleep 15 && \
 docker logs librarian-bot
