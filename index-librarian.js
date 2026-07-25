@@ -192,6 +192,20 @@ client.once(Events.ClientReady, async () => {
         console.error('[Catch-Up] Catch-up task failed:', err.message);
     });
 
+    // One-time extended catch-up: if CATCHUP_EXTENDED_HOURS env var is set,
+    // run a SECOND catch-up scan with an extended lookback window. This
+    // covers links posted during long outages (>6h) that the default 6-hour
+    // cap would miss. The env var is set temporarily via
+    // `docker run -e CATCHUP_EXTENDED_HOURS=30` and does NOT persist — it's a
+    // one-time boot task. Mirrors robot-joe's extended catch-up.
+    const extendedHours = parseInt(process.env.CATCHUP_EXTENDED_HOURS || '', 10);
+    if (!isNaN(extendedHours) && extendedHours > 6) {
+        console.log(`[Startup] Running one-time extended catch-up (${extendedHours}h lookback)...`);
+        catchUpMissedInstagramLinks(extendedHours).catch(err => {
+            console.error('[Catch-Up] Extended catch-up task failed:', err.message);
+        });
+    }
+
     // --- COMMAND REGISTRATION ---
     try {
         console.log('Started refreshing application (/) commands.');
@@ -696,11 +710,21 @@ process.on('SIGUSR2', () => {
 // After the bot comes back online, scan channels for Instagram links posted
 // during the downtime window (between rebuild_time.txt and now) that were
 // never processed. This mirrors robot-joe's catchUpMissedRequests.
-async function catchUpMissedInstagramLinks() {
+// maxLookbackHours (optional): when set, forces the scan window to exactly
+// this many hours back, ignoring rebuild_time.txt and the default 6h cap.
+// Used by the one-time extended catch-up (CATCHUP_EXTENDED_HOURS env var) to
+// cover the full downtime window when the bot was offline for a long time.
+async function catchUpMissedInstagramLinks(maxLookbackHours = null) {
     const delta = 5 * 60 * 1000;
     let startTimestamp = Date.now() - 15 * 60 * 1000; // default 15-min window
 
-    if (fs.existsSync('./rebuild_time.txt')) {
+    if (maxLookbackHours !== null) {
+        // One-time extended catch-up: force the window to maxLookbackHours,
+        // ignoring rebuild_time.txt (which was just created by this rebuild
+        // and would only cover the last few minutes).
+        startTimestamp = Date.now() - maxLookbackHours * 60 * 60 * 1000;
+        console.log(`[Catch-Up] Extended catch-up: scanning last ${maxLookbackHours}h (since ${new Date(startTimestamp).toISOString()}).`);
+    } else if (fs.existsSync('./rebuild_time.txt')) {
         try {
             const timeStr = fs.readFileSync('./rebuild_time.txt', 'utf8').trim();
             const parsed = new Date(timeStr).getTime();
@@ -708,6 +732,7 @@ async function catchUpMissedInstagramLinks() {
                 startTimestamp = parsed - delta;
                 const maxLookback = 6 * 60 * 60 * 1000;
                 if (Date.now() - startTimestamp > maxLookback) {
+                    console.log('[Catch-Up] Capping lookback time to 6 hours ago (rebuild_time was too old).');
                     startTimestamp = Date.now() - maxLookback;
                 }
                 console.log(`[Catch-Up] Loaded rebuild timestamp: ${timeStr}. Scanning since ${new Date(startTimestamp).toISOString()}`);
@@ -715,6 +740,8 @@ async function catchUpMissedInstagramLinks() {
         } catch (e) {
             console.error('[Catch-Up] Failed to read rebuild_time.txt:', e.message);
         }
+    } else {
+        console.log('[Catch-Up] No rebuild_time.txt found. Using default fallback window (last 15 minutes).');
     }
 
     try {
