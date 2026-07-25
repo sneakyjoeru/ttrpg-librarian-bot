@@ -1064,7 +1064,16 @@ async function handleInstagramProfile(client, message, profileUrl, remadeContent
     } else {
         placeholder = await sendWorkingPlaceholder(client, message, profileUrl);
     }
-    // Original message is preserved during processing (like robot-joe).
+
+    // Delete the original user message so the channel doesn't show two copies
+    // of the same link. Best-effort: skipped during recovery (synthetic message).
+    if (!isRecovery && message.guild) {
+        try {
+            await message.delete();
+        } catch (delErr) {
+            console.error('[Instagram Interceptor] Could not delete original message (bot needs Manage Messages permission):', delErr.message);
+        }
+    }
 
     await message.channel.sendTyping().catch(() => { });
     const typingInterval = setInterval(() => {
@@ -1593,9 +1602,20 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
         placeholder = recoveredPlaceholder;
         await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: recovery restart`);
     } else {
-        // Instantly create the "working" message. Original message is preserved
-        // during processing (like robot-joe).
+        // Instantly create the "working" message.
         placeholder = await sendWorkingPlaceholder(client, message, instagramUrl);
+    }
+
+    // Delete the original user message so the channel doesn't show two copies
+    // of the same link (the user's raw link + the bot's replacement). Best-effort:
+    // if the bot lacks Manage Messages permission the original stays and we just
+    // log it. Skipped during recovery (the message is synthetic / already gone).
+    if (!isRecovery && message.guild) {
+        try {
+            await message.delete();
+        } catch (delErr) {
+            console.error('[Instagram Interceptor] Could not delete original message (bot needs Manage Messages permission):', delErr.message);
+        }
     }
 
     // Start typing indicator
@@ -1652,32 +1672,37 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
             const runParallelScrapers = async () => {
                 console.log(`[Instagram Interceptor] Trying parallel download options...`);
                 await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: trying parallel scraper`);
+                let timeoutId = null;
                 const timeoutPromise = new Promise((resolve) => {
-                    setTimeout(() => {
+                    timeoutId = setTimeout(() => {
                         console.log(`[Instagram Interceptor] Parallel scrapers timed out after 35s`);
                         resolve(null);
                     }, 35000);
                 });
 
-                const parallelResults = await Promise.race([
-                    raceToBestSuccess([
-                        downloadWithYtDlp(downloadUrl),
-                        downloadWithScrapers(downloadUrl)
-                    ]),
-                    timeoutPromise
-                ]);
+                try {
+                    const parallelResults = await Promise.race([
+                        raceToBestSuccess([
+                            downloadWithYtDlp(downloadUrl),
+                            downloadWithScrapers(downloadUrl)
+                        ]),
+                        timeoutPromise
+                    ]);
 
-                if (parallelResults && parallelResults.length > 0) {
-                    if (parallelResults.isRestrictedVideoFallback) {
-                        console.log(`[Instagram Interceptor] Parallel scrapers resolved only restricted fallback.`);
-                        if (!fallbackAttachments) {
-                            fallbackAttachments = parallelResults;
+                    if (parallelResults && parallelResults.length > 0) {
+                        if (parallelResults.isRestrictedVideoFallback) {
+                            console.log(`[Instagram Interceptor] Parallel scrapers resolved only restricted fallback.`);
+                            if (!fallbackAttachments) {
+                                fallbackAttachments = parallelResults;
+                            }
+                        } else {
+                            attachments = parallelResults;
+                            downloadSuccess = true;
+                            console.log(`[Instagram Interceptor] Successfully downloaded ${attachments.length} items using parallel strategy`);
                         }
-                    } else {
-                        attachments = parallelResults;
-                        downloadSuccess = true;
-                        console.log(`[Instagram Interceptor] Successfully downloaded ${attachments.length} items using parallel strategy`);
                     }
+                } finally {
+                    clearTimeout(timeoutId);
                 }
             };
 
