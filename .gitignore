@@ -4,6 +4,8 @@ node_modules/
 *.log
 cookies.txt
 instagram-cookies.txt
+.ssh/
+.ssh
 id_rsa
 id_ed25519
 id_ed25519_bot
