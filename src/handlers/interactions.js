@@ -310,12 +310,8 @@ async function handleInteraction(client, interaction) {
             if (!channel && interaction.channelId) {
                 channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
             }
-            // If invoked inside a thread (e.g. a forum post), walk up to the parent channel where threads can be created.
-            if (channel && channel.isThread?.() && channel.parentId) {
-                channel = await interaction.client.channels.fetch(channel.parentId).catch(() => channel.parent) || channel.parent;
-            }
             if (!channel || !channel.threads) {
-                return interaction.reply({ content: 'This command can only be used in a text channel or forum channel. Run /new-thread from a text channel or forum channel.', ephemeral: true });
+                return interaction.reply({ content: 'This command can only be used in a text channel or forum channel — not inside an existing thread (threads cannot be nested). Run /new-thread from a text channel or the forum channel itself.', ephemeral: true });
             }
             const isForum = channel.type === ChannelType.GuildForum || channel.type === ChannelType.GuildMedia;
             const createOpts = {
@@ -352,12 +348,8 @@ async function handleInteraction(client, interaction) {
             if (!channel && interaction.channelId) {
                 channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
             }
-            // If invoked inside a thread (e.g. a forum post), walk up to the parent channel where threads can be created.
-            if (channel && channel.isThread?.() && channel.parentId) {
-                channel = await interaction.client.channels.fetch(channel.parentId).catch(() => channel.parent) || channel.parent;
-            }
             if (!channel || !channel.threads) {
-                return interaction.reply({ content: 'This command can only be used in a text channel or forum channel. Run /new-private-thread from a text channel or forum channel.', ephemeral: true });
+                return interaction.reply({ content: 'This command can only be used in a text channel or forum channel — not inside an existing thread (threads cannot be nested). Run /new-private-thread from a text channel or the forum channel itself.', ephemeral: true });
             }
             const isForum = channel.type === ChannelType.GuildForum || channel.type === ChannelType.GuildMedia;
             const createOpts = {
