@@ -310,8 +310,12 @@ async function handleInteraction(client, interaction) {
             if (!channel && interaction.channelId) {
                 channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
             }
+            // If invoked inside a thread (e.g. a forum post), walk up to the parent channel where threads can be created.
+            if (channel && channel.isThread?.() && channel.parentId) {
+                channel = await interaction.client.channels.fetch(channel.parentId).catch(() => channel.parent) || channel.parent;
+            }
             if (!channel || !channel.threads) {
-                return interaction.reply({ content: 'This command must be used in a text channel or forum channel — not inside an existing thread. You are currently in a thread, and threads cannot be nested. Run /new-thread from the parent channel instead.', ephemeral: true });
+                return interaction.reply({ content: 'This command can only be used in a text channel or forum channel. Run /new-thread from a text channel or forum channel.', ephemeral: true });
             }
             const thread = await channel.threads.create({
                 name: tName,
@@ -337,8 +341,12 @@ async function handleInteraction(client, interaction) {
             if (!channel && interaction.channelId) {
                 channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
             }
+            // If invoked inside a thread (e.g. a forum post), walk up to the parent channel where threads can be created.
+            if (channel && channel.isThread?.() && channel.parentId) {
+                channel = await interaction.client.channels.fetch(channel.parentId).catch(() => channel.parent) || channel.parent;
+            }
             if (!channel || !channel.threads) {
-                return interaction.reply({ content: 'This command must be used in a text channel or forum channel — not inside an existing thread. You are currently in a thread, and threads cannot be nested. Run /new-private-thread from the parent channel instead.', ephemeral: true });
+                return interaction.reply({ content: 'This command can only be used in a text channel or forum channel. Run /new-private-thread from a text channel or forum channel.', ephemeral: true });
             }
             const thread = await channel.threads.create({
                 name: 'Private Thread',
