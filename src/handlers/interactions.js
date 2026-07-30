@@ -306,6 +306,9 @@ async function handleInteraction(client, interaction) {
     if (commandName === 'new-thread') {
         const tName = interaction.options.getString('threadname');
         try {
+            if (!interaction.channel || !interaction.channel.threads) {
+                return interaction.reply({ content: 'This command can only be used in a text channel.', ephemeral: true });
+            }
             const thread = await interaction.channel.threads.create({
                 name: tName,
                 autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY,
@@ -326,6 +329,9 @@ async function handleInteraction(client, interaction) {
         const matches = [...usersInput.matchAll(userRegex)];
 
         try {
+            if (!interaction.channel || !interaction.channel.threads) {
+                return interaction.reply({ content: 'This command can only be used in a text channel.', ephemeral: true });
+            }
             const thread = await interaction.channel.threads.create({
                 name: 'Private Thread',
                 autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY,
