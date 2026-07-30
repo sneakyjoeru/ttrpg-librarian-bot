@@ -311,7 +311,7 @@ async function handleInteraction(client, interaction) {
                 channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
             }
             if (!channel || !channel.threads) {
-                return interaction.reply({ content: 'This command can only be used in a text channel or forum channel — not inside an existing thread (threads cannot be nested). Run /new-thread from a text channel or the forum channel itself.', ephemeral: true });
+                return interaction.reply({ content: '⚠️ **Can\'t create a thread here.**\n\nYou\'re currently inside a **thread** (this includes forum posts — every post in a forum channel is itself a thread). Discord does not allow threads inside other threads; they can only be created inside a regular text channel or a forum channel.\n\n**To create a thread:** go to a **text channel** or the **forum channel itself** (not inside a post), then run `/new-thread`.\n\n• In a text channel → creates a public thread in that channel.\n• In a forum channel → creates a new forum post.', ephemeral: true });
             }
             const isForum = channel.type === ChannelType.GuildForum || channel.type === ChannelType.GuildMedia;
             const createOpts = {
@@ -349,7 +349,7 @@ async function handleInteraction(client, interaction) {
                 channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
             }
             if (!channel || !channel.threads) {
-                return interaction.reply({ content: 'This command can only be used in a text channel or forum channel — not inside an existing thread (threads cannot be nested). Run /new-private-thread from a text channel or the forum channel itself.', ephemeral: true });
+                return interaction.reply({ content: '⚠️ **Can\'t create a private thread here.**\n\nYou\'re currently inside a **thread** (this includes forum posts — every post in a forum channel is itself a thread). Discord does not allow threads inside other threads; they can only be created inside a regular text channel or a forum channel.\n\n**To create a private thread:** go to a **text channel** or the **forum channel itself** (not inside a post), then run `/new-private-thread`.\n\n• In a text channel → creates a private thread in that channel.\n• In a forum channel → creates a new forum post.', ephemeral: true });
             }
             const isForum = channel.type === ChannelType.GuildForum || channel.type === ChannelType.GuildMedia;
             const createOpts = {
