@@ -324,7 +324,11 @@ async function handleInteraction(client, interaction) {
             };
             if (isForum) {
                 // Forum posts require an initial message and cannot set the thread type.
-                createOpts.message = { content: `Thread created by ${interaction.user}` };
+                createOpts.message = { content: `Thread created by ${interaction.user}` || ' ' };
+                // Some forum channels require at least one tag to create a post.
+                if (channel.availableTags && channel.availableTags.length > 0) {
+                    createOpts.appliedTags = [channel.availableTags[0].id];
+                }
             } else {
                 createOpts.type = ChannelType.PublicThread;
             }
@@ -362,7 +366,11 @@ async function handleInteraction(client, interaction) {
             };
             if (isForum) {
                 // Forum posts require an initial message and cannot set the thread type.
-                createOpts.message = { content: `Private thread created by ${interaction.user}` };
+                createOpts.message = { content: `Private thread created by ${interaction.user}` || ' ' };
+                // Some forum channels require at least one tag to create a post.
+                if (channel.availableTags && channel.availableTags.length > 0) {
+                    createOpts.appliedTags = [channel.availableTags[0].id];
+                }
             } else {
                 createOpts.type = ChannelType.PrivateThread;
             }
