@@ -311,7 +311,7 @@ async function handleInteraction(client, interaction) {
                 channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
             }
             if (!channel || !channel.threads) {
-                return interaction.reply({ content: 'This command can only be used in a text channel.', ephemeral: true });
+                return interaction.reply({ content: 'This command must be used in a text channel or forum channel — not inside an existing thread. You are currently in a thread, and threads cannot be nested. Run /new-thread from the parent channel instead.', ephemeral: true });
             }
             const thread = await channel.threads.create({
                 name: tName,
@@ -338,7 +338,7 @@ async function handleInteraction(client, interaction) {
                 channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
             }
             if (!channel || !channel.threads) {
-                return interaction.reply({ content: 'This command can only be used in a text channel.', ephemeral: true });
+                return interaction.reply({ content: 'This command must be used in a text channel or forum channel — not inside an existing thread. You are currently in a thread, and threads cannot be nested. Run /new-private-thread from the parent channel instead.', ephemeral: true });
             }
             const thread = await channel.threads.create({
                 name: 'Private Thread',
