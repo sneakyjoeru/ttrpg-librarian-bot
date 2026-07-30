@@ -306,10 +306,14 @@ async function handleInteraction(client, interaction) {
     if (commandName === 'new-thread') {
         const tName = interaction.options.getString('threadname');
         try {
-            if (!interaction.channel || !interaction.channel.threads) {
+            let channel = interaction.channel;
+            if (!channel && interaction.channelId) {
+                channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
+            }
+            if (!channel || !channel.threads) {
                 return interaction.reply({ content: 'This command can only be used in a text channel.', ephemeral: true });
             }
-            const thread = await interaction.channel.threads.create({
+            const thread = await channel.threads.create({
                 name: tName,
                 autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY,
                 type: ChannelType.PublicThread
@@ -329,10 +333,14 @@ async function handleInteraction(client, interaction) {
         const matches = [...usersInput.matchAll(userRegex)];
 
         try {
-            if (!interaction.channel || !interaction.channel.threads) {
+            let channel = interaction.channel;
+            if (!channel && interaction.channelId) {
+                channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
+            }
+            if (!channel || !channel.threads) {
                 return interaction.reply({ content: 'This command can only be used in a text channel.', ephemeral: true });
             }
-            const thread = await interaction.channel.threads.create({
+            const thread = await channel.threads.create({
                 name: 'Private Thread',
                 autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY,
                 type: ChannelType.PrivateThread
