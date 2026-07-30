@@ -317,11 +317,18 @@ async function handleInteraction(client, interaction) {
             if (!channel || !channel.threads) {
                 return interaction.reply({ content: 'This command can only be used in a text channel or forum channel. Run /new-thread from a text channel or forum channel.', ephemeral: true });
             }
-            const thread = await channel.threads.create({
+            const isForum = channel.type === ChannelType.GuildForum || channel.type === ChannelType.GuildMedia;
+            const createOpts = {
                 name: tName,
-                autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY,
-                type: ChannelType.PublicThread
-            });
+                autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY
+            };
+            if (isForum) {
+                // Forum posts require an initial message and cannot set the thread type.
+                createOpts.message = { content: `Thread created by ${interaction.user}` };
+            } else {
+                createOpts.type = ChannelType.PublicThread;
+            }
+            const thread = await channel.threads.create(createOpts);
             await interaction.reply({ content: `Thread created: ${thread}`, ephemeral: true });
         } catch (e) {
             console.error(e);
@@ -348,11 +355,18 @@ async function handleInteraction(client, interaction) {
             if (!channel || !channel.threads) {
                 return interaction.reply({ content: 'This command can only be used in a text channel or forum channel. Run /new-private-thread from a text channel or forum channel.', ephemeral: true });
             }
-            const thread = await channel.threads.create({
+            const isForum = channel.type === ChannelType.GuildForum || channel.type === ChannelType.GuildMedia;
+            const createOpts = {
                 name: 'Private Thread',
-                autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY,
-                type: ChannelType.PrivateThread
-            });
+                autoArchiveDuration: THREAD_AUTO_ARCHIVE_DURATION_ONE_DAY
+            };
+            if (isForum) {
+                // Forum posts require an initial message and cannot set the thread type.
+                createOpts.message = { content: `Private thread created by ${interaction.user}` };
+            } else {
+                createOpts.type = ChannelType.PrivateThread;
+            }
+            const thread = await channel.threads.create(createOpts);
             for (const m of matches) {
                 await thread.members.add(m[1]).catch(() => { });
             }
