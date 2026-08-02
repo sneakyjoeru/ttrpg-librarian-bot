@@ -1,6 +1,6 @@
 const { PermissionFlagsBits } = require('discord.js');
 const fs = require('fs');
-const { getLibrarianData } = require('../utils/helpers');
+const { getLibrarianData, syncChannelNameToRoleCount } = require('../utils/helpers');
 const { handleInstagramMessage } = require('../services/instagram');
 const { handleTwitterMessage } = require('./twitterHandler');
 const { handleFacebookMessage } = require('./facebookHandler');
@@ -714,6 +714,9 @@ async function _handleMessageCreateInner(client, message) {
                 } catch (mentionErr) {
                     console.warn('[OP Workflow] Failed to scan early messages for mentions:', mentionErr.message);
                 }
+
+                // Sync the channel name to the updated role member count.
+                await syncChannelNameToRoleCount(message.channel, role).catch(() => { });
             } catch (err) {
                 console.error('Failed to process OP workflow:', err);
             }

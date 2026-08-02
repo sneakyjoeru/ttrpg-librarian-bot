@@ -1,4 +1,4 @@
-const { getLibrarianData } = require('../utils/helpers');
+const { getLibrarianData, syncChannelNameToRoleCount } = require('../utils/helpers');
 const { SERVER_ID, EMOJI_ROBOT, EMOJI_HAND } = require('../config');
 const { handlePollReactionAdd, handlePollReactionRemove } = require('./polls');
 const { handleSchedulingVoteChange } = require('./scheduling');
@@ -23,6 +23,8 @@ async function handleReactionAdd(reaction, user) {
                 if (role) {
                     const member = await reaction.message.guild.members.fetch(user.id);
                     await member.roles.add(role).catch(console.error);
+                    // Update the channel name to reflect the new player count.
+                    await syncChannelNameToRoleCount(reaction.message.channel, role).catch(() => {});
                 }
             }
         }
@@ -49,6 +51,8 @@ async function handleReactionRemove(reaction, user) {
                 if (role) {
                     const member = await reaction.message.guild.members.fetch(user.id);
                     await member.roles.remove(role).catch(console.error);
+                    // Update the channel name to reflect the new player count.
+                    await syncChannelNameToRoleCount(reaction.message.channel, role).catch(() => {});
                 }
             }
         }
