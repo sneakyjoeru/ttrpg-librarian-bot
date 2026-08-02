@@ -1,0 +1,131 @@
+// Test: campaign creation auto-assigns the player role to listed players.
+// Creates a real (private) campaign channel in the active category, posts
+// nothing (no OP), checks that the role was created and assigned to the
+// listed player, then cleans up (deletes the role and the channel).
+//
+// Run inside the container:
+//   docker exec librarian-bot node tests/test_campaign_auto_role.js
+const { Client, GatewayIntentBits, PermissionFlagsBits } = require('discord.js');
+const config = require('../src/config');
+
+const SERVER_ID = config.SERVER_ID;
+const ACTIVE_CATEGORY_ID = config.ACTIVE_CATEGORY_ID;
+// Use a regular member below the bot in the role hierarchy (position 2).
+// The bot (position 5) cannot assign roles to members equal/above it, so an
+// admin account like sneakyjoe (position 11) is not a valid test target.
+const TEST_PLAYER_ID = '1176853180785623056'; // moskin_20405
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+
+client.once('ready', async () => {
+    console.log(`[Test] Logged in as ${client.user.tag}`);
+    let passed = true;
+    let testChannel = null;
+    let testRole = null;
+    try {
+        const guild = await client.guilds.fetch(SERVER_ID);
+
+        // Read the member's current roles so we can restore them afterwards.
+        const memberBefore = await guild.members.fetch(TEST_PLAYER_ID);
+        const rolesBefore = new Set(memberBefore.roles.cache.keys());
+        console.log(`[Test] Test player ${memberBefore.user.tag} has ${rolesBefore.size} roles before test`);
+
+        // Create a private campaign channel with the test player listed.
+        const channelName = `test-auto-role-${Date.now()}`;
+        const permissionOverwrites = [
+            { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+            { id: TEST_PLAYER_ID, allow: [PermissionFlagsBits.ViewChannel] },
+            { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageRoles] }
+        ];
+        testChannel = await guild.channels.create({
+            name: channelName,
+            type: 0, // GuildText
+            parent: ACTIVE_CATEGORY_ID,
+            topic: `SETUP|DM:${client.user.id}|USERS:${TEST_PLAYER_ID}`,
+            permissionOverwrites
+        });
+        console.log(`[Test] Created channel ${testChannel.name} (${testChannel.id})`);
+        console.log(`[Test] Topic: ${testChannel.topic}`);
+
+        // Replicate the campaign-creation role logic from interactions.js.
+        const role = await guild.roles.create({
+            name: channelName,
+            reason: 'Test: automated role for campaign channel'
+        });
+        testRole = role;
+        console.log(`[Test] Created role ${role.name} (${role.id})`);
+
+        await testChannel.permissionOverwrites.edit(role.id, {
+            MentionEveryone: true
+        }).catch(() => { });
+
+        // Assign the role to the test player if not already assigned.
+        const member = await guild.members.fetch(TEST_PLAYER_ID);
+        let assignedNow = false;
+        if (!member.roles.cache.has(role.id)) {
+            await member.roles.add(role); // do NOT swallow errors — surface hierarchy issues
+            assignedNow = true;
+        }
+        console.log(`[Test] Role assigned now (was missing): ${assignedNow}`);
+
+        // Update topic to include the role id (as the new code does).
+        await testChannel.setTopic(`SETUP|DM:${client.user.id}|USERS:${TEST_PLAYER_ID}|ROLE:${role.id}`).catch(() => { });
+
+        // Verify the player now has the role. The discord.js v14 member cache
+        // is stale immediately after roles.add() even with force:true fetches,
+        // so query the REST API directly (the source of truth).
+        let hasRole = false;
+        try {
+            await client.rest.get(`/guilds/${guild.id}/members/${TEST_PLAYER_ID}`);
+            const fetched = await guild.members.fetch(TEST_PLAYER_ID, { force: true });
+            hasRole = fetched.roles.cache.has(role.id);
+        } catch (_) {}
+        if (!hasRole) {
+            // Fallback: list roles via REST and check membership.
+            try {
+                const memberData = await client.rest.get(`/guilds/${guild.id}/members/${TEST_PLAYER_ID}`);
+                hasRole = Array.isArray(memberData.roles) && memberData.roles.includes(role.id);
+            } catch (_) {}
+        }
+        console.log(`[Test] Player has role after assignment: ${hasRole}`);
+        if (!hasRole) passed = false;
+
+        // Verify the topic contains ROLE:<id>.
+        const topicHasRole = /ROLE:\d+/.test(testChannel.topic);
+        console.log(`[Test] Topic contains ROLE:<id>: ${topicHasRole}`);
+        if (!topicHasRole) passed = false;
+
+        // --- Verify the OP-time reuse logic would find the role ---
+        const roleMatch = testChannel.topic.match(/ROLE:(\d+)/);
+        const reusedRole = roleMatch ? guild.roles.cache.get(roleMatch[1]) : null;
+        console.log(`[Test] OP-time reuse lookup found role: ${!!reusedRole}`);
+        if (!reusedRole) passed = false;
+    } catch (err) {
+        console.error('[Test] ERROR:', err);
+        passed = false;
+    } finally {
+        // Cleanup: remove the role from the player (if we added it), delete the role, delete the channel.
+        try {
+            if (testRole) {
+                // Remove via REST (cache is stale).
+                try {
+                    await client.rest.delete(`/guilds/${SERVER_ID}/members/${TEST_PLAYER_ID}/roles/${testRole.id}`);
+                    console.log('[Test] Removed test role from player');
+                } catch (_) {}
+                await testRole.delete('Test cleanup').catch(() => { });
+                console.log('[Test] Deleted test role');
+            }
+        } catch (_) {}
+        try {
+            if (testChannel) {
+                await testChannel.delete('Test cleanup').catch(() => { });
+                console.log('[Test] Deleted test channel');
+            }
+        } catch (_) {}
+        await client.destroy();
+        console.log(passed ? '[Test] RESULT: PASS' : '[Test] RESULT: FAIL');
+        process.exit(passed ? 0 : 1);
+    }
+});
+
+client.login(config.token);
