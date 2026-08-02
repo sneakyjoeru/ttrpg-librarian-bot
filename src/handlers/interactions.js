@@ -297,7 +297,46 @@ async function handleInteraction(client, interaction) {
                 permissionOverwrites: permissionOverwrites
             });
 
-            await interaction.reply({ content: `Channel created: ${channel}. Waiting for DM to post OP to generate roles.`, ephemeral: true });
+            // If a list of players was provided, create the campaign role
+            // immediately and assign it to those players (if not already
+            // assigned). The role ID is stored in the SETUP topic so the
+            // OP-time workflow reuses this role instead of creating a
+            // duplicate.
+            let roleId = null;
+            let assignedCount = 0;
+            if (userIds.length > 0) {
+                try {
+                    const role = await interaction.guild.roles.create({
+                        name: finalChannelName,
+                        reason: 'Automated role for new campaign channel'
+                    });
+                    roleId = role.id;
+
+                    await channel.permissionOverwrites.edit(role.id, {
+                        MentionEveryone: true
+                    }).catch(() => { });
+
+                    for (const uid of userIds) {
+                        const member = await interaction.guild.members.fetch(uid).catch(() => null);
+                        if (member) {
+                            if (!member.roles.cache.has(role.id)) {
+                                await member.roles.add(role).catch(() => { });
+                            }
+                            assignedCount++;
+                        }
+                    }
+
+                    const setupTopic = `SETUP|DM:${interaction.user.id}|USERS:${userIds.join(',')}|ROLE:${roleId}`;
+                    await channel.setTopic(setupTopic).catch(() => { });
+                } catch (roleErr) {
+                    console.error('Failed to create/assign campaign role at creation:', roleErr);
+                }
+            }
+
+            const msg = roleId
+                ? `Channel created: ${channel}. Campaign role created and assigned to ${assignedCount} player(s). Waiting for DM to post OP.`
+                : `Channel created: ${channel}. Waiting for DM to post OP to generate roles.`;
+            await interaction.reply({ content: msg, ephemeral: true });
         } catch (e) {
             console.error(e);
             await interaction.reply({ content: 'Failed to create channel.', ephemeral: true });

@@ -618,10 +618,17 @@ async function _handleMessageCreateInner(client, message) {
                 await message.react(EMOJI_ROBOT);
                 await message.react(EMOJI_HAND);
 
-                const role = await message.guild.roles.create({
-                    name: message.channel.name,
-                    reason: 'Automated role for new active campaign channel'
-                });
+                // Reuse an existing campaign role if one was created at
+                // channel-creation time (SETUP|...|ROLE:<id>). Otherwise create
+                // a fresh role.
+                const roleMatch = topic.match(/ROLE:(\d+)/);
+                let role = roleMatch ? message.guild.roles.cache.get(roleMatch[1]) : null;
+                if (!role) {
+                    role = await message.guild.roles.create({
+                        name: message.channel.name,
+                        reason: 'Automated role for new active campaign channel'
+                    });
+                }
 
                 await message.channel.permissionOverwrites.edit(role.id, {
                     MentionEveryone: true
@@ -632,7 +639,9 @@ async function _handleMessageCreateInner(client, message) {
                     const usersToRole = userMatch[1].split(',');
                     for (const uid of usersToRole) {
                         const member = await message.guild.members.fetch(uid).catch(() => null);
-                        if (member) await member.roles.add(role).catch(() => { });
+                        if (member && !member.roles.cache.has(role.id)) {
+                            await member.roles.add(role).catch(() => { });
+                        }
                     }
                 }
 
