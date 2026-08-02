@@ -15,6 +15,42 @@ async function getLibrarianData(channel) {
 }
 
 /**
+ * Updates the campaign channel name (and role name) to reflect the current
+ * number of members holding the campaign role. The channel name format is
+ * `campaignName-creatorName-playerCount` — only the trailing number changes.
+ *
+ * Called after role add/remove (✋ reaction, OP-time assignment, mention
+ * auto-add) so the count stays in sync with the actual player roster.
+ *
+ * Discord limits channel renames to 2 per 10 minutes, so this is a best-effort
+ * update: if it fails (rate limit) the change is silently skipped.
+ *
+ * @param {import('discord.js').GuildChannel} channel  The campaign text channel.
+ * @param {import('discord.js').Role}        role     The campaign role.
+ */
+async function syncChannelNameToRoleCount(channel, role) {
+    if (!channel || !role || !channel.guild) return;
+    try {
+        const parts = channel.name.split('-');
+        if (parts.length < 2) return; // unexpected format
+
+        const newCount = role.members.size;
+        const currentCount = parseInt(parts[parts.length - 1], 10);
+        if (isNaN(currentCount) || currentCount === newCount) return; // no change needed
+
+        const newName = [...parts.slice(0, -1), newCount].join('-');
+
+        if (newName === channel.name) return;
+
+        await channel.setName(newName, 'Player count sync').catch(() => { });
+        // Keep the role name in sync with the channel name (mirrors /update-players).
+        await role.setName(newName).catch(() => { });
+    } catch (err) {
+        console.warn('syncChannelNameToRoleCount failed:', err.message);
+    }
+}
+
+/**
  * Estimates token size of prompt string
  */
 function estimateTokens(str) {
@@ -101,6 +137,7 @@ function getLastUpdates(count = 5) {
 
 module.exports = {
     getLibrarianData,
+    syncChannelNameToRoleCount,
     estimateTokens,
     isHistoryOrAnalysisQuery,
     getLastUpdates

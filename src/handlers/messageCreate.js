@@ -1,6 +1,6 @@
 const { PermissionFlagsBits } = require('discord.js');
 const fs = require('fs');
-const { getLibrarianData } = require('../utils/helpers');
+const { getLibrarianData, syncChannelNameToRoleCount } = require('../utils/helpers');
 const { handleInstagramMessage } = require('../services/instagram');
 const { handleTwitterMessage } = require('./twitterHandler');
 const { handleFacebookMessage } = require('./facebookHandler');
@@ -17,6 +17,7 @@ const {
     EMOJI_ROBOT,
     EMOJI_HAND,
     SNEAKYJOE_USER_ID,
+    DISCORD_START_SNOWFLAKE,
     helpText
 } = require('../config');
 
@@ -683,6 +684,39 @@ async function _handleMessageCreateInner(client, message) {
 
                 const finalDmId = dmId || message.author.id;
                 await message.channel.setTopic(`Active Campaign [LIBRARIAN_DATA|DM:${finalDmId}|ROLE:${role.id}]`);
+
+                // --- Auto-add mentioned users as channel players ---
+                // Scan the first 10 messages of the channel for user mentions
+                // (the OP + follow-up replies). Any mentioned user who is not
+                // already in the campaign role gets added to it so they receive
+                // the role's @mentions for scheduling/announcements.
+                try {
+                    const earlyMessages = await message.channel.messages.fetch({ after: DISCORD_START_SNOWFLAKE, limit: 10 });
+                    const mentionedIds = new Set();
+                    for (const m of earlyMessages.values()) {
+                        for (const u of m.mentions.users.values()) {
+                            if (u.id !== client.user.id && !u.bot) {
+                                mentionedIds.add(u.id);
+                            }
+                        }
+                    }
+                    let addedFromMentions = 0;
+                    for (const uid of mentionedIds) {
+                        const member = await message.guild.members.fetch(uid).catch(() => null);
+                        if (member && !member.roles.cache.has(role.id)) {
+                            await member.roles.add(role).catch(() => { });
+                            addedFromMentions++;
+                        }
+                    }
+                    if (addedFromMentions > 0) {
+                        console.log(`[OP Workflow] Auto-added ${addedFromMentions} mentioned user(s) to campaign role ${role.name} (${role.id}) from first 10 messages in ${message.channel.name}.`);
+                    }
+                } catch (mentionErr) {
+                    console.warn('[OP Workflow] Failed to scan early messages for mentions:', mentionErr.message);
+                }
+
+                // Sync the channel name to the updated role member count.
+                await syncChannelNameToRoleCount(message.channel, role).catch(() => { });
             } catch (err) {
                 console.error('Failed to process OP workflow:', err);
             }
