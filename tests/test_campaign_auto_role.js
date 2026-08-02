@@ -10,7 +10,10 @@ const config = require('../src/config');
 
 const SERVER_ID = config.SERVER_ID;
 const ACTIVE_CATEGORY_ID = config.ACTIVE_CATEGORY_ID;
-const TEST_PLAYER_ID = config.SNEAKYJOE_USER_ID; // use the host owner as the test "player"
+// Use a regular member below the bot in the role hierarchy (position 2).
+// The bot (position 5) cannot assign roles to members equal/above it, so an
+// admin account like sneakyjoe (position 11) is not a valid test target.
+const TEST_PLAYER_ID = '1176853180785623056'; // moskin_20405
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
 
@@ -60,7 +63,7 @@ client.once('ready', async () => {
         const member = await guild.members.fetch(TEST_PLAYER_ID);
         let assignedNow = false;
         if (!member.roles.cache.has(role.id)) {
-            await member.roles.add(role).catch(() => { });
+            await member.roles.add(role); // do NOT swallow errors — surface hierarchy issues
             assignedNow = true;
         }
         console.log(`[Test] Role assigned now (was missing): ${assignedNow}`);
