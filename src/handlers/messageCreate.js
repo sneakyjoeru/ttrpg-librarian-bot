@@ -599,6 +599,42 @@ async function _handleMessageCreateInner(client, message) {
         return;
     }
 
+    // --- Role-mention fallback ---
+    // Some users ping the bot's ROLE (<@&ROLE_ID>) instead of the bot account
+    // (<@USER_ID>). message.mentions.users does not include role mentions, so
+    // the handler above is skipped. As a fallback, if the message contains one
+    // or more role mentions AND the bot member itself holds that role, treat it
+    // as a direct bot mention: strip the role mention(s) and run the RAG query.
+    if (message.mentions.roles.size > 0 && message.guild) {
+        const botMember = message.guild.members.resolve(client.user.id);
+        if (botMember && botMember.roles.cache.size > 1 /* has a role beyond @everyone */) {
+            const botRoleIds = botMember.roles.cache.keys();
+            const matchedRoleIds = [...message.mentions.roles.keys()].filter(rid => botRoleIds.some(bid => bid === rid));
+            if (matchedRoleIds.length > 0) {
+                let query = message.content;
+                for (const rid of matchedRoleIds) {
+                    query = query.replace(new RegExp(`<@&${rid}>`, 'g'), '');
+                }
+                // Also strip any leftover user mentions of the bot (in case both
+                // were used) so the query is clean.
+                query = query.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
+
+                if (query.length === 0) {
+                    try {
+                        return await message.reply(helpText);
+                    } catch (err) {
+                        console.error('Failed to send help text (role mention):', err);
+                    }
+                    return;
+                }
+
+                console.log(`[Mention] Role-mention fallback triggered by ${message.author.tag} (${message.author.id}) in ${message.channel.id}; matched role(s): ${matchedRoleIds.join(', ')}`);
+                await handleRagQuery(client, message, query);
+                return;
+            }
+        }
+    }
+
     if (message.channel.parentId === ACTIVE_CATEGORY_ID && !message.channel.isThread()) {
         const topic = message.channel.topic || '';
         const content = message.content.trim();
