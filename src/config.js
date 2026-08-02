@@ -6,6 +6,7 @@ const SECRETS_PATH = './secrets_discord.php';
 const SERVER_ID = '1294242036492406837';             // The ID of the Discord Guild/Server the bot operates on
 const ACTIVE_CATEGORY_ID = '1294261463808217088';     // Category ID where active campaign text channels are created
 const ARCHIVED_CATEGORY_ID = '1294261512780906526';   // Category ID where archived campaign channels are stored
+const GAME_INVITATIONS_FORUM_ID = '1485408769239421038'; // Forum channel where game invitations are posted as threads; thread owners (OPs) can pin/unpin inside
 const DM_ROLE_ID = '1294335928759746560';             // Role ID of Dungeon Masters who have administrative access to game campaigns
 const ADMIN_ROLE_ID = '1294255902957764670';           // Role ID of server Administrators; granted the higher-tier DeepSeek quota
 
@@ -259,6 +260,7 @@ module.exports = {
     SERVER_ID,
     ACTIVE_CATEGORY_ID,
     ARCHIVED_CATEGORY_ID,
+    GAME_INVITATIONS_FORUM_ID,
     DM_ROLE_ID,
     ADMIN_ROLE_ID,
     SYSTEM_CHANNEL_ID,
