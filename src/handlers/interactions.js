@@ -6,6 +6,7 @@ const {
     SERVER_ID,
     ACTIVE_CATEGORY_ID,
     ARCHIVED_CATEGORY_ID,
+    GAME_INVITATIONS_FORUM_ID,
     DM_ROLE_ID,
     EMBED_COLOR,
     NUMBER_EMOJIS,
@@ -575,34 +576,59 @@ async function handleInteraction(client, interaction) {
     }
 
     if (commandName === 'pin' || commandName === 'unpin') {
-        if (interaction.channel.parentId !== ACTIVE_CATEGORY_ID) {
-            return interaction.reply({ content: 'This command can only be used in an active campaign channel.', ephemeral: true });
-        }
-        if (interaction.channel.isThread()) {
-            return interaction.reply({ content: 'This command cannot be used in a thread.', ephemeral: true });
+        // Two valid contexts:
+        // 1) Active campaign channel (parentId === ACTIVE_CATEGORY_ID), NOT a thread.
+        // 2) A thread inside the Game Invitations forum (channel.parentId ===
+        //    GAME_INVITATIONS_FORUM_ID) — the thread owner (OP) can pin/unpin.
+        const isForumThread = interaction.channel.isThread() && interaction.channel.parentId === GAME_INVITATIONS_FORUM_ID;
+
+        if (!isForumThread) {
+            if (interaction.channel.parentId !== ACTIVE_CATEGORY_ID) {
+                return interaction.reply({ content: 'This command can only be used in an active campaign channel or a Game Invitations forum thread.', ephemeral: true });
+            }
+            if (interaction.channel.isThread()) {
+                return interaction.reply({ content: 'This command cannot be used in a thread.', ephemeral: true });
+            }
         }
 
         const isPin = commandName === 'pin';
         const messageId = interaction.options.getString('message_id');
         console.log(`[Pin Command] /${commandName} by ${interaction.user.tag} (${interaction.user.id}) in channel ${interaction.channel.id}${messageId ? `, target: ${messageId}` : ', no ID (last)'}`);
 
-        const metaData = await getLibrarianData(interaction.channel);
-
-        // Access permission check
-        if (!metaData) {
-            const topic = interaction.channel.topic || '';
-            if (topic.startsWith('SETUP|')) {
-                const setupMatch = topic.match(/DM:(\d+)/);
-                const setupDmId = setupMatch ? setupMatch[1] : null;
-                if (interaction.user.id !== setupDmId && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                    return interaction.reply({ content: 'Only the DM who created this campaign (or an Admin) can pin/unpin messages before the OP is posted.', ephemeral: true });
+        // For Game Invitations forum threads: only the thread owner (OP) or an
+        // Admin may pin/unpin. The thread's OP is the author of the starter
+        // message (the first message of the thread).
+        if (isForumThread) {
+            const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+            if (!isAdmin) {
+                let ownerId = null;
+                try {
+                    const starter = await interaction.channel.fetchStarterMessage().catch(() => null);
+                    if (starter) ownerId = starter.author.id;
+                } catch (_) {}
+                if (!ownerId || interaction.user.id !== ownerId) {
+                    return interaction.reply({ content: 'Only the thread owner (OP) or an Admin can pin/unpin messages in this forum thread.', ephemeral: true });
                 }
-            } else if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                return interaction.reply({ content: 'Metadata missing in channel topic. Only Admins can pin/unpin here.', ephemeral: true });
             }
         } else {
-            if (metaData.dmId !== interaction.user.id && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                return interaction.reply({ content: 'Only the DM who created the campaign (or an Admin) can pin/unpin messages in this channel.', ephemeral: true });
+            // Active campaign channel — DM-ownership gate (existing behavior).
+            const metaData = await getLibrarianData(interaction.channel);
+
+            if (!metaData) {
+                const topic = interaction.channel.topic || '';
+                if (topic.startsWith('SETUP|')) {
+                    const setupMatch = topic.match(/DM:(\d+)/);
+                    const setupDmId = setupMatch ? setupMatch[1] : null;
+                    if (interaction.user.id !== setupDmId && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                        return interaction.reply({ content: 'Only the DM who created this campaign (or an Admin) can pin/unpin messages before the OP is posted.', ephemeral: true });
+                    }
+                } else if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.reply({ content: 'Metadata missing in channel topic. Only Admins can pin/unpin here.', ephemeral: true });
+                }
+            } else {
+                if (metaData.dmId !== interaction.user.id && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.reply({ content: 'Only the DM who created the campaign (or an Admin) can pin/unpin messages in this channel.', ephemeral: true });
+                }
             }
         }
 
@@ -629,11 +655,16 @@ async function handleInteraction(client, interaction) {
                 await targetMessage.pin();
                 return interaction.reply({ content: `📌 Pinned [message](<${targetMessage.url}>).`, ephemeral: true });
             } else {
-                const firstMessages = await interaction.channel.messages.fetch({ after: DISCORD_START_SNOWFLAKE, limit: 1 });
-                const opMessage = firstMessages.first();
+                // In active campaign channels, the OP message (first message in
+                // the channel) is protected — only Admins can unpin it.
+                // Forum threads have no such protected OP concept.
+                if (!isForumThread) {
+                    const firstMessages = await interaction.channel.messages.fetch({ after: DISCORD_START_SNOWFLAKE, limit: 1 });
+                    const opMessage = firstMessages.first();
 
-                if (opMessage && targetMessage.id === opMessage.id && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                    return interaction.reply({ content: 'Only Admins can unpin the OP message.', ephemeral: true });
+                    if (opMessage && targetMessage.id === opMessage.id && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                        return interaction.reply({ content: 'Only Admins can unpin the OP message.', ephemeral: true });
+                    }
                 }
                 await targetMessage.unpin();
                 return interaction.reply({ content: `📌 Unpinned [message](<${targetMessage.url}>).`, ephemeral: true });
