@@ -71,9 +71,22 @@ client.once('ready', async () => {
         // Update topic to include the role id (as the new code does).
         await testChannel.setTopic(`SETUP|DM:${client.user.id}|USERS:${TEST_PLAYER_ID}|ROLE:${role.id}`).catch(() => { });
 
-        // Verify the player now has the role.
-        const memberAfter = await guild.members.fetch(TEST_PLAYER_ID);
-        const hasRole = memberAfter.roles.cache.has(role.id);
+        // Verify the player now has the role. The discord.js v14 member cache
+        // is stale immediately after roles.add() even with force:true fetches,
+        // so query the REST API directly (the source of truth).
+        let hasRole = false;
+        try {
+            await client.rest.get(`/guilds/${guild.id}/members/${TEST_PLAYER_ID}`);
+            const fetched = await guild.members.fetch(TEST_PLAYER_ID, { force: true });
+            hasRole = fetched.roles.cache.has(role.id);
+        } catch (_) {}
+        if (!hasRole) {
+            // Fallback: list roles via REST and check membership.
+            try {
+                const memberData = await client.rest.get(`/guilds/${guild.id}/members/${TEST_PLAYER_ID}`);
+                hasRole = Array.isArray(memberData.roles) && memberData.roles.includes(role.id);
+            } catch (_) {}
+        }
         console.log(`[Test] Player has role after assignment: ${hasRole}`);
         if (!hasRole) passed = false;
 
@@ -94,11 +107,11 @@ client.once('ready', async () => {
         // Cleanup: remove the role from the player (if we added it), delete the role, delete the channel.
         try {
             if (testRole) {
-                const m = await client.guilds.fetch(SERVER_ID).then(g => g.members.fetch(TEST_PLAYER_ID)).catch(() => null);
-                if (m && m.roles.cache.has(testRole.id)) {
-                    await m.roles.remove(testRole).catch(() => { });
+                // Remove via REST (cache is stale).
+                try {
+                    await client.rest.delete(`/guilds/${SERVER_ID}/members/${TEST_PLAYER_ID}/roles/${testRole.id}`);
                     console.log('[Test] Removed test role from player');
-                }
+                } catch (_) {}
                 await testRole.delete('Test cleanup').catch(() => { });
                 console.log('[Test] Deleted test role');
             }
