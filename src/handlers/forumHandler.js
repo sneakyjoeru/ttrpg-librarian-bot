@@ -193,9 +193,26 @@ async function fetchViaBrowser(postUrl) {
                     if (img.closest('video')) return false;
                     const s = img.src || '';
                     if (!s) return false;
+                    // Skip data: URIs (inline icons, SVGs, base64)
+                    if (s.startsWith('data:')) return false;
+                    // Skip Reddit UI elements, icons, avatars, emojis, mascots
                     if (s.includes('snoo_map') || s.includes('avatar') || s.includes('emoji') || s.includes('icon') ||
+                        s.includes('snoo') || s.includes('mascot') || s.includes('award') || s.includes('badge') ||
                         s.includes(${JSON.stringify(staticHost)}) || s.includes(${JSON.stringify(mediaHost)}) || s.includes('communityIcon')) return false;
-                    if (hasVideo && (s.includes(${JSON.stringify(prevHost)}) || s.includes(${JSON.stringify(extPrevHost)}))) return false;
+                    // Skip small UI images (Reddit uses tiny dimensions for icons/buttons)
+                    const w = img.naturalWidth || img.width || 0;
+                    const h = img.naturalHeight || img.height || 0;
+                    if (w > 0 && h > 0 && (w < 64 || h < 64)) return false;
+                    // When the post has a video, be very aggressive about skipping
+                    // images — only keep i.redd.it images that are clearly content
+                    // (not poster frames, not UI elements). Skip ALL preview/external
+                    // preview images (poster frames) and any non-content hosts.
+                    if (hasVideo) {
+                        if (s.includes(${JSON.stringify(prevHost)}) || s.includes(${JSON.stringify(extPrevHost)})) return false;
+                        // Only keep i.redd.it images when there's a video — everything
+                        // else is likely a UI element or poster frame
+                        if (!s.includes(${JSON.stringify(iHost)})) return false;
+                    }
                     return true;
                 })
                 .map(img => img.src || '');
