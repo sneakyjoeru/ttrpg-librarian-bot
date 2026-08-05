@@ -222,13 +222,16 @@ async function fetchViaBrowser(postUrl) {
                 u = u.replace(/\\?width=\\d+&height=\\d+.*$/, '').replace(/\\?auto=webp.*$/, '').replace(/&amp;/g, '&');
                 if (!u || u.length <= 30) continue;
                 if (seen.has(u)) continue;
-                // Deduplicate by image ID — Reddit serves the same image from
-                // multiple hosts (i.redd.it, preview.redd.it, external-preview)
-                // with the same filename. Extract the last path segment as ID.
-                const idMatch = u.match(/([a-zA-Z0-9_-]+\\.(jpg|jpeg|png|gif|webp))/i);
-                const imgId = idMatch ? idMatch[1].split('.')[0] : '';
-                if (imgId && seenIds.has(imgId)) continue;
-                if (imgId) seenIds.add(imgId);
+                // Deduplicate by Reddit image hash — the same image is served
+                // from i.redd.it/<hash>.ext and preview.redd.it/...-v0-<hash>.ext
+                // Extract the alphanumeric hash (12+ chars) from the URL.
+                let imgId = '';
+                const iReddMatch = u.match(/i\\.redd\\.it\\/([a-zA-Z0-9]+)/i);
+                const prevReddMatch = u.match(/-v0-([a-zA-Z0-9]+)\\./i);
+                const extPrevMatch = u.match(/external-preview\\.redd\\.it\\/([a-zA-Z0-9]+)/i);
+                imgId = (iReddMatch && iReddMatch[1]) || (prevReddMatch && prevReddMatch[1]) || (extPrevMatch && extPrevMatch[1]) || '';
+                if (imgId && imgId.length >= 10 && seenIds.has(imgId)) continue;
+                if (imgId && imgId.length >= 10) seenIds.add(imgId);
                 seen.add(u);
                 data.images.push(u);
                 if (data.images.length >= 10) break;
@@ -508,10 +511,10 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                     if (bodyText.length <= remaining) {
                         mainContent += '\n\n> ' + bodyText.split('\n').join('\n> ');
                     } else {
-                        // Include what fits, put the rest in overflow
+                        // Include what fits, put the REST (not the full text) in overflow
                         const fitted = bodyText.substring(0, remaining - 3) + '…';
                         mainContent += '\n\n> ' + fitted.split('\n').join('\n> ');
-                        overflowText = bodyText;
+                        overflowText = bodyText.substring(remaining - 3);
                     }
                 }
                 mainContent = mainContent.substring(0, 2000);
