@@ -227,17 +227,18 @@ async function fetchViaBrowser(postUrl) {
             const seen = new Set();
             const seenIds = new Set();
             data.images = [];
-            // Add image from content-href attribute first (OP image from
-            // Reddit's web component — not always present as an <img> tag).
-            if (contentHref && (contentHref.includes(iReddHost) || contentHref.includes(prevReddHost))) {
-                let chUrl = contentHref.replace(/&amp;/g, '&');
-                let chId = '';
-                const chIRedd = chUrl.match(/i\\.redd\\.it\\/([a-zA-Z0-9]+)/i);
-                const chPrev = chUrl.match(/-v0-([a-zA-Z0-9]+)\\./i);
-                chId = (chIRedd && chIRedd[1]) || (chPrev && chPrev[1]) || '';
-                if (chId && chId.length >= 10) seenIds.add(chId);
-                seen.add(chUrl);
-                data.images.push(chUrl);
+            // Prefer og:image as the first image (most reliable URL — preview.redd.it
+            // with correct query params). Then try content-href, then <img> tags.
+            const primaryImageUrl = data.ogImage || contentHref || '';
+            if (primaryImageUrl && (primaryImageUrl.includes(iReddHost) || primaryImageUrl.includes(prevReddHost))) {
+                let pUrl = primaryImageUrl.replace(/&amp;/g, '&');
+                let pId = '';
+                const pIRedd = pUrl.match(/i\\.redd\\.it\\/([a-zA-Z0-9]+)/i);
+                const pPrev = pUrl.match(/-v0-([a-zA-Z0-9]+)\\./i);
+                pId = (pIRedd && pIRedd[1]) || (pPrev && pPrev[1]) || '';
+                if (pId && pId.length >= 10) seenIds.add(pId);
+                seen.add(pUrl);
+                data.images.push(pUrl);
             }
             for (let u of allImgs) {
                 u = u.replace(/\\?width=\\d+&height=\\d+.*$/, '').replace(/\\?auto=webp.*$/, '').replace(/&amp;/g, '&');
@@ -320,6 +321,12 @@ async function downloadMedia(mediaUrls, isVideoMap, fileLimit, postUrl) {
                 }
             }
 
+            // Skip axios fallback for v.redd.it URLs — they return HTML, not video
+            if (isVideo && url.includes(_V)) {
+                console.warn(`[Forum Interceptor] Skipping axios fallback for v.redd.it URL (would download HTML, not video)`);
+                continue;
+            }
+
             const res = await axios.get(url, {
                 responseType: 'arraybuffer',
                 timeout: MEDIA_DOWNLOAD_TIMEOUT,
@@ -377,7 +384,7 @@ async function downloadWithYtDlp(url, prefix) {
         await runCommand(cmd, 60000);
         const files = fs.readdirSync(tempDir);
         const matching = files.filter(f => f.startsWith(prefix));
-        if (matching.length === 0) return null;
+        if (matching.length === 0) { console.warn(`[Forum Interceptor] yt-dlp produced 0 files for: ${url}`); return null; }
         const attachments = [];
         for (const file of matching) {
             const fp = path.join(tempDir, file);
@@ -390,6 +397,7 @@ async function downloadWithYtDlp(url, prefix) {
         }
         return attachments.length > 0 ? attachments : null;
     } catch (err) {
+        console.warn(`[Forum Interceptor] yt-dlp error for ${url.substring(0, 80)}: ${err.message.substring(0, 200)}`);
         try {
             const files = fs.readdirSync(tempDir);
             for (const f of files) { if (f.startsWith(prefix)) { try { fs.unlinkSync(path.join(tempDir, f)); } catch (e) {} } }
