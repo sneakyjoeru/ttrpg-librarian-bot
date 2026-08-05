@@ -556,10 +556,9 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                             // Post body text in thread as blockquote
                             if (pageData.bodyText && pageData.bodyText.trim()) {
                                 // Clean up whitespace from HTML textContent:
-                                // 1. Replace whitespace-only lines with truly empty lines
+                                // 1. Trim each line (removes HTML indent spaces)
                                 // 2. Collapse 2+ consecutive empty lines to max 1
-                                // 3. Trim leading/trailing whitespace from each line
-                                // 4. Remove leading/trailing empty lines from the whole text
+                                // 3. Remove leading/trailing empty lines
                                 let bodyText = pageData.bodyText
                                     .split('\n')
                                     .map(l => l.trim())
@@ -567,18 +566,11 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                                     .replace(/\n{3,}/g, '\n\n')
                                     .trim();
                                 for (const chunk of splitIntoChunks(bodyText, DISCORD_MESSAGE_LIMIT - 10)) {
-                                    // Build blockquote: prefix each line with '> '
-                                    // Empty lines become just '>' (no trailing space)
-                                    // Strip trailing '>' lines from the end
-                                    const lines = chunk.split('\n');
-                                    // Remove trailing empty lines
-                                    while (lines.length > 0 && !lines[lines.length - 1].trim()) lines.pop();
-                                    const quoted = lines.map(line => {
-                                        const trimmed = line.trim();
-                                        return trimmed ? '> ' + trimmed : '>';
-                                    }).join('\n');
-                                    if (quoted) {
-                                        await thread.send({ content: quoted, suppressEmbeds: true }).catch(() => {});
+                                    // Use >>> blockquote: everything after is a
+                                    // single quote block, no bare > on empty lines
+                                    const cleaned = chunk.replace(/^\n+/, '').replace(/\n+$/, '');
+                                    if (cleaned) {
+                                        await thread.send({ content: '>>> ' + cleaned, suppressEmbeds: true }).catch(() => {});
                                     }
                                 }
                             }
