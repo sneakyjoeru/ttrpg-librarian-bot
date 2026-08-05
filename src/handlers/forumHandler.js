@@ -270,10 +270,14 @@ async function downloadMedia(mediaUrls, isVideoMap, fileLimit, postUrl) {
         try {
             if (isVideo && ytDlp) {
                 const ytdlpUrl = url.includes(_V) && postUrl ? postUrl : url;
+                console.log(`[Forum Interceptor] Downloading video ${i}: url=${url.substring(0, 60)}... ytdlpUrl=${ytdlpUrl.substring(0, 60)}...`);
                 const dl = await downloadWithYtDlp(ytdlpUrl, `forum_${Date.now()}_${i}`);
                 if (dl && dl.length > 0) {
+                    console.log(`[Forum Interceptor] yt-dlp OK: ${dl.length} file(s), sizes: ${dl.map(a => (a.attachment.length / 1024 / 1024).toFixed(1) + 'MB').join(', ')}`);
                     attachments.push(...dl.slice(0, MAX_MEDIA_ITEMS - attachments.length));
                     continue;
+                } else {
+                    console.warn(`[Forum Interceptor] yt-dlp returned null for video ${i}`);
                 }
             }
 
@@ -437,11 +441,13 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                     await updatePlaceholderStage(placeholder, `working... <${postUrl}>\nstage: downloading ${mediaUrls.length} media item(s)`).catch(() => {});
                     try { attachments = await downloadMedia(mediaUrls, isVideoMap, effectiveFileLimit, postUrl); }
                     catch (e) { console.error('[Forum Interceptor] Media download failed:', e.message); }
+                    console.log(`[Forum Interceptor] Downloaded ${attachments.length} attachment(s):`, attachments.map(a => `${a.name} (${(a.attachment && a.attachment.length ? (a.attachment.length / 1024 / 1024).toFixed(1) : '?')}MB)`).join(', '));
                 }
 
                 // 3. Compress oversized videos
                 if (attachments.length > 0) {
                     const needsCompression = attachments.some(a => a.attachment && a.attachment.length > effectiveFileLimit);
+                    console.log(`[Forum Interceptor] effectiveFileLimit=${(effectiveFileLimit / 1024 / 1024).toFixed(1)}MB, needsCompression=${needsCompression}`);
                     if (needsCompression) {
                         await updatePlaceholderStage(placeholder, `working... <${postUrl}>\nstage: compressing media (ffmpeg)`).catch(() => {});
                         const compressed = [];
