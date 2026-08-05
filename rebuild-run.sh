@@ -98,6 +98,18 @@ docker kill --signal=SIGUSR2 librarian-bot 2>/dev/null || true
 docker exec librarian-bot rm -f /usr/src/app/build_progress.txt 2>/dev/null || true
 
 BUILDX_GIT_INFO=false docker build --provenance=false ${igpu_build_arg} -t discord-librarian-bot . && \
+# Fix .git ownership: Docker (root) changes .git ownership during build
+# (COPY . ., git operations inside Dockerfile), causing subsequent
+# git fetch/reset to fail with "Permission denied". Always chown .git
+# back to the repo owner after the build completes.
+if [ "$(id -u)" -eq 0 ]; then
+    local_owner="$(stat -c '%U' . 2>/dev/null)"
+    local_group="$(stat -c '%G' . 2>/dev/null)"
+    if [ -n "$local_owner" ] && [ "$local_owner" != "root" ]; then
+        chown -R "${local_owner}:${local_group}" .git 2>/dev/null || true
+        echo "[rebuild-run] Fixed .git ownership back to ${local_owner}:${local_group}"
+    fi
+fi && \
 docker stop librarian-bot || true && \
 docker rm librarian-bot || true && \
 # Attach the bot to the shared ollama_default network (when present) so it can
