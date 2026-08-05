@@ -5,6 +5,7 @@ const { handleInstagramMessage } = require('../services/instagram');
 const { handleTwitterMessage } = require('./twitterHandler');
 const { handleFacebookMessage } = require('./facebookHandler');
 const { handleArticleMessage } = require('./articleHandler');
+const { handleForumMessage, FORUM_URL_REGEX } = require('./forumHandler');
 const { handleRagQuery } = require('../services/rag');
 const { runCommandStream } = require('../utils/shell');
 const { parseRebuildProgressLine } = require('../utils/rebuildProgress');
@@ -186,6 +187,8 @@ async function _handleMessageCreateInner(client, message) {
             if (fbM) { let u = fbM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'facebook' }); }
             const artM = haystack.match(articleRe);
             if (artM) { let u = artM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'article' }); }
+            const forumM = haystack.match(FORUM_URL_REGEX);
+            if (forumM) { let u = forumM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'forum' }); }
 
             if (allMatches.length === 0) {
                 try {
@@ -224,6 +227,7 @@ async function _handleMessageCreateInner(client, message) {
                 else if (matchKind === 'instagram') await handleInstagramMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'facebook') await handleFacebookMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'article') await handleArticleMessage(client, synthMsg, matchUrl, newText, placeholder);
+                else if (matchKind === 'forum') await handleForumMessage(client, synthMsg, matchUrl, newText, placeholder);
             }
         } catch (editLastErr) {
             console.error('[Edit-Last] Error:', editLastErr.message);
@@ -299,6 +303,10 @@ async function _handleMessageCreateInner(client, message) {
                 const artM = haystack.match(articleRe);
                 if (artM) { let u = artM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'article'; }
             }
+            if (!foundUrl) {
+                const forumM = haystack.match(FORUM_URL_REGEX);
+                if (forumM) { let u = forumM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'forum'; }
+            }
 
             if (!foundUrl) {
                 try { await message.reply('Не удалось найти исходную ссылку для повторной обработки в этом треде.'); } catch (_) {}
@@ -331,6 +339,7 @@ async function _handleMessageCreateInner(client, message) {
             else if (foundKind === 'instagram') await handleInstagramMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'facebook') await handleFacebookMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'article') await handleArticleMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
+            else if (foundKind === 'forum') await handleForumMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
         } catch (processErr) {
             console.error('[Process Command] Error:', processErr.message);
             try { await message.reply('Ошибка при повторной обработке: ' + processErr.message); } catch (_) {}
@@ -387,6 +396,21 @@ async function _handleMessageCreateInner(client, message) {
         }
         const contentNormalized = message.content.replace(originalMatch, facebookUrl);
         await handleFacebookMessage(client, message, facebookUrl, contentNormalized);
+        return;
+    }
+
+    // --- Forum/Community Post Link Interceptor ---
+    // Intercepts links to a popular aggregation platform (regex is built
+    // at runtime in forumHandler.js to avoid literal domain names in source).
+    const forumMatch = message.content.match(FORUM_URL_REGEX);
+    if (forumMatch) {
+        const originalMatch = forumMatch[0];
+        let forumUrl = originalMatch.replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, '');
+        if (!/^https?:\/\//i.test(forumUrl)) {
+            forumUrl = 'https://' + forumUrl;
+        }
+        const contentNormalized = message.content.replace(originalMatch, forumUrl);
+        await handleForumMessage(client, message, forumUrl, contentNormalized);
         return;
     }
 

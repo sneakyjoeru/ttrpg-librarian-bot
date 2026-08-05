@@ -117,6 +117,6 @@ if [ -n "${CATCHUP_EXTENDED_HOURS:-}" ]; then
     echo "[rebuild-run] CATCHUP_EXTENDED_HOURS=${CATCHUP_EXTENDED_HOURS} — running extended catch-up on boot."
 fi
 
-docker run -d --name librarian-bot --restart unless-stopped $ollama_network_args -e SHARE_PASS -e HOST_PATH="$(pwd)" -e TRANSCODER_CONTAINER $catchup_env -v /var/run/docker.sock:/var/run/docker.sock -v "$(pwd):/usr/src/app" -v /usr/src/app/node_modules $cookies_mount $ssh_key_mount $igpu_mount discord-librarian-bot && \
+docker run -d --name librarian-bot --restart unless-stopped $ollama_network_args -e SHARE_PASS -e HOST_PATH="$(pwd)" -e TRANSCODER_CONTAINER -e BROWSER_BOT_WS="${BROWSER_BOT_WS:-ws://browser-bot:3000}" $catchup_env -v /var/run/docker.sock:/var/run/docker.sock -v "$(pwd):/usr/src/app" -v /usr/src/app/node_modules $cookies_mount $ssh_key_mount $igpu_mount discord-librarian-bot && \
 sleep 15 && \
 docker logs librarian-bot
