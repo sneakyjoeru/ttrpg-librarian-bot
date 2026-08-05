@@ -486,7 +486,7 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                     }
                 }
 
-                // 4. Build main message — include post text (bodyText)
+                // 4. Build main message — title, empty line, link (no body text)
                 const displayUrl = postUrl.replace(/^https?:\/\//i, '');
                 let userComment = '';
                 if (remadeContent) {
@@ -495,28 +495,8 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                 }
                 let mainContent = '';
                 if (userComment) mainContent += userComment + '\n\n';
-                if (pageData.title) mainContent += `**${pageData.title}**\n`;
+                if (pageData.title) mainContent += `**${pageData.title}**\n\n`;
                 mainContent += `[${displayUrl}](${postUrl})`;
-
-                // Append post body text if it fits within 2000 chars;
-                // otherwise post overflow as separate channel messages.
-                let overflowText = '';
-                if (pageData.bodyText && pageData.bodyText.trim()) {
-                    const bodyText = pageData.bodyText.trim();
-                    const linkLine = `[${displayUrl}](${postUrl})`;
-                    const headerLen = (userComment ? userComment.length + 2 : 0) +
-                        (pageData.title ? pageData.title.length + 4 : 0) +
-                        linkLine.length + 1;
-                    const remaining = DISCORD_MESSAGE_LIMIT - headerLen - 2;
-                    if (bodyText.length <= remaining) {
-                        mainContent += '\n\n> ' + bodyText.split('\n').join('\n> ');
-                    } else {
-                        // Include what fits, put the REST (not the full text) in overflow
-                        const fitted = bodyText.substring(0, remaining - 3) + '…';
-                        mainContent += '\n\n> ' + fitted.split('\n').join('\n> ');
-                        overflowText = bodyText.substring(remaining - 3);
-                    }
-                }
                 mainContent = mainContent.substring(0, 2000);
 
                 // 5. Post media + link
@@ -544,17 +524,47 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                     }
                 }
 
-                // 6. Post overflow text as separate channel messages (if bodyText was too long)
-                if (overflowText) {
+                // 6. Create thread + post body text
+                if (placeholder.sentMsg) {
                     try {
-                        const channel = placeholder.sentMsg ? placeholder.sentMsg.channel : message.channel;
-                        for (const chunk of splitIntoChunks(overflowText, DISCORD_MESSAGE_LIMIT - 10)) {
-                            await channel.send({ content: '> ' + chunk.split('\n').join('\n> '), suppressEmbeds: true }).catch(() => {});
+                        const threadName = `📰 ${(pageData.title || 'Forum post').substring(0, 90)}`;
+                        const channel = placeholder.sentMsg.channel;
+                        const targetMsg = await channel.messages.fetch(placeholder.sentMsg.id).catch(() => null);
+                        if (targetMsg) {
+                            let thread;
+                            if (targetMsg.hasThread && targetMsg.thread) {
+                                thread = targetMsg.thread;
+                                if (typeof thread.setArchived === 'function') await thread.setArchived(false).catch(() => {});
+                                console.log('[Forum Interceptor] Reusing existing thread:', thread.id);
+                            } else {
+                                thread = await targetMsg.startThread({ name: threadName, autoArchiveDuration: 1440 });
+                                const authorId = message.author && message.author.id;
+                                if (authorId && thread.members) { try { await thread.members.remove(authorId); } catch (_) {} }
+                            }
+                            // Clean old bot messages for re-runs
+                            try {
+                                const oldMsgs = await thread.messages.fetch({ limit: 50 }).catch(() => null);
+                                if (oldMsgs) {
+                                    for (const m of oldMsgs.values()) {
+                                        if (m.author.id === client.user.id || m.webhookId !== null) {
+                                            await m.delete().catch(() => {});
+                                        }
+                                    }
+                                }
+                            } catch (_) { /* non-fatal */ }
+
+                            // Post body text in thread as blockquote
+                            if (pageData.bodyText && pageData.bodyText.trim()) {
+                                const bodyText = pageData.bodyText.trim();
+                                for (const chunk of splitIntoChunks(bodyText, DISCORD_MESSAGE_LIMIT - 10)) {
+                                    await thread.send({ content: '> ' + chunk.split('\n').join('\n> '), suppressEmbeds: true }).catch(() => {});
+                                }
+                            }
                         }
-                    } catch (e) { console.warn('[Forum Interceptor] Overflow text post failed:', e.message); }
+                    } catch (e) { console.error('[Forum Interceptor] Thread creation failed:', e.message); }
                 }
 
-                // 7. Done — no thread, no OCR/transcription for this handler
+                // 7. Done
                 placeholder.stageMode = 'done';
                 await finalizePlaceholderClean(placeholder, mainContent, true);
                 job.success({ stage: 'forum_media_posted', media: attachments.length });
