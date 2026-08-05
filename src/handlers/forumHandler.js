@@ -170,6 +170,12 @@ async function fetchViaBrowser(postUrl) {
 
             const postContainer = document.querySelector(wc + '-post') || document.querySelector('article') || document;
 
+            // Extract image from content-href attribute (Reddit's new web
+            // components put the OP image URL in content-href, not in <img>).
+            const contentHref = postContainer.getAttribute ? (postContainer.getAttribute('content-href') || '') : '';
+            const iReddHost = ${JSON.stringify(_I)};
+            const prevReddHost = ${JSON.stringify(_PREV)};
+
             data.videos = [];
             const videoEls = Array.from(postContainer.querySelectorAll('video'));
             for (const v of videoEls) {
@@ -218,6 +224,18 @@ async function fetchViaBrowser(postUrl) {
             const seen = new Set();
             const seenIds = new Set();
             data.images = [];
+            // Add image from content-href attribute first (OP image from
+            // Reddit's web component — not always present as an <img> tag).
+            if (contentHref && (contentHref.includes(iReddHost) || contentHref.includes(prevReddHost))) {
+                let chUrl = contentHref.replace(/&amp;/g, '&');
+                let chId = '';
+                const chIRedd = chUrl.match(/i\\.redd\\.it\\/([a-zA-Z0-9]+)/i);
+                const chPrev = chUrl.match(/-v0-([a-zA-Z0-9]+)\\./i);
+                chId = (chIRedd && chIRedd[1]) || (chPrev && chPrev[1]) || '';
+                if (chId && chId.length >= 10) seenIds.add(chId);
+                seen.add(chUrl);
+                data.images.push(chUrl);
+            }
             for (let u of allImgs) {
                 u = u.replace(/\\?width=\\d+&height=\\d+.*$/, '').replace(/\\?auto=webp.*$/, '').replace(/&amp;/g, '&');
                 if (!u || u.length <= 30) continue;
