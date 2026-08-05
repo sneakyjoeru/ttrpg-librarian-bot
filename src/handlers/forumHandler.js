@@ -216,10 +216,21 @@ async function fetchViaBrowser(postUrl) {
                 })
                 .map(img => img.src || '');
             const seen = new Set();
+            const seenIds = new Set();
             data.images = [];
             for (let u of allImgs) {
                 u = u.replace(/\\?width=\\d+&height=\\d+.*$/, '').replace(/\\?auto=webp.*$/, '').replace(/&amp;/g, '&');
-                if (!seen.has(u) && u.length > 30) { seen.add(u); data.images.push(u); }
+                if (!u || u.length <= 30) continue;
+                if (seen.has(u)) continue;
+                // Deduplicate by image ID — Reddit serves the same image from
+                // multiple hosts (i.redd.it, preview.redd.it, external-preview)
+                // with the same filename. Extract the last path segment as ID.
+                const idMatch = u.match(/([a-zA-Z0-9_-]+\\.(jpg|jpeg|png|gif|webp))/i);
+                const imgId = idMatch ? idMatch[1].split('.')[0] : '';
+                if (imgId && seenIds.has(imgId)) continue;
+                if (imgId) seenIds.add(imgId);
+                seen.add(u);
+                data.images.push(u);
                 if (data.images.length >= 10) break;
             }
             data.videos = data.videos.slice(0, 10);
@@ -472,7 +483,7 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                     }
                 }
 
-                // 4. Build main message
+                // 4. Build main message — include post text (bodyText)
                 const displayUrl = postUrl.replace(/^https?:\/\//i, '');
                 let userComment = '';
                 if (remadeContent) {
@@ -483,6 +494,26 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                 if (userComment) mainContent += userComment + '\n\n';
                 if (pageData.title) mainContent += `**${pageData.title}**\n`;
                 mainContent += `[${displayUrl}](${postUrl})`;
+
+                // Append post body text if it fits within 2000 chars;
+                // otherwise post overflow as separate channel messages.
+                let overflowText = '';
+                if (pageData.bodyText && pageData.bodyText.trim()) {
+                    const bodyText = pageData.bodyText.trim();
+                    const linkLine = `[${displayUrl}](${postUrl})`;
+                    const headerLen = (userComment ? userComment.length + 2 : 0) +
+                        (pageData.title ? pageData.title.length + 4 : 0) +
+                        linkLine.length + 1;
+                    const remaining = DISCORD_MESSAGE_LIMIT - headerLen - 2;
+                    if (bodyText.length <= remaining) {
+                        mainContent += '\n\n> ' + bodyText.split('\n').join('\n> ');
+                    } else {
+                        // Include what fits, put the rest in overflow
+                        const fitted = bodyText.substring(0, remaining - 3) + '…';
+                        mainContent += '\n\n> ' + fitted.split('\n').join('\n> ');
+                        overflowText = bodyText;
+                    }
+                }
                 mainContent = mainContent.substring(0, 2000);
 
                 // 5. Post media + link
@@ -510,7 +541,17 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                     }
                 }
 
-                // 6. Done — no thread, no OCR/transcription for this handler
+                // 6. Post overflow text as separate channel messages (if bodyText was too long)
+                if (overflowText) {
+                    try {
+                        const channel = placeholder.sentMsg ? placeholder.sentMsg.channel : message.channel;
+                        for (const chunk of splitIntoChunks(overflowText, DISCORD_MESSAGE_LIMIT - 10)) {
+                            await channel.send({ content: '> ' + chunk.split('\n').join('\n> '), suppressEmbeds: true }).catch(() => {});
+                        }
+                    } catch (e) { console.warn('[Forum Interceptor] Overflow text post failed:', e.message); }
+                }
+
+                // 7. Done — no thread, no OCR/transcription for this handler
                 placeholder.stageMode = 'done';
                 await finalizePlaceholderClean(placeholder, mainContent, true);
                 job.success({ stage: 'forum_media_posted', media: attachments.length });
