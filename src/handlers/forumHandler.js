@@ -423,7 +423,7 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                     console.error('[Forum Interceptor] Browser fetch failed:', fetchErr.message);
                     const displayUrl = postUrl.replace(/^https?:\/\//i, '');
                     const fallbackContent = remadeContent.replace(postUrl, `[${displayUrl}](${postUrl})`);
-                    await updateWorkingPlaceholder(placeholder, fallbackContent, [], false, 0, fallbackContent);
+                    await updateWorkingPlaceholder(placeholder, fallbackContent, [], true, 0, fallbackContent);
                     job.success({ stage: 'forum_link_fallback', reason: 'browser_fetch_failed' });
                     return;
                 }
@@ -510,7 +510,7 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                 job.success({ stage: 'forum_media_posted', media: attachments.length });
             } catch (err) {
                 console.error('[Forum Interceptor] Critical error in mediaQueue:', err);
-                try { await updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки]\n<${postUrl}>`, [], false, 0, `<${postUrl}>`); } catch (_) {}
+                try { await updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки]\n<${postUrl}>`, [], true, 0, `<${postUrl}>`); } catch (_) {}
                 job.failure(err.message, { stage: 'critical' });
             } finally {
                 clearInterval(typingInterval);
