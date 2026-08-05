@@ -191,6 +191,9 @@ client.once(Events.ClientReady, async () => {
     catchUpMissedInstagramLinks().catch(err => {
         console.error('[Catch-Up] Catch-up task failed:', err.message);
     });
+    catchUpMissedForumLinks().catch(err => {
+        console.error('[Catch-Up] Forum catch-up task failed:', err.message);
+    });
 
     // One-time extended catch-up: if CATCHUP_EXTENDED_HOURS env var is set,
     // run a SECOND catch-up scan with an extended lookback window. This
@@ -801,6 +804,79 @@ async function catchUpMissedInstagramLinks(maxLookbackHours = null) {
     console.log('[Catch-Up] Catch-up check completed.');
 }
 
+// --- CATCH-UP FOR MISSED FORUM LINKS DURING RESTART ---
+// Mirrors the Instagram catch-up but scans for aggregation-platform links
+// (regex comes from forumHandler.js). Reuses the same time window logic.
+async function catchUpMissedForumLinks(maxLookbackHours = null) {
+    const { FORUM_URL_REGEX } = require('./src/handlers/forumHandler');
+    const delta = 5 * 60 * 1000;
+    let startTimestamp = Date.now() - 15 * 60 * 1000;
+
+    if (maxLookbackHours !== null) {
+        startTimestamp = Date.now() - maxLookbackHours * 60 * 60 * 1000;
+        console.log(`[Catch-Up Forum] Extended catch-up: scanning last ${maxLookbackHours}h.`);
+    } else if (fs.existsSync('./rebuild_time.txt')) {
+        try {
+            const timeStr = fs.readFileSync('./rebuild_time.txt', 'utf8').trim();
+            const parsed = new Date(timeStr).getTime();
+            if (!isNaN(parsed) && parsed > 0) {
+                startTimestamp = parsed - delta;
+                const maxLookback = 6 * 60 * 60 * 1000;
+                if (Date.now() - startTimestamp > maxLookback) {
+                    startTimestamp = Date.now() - maxLookback;
+                }
+                console.log(`[Catch-Up Forum] Scanning since ${new Date(startTimestamp).toISOString()}`);
+            }
+        } catch (e) {
+            console.error('[Catch-Up Forum] Failed to read rebuild_time.txt:', e.message);
+        }
+    }
+
+    try {
+        const guild = client.guilds.cache.get(SERVER_ID);
+        if (!guild) return;
+        const channels = await guild.channels.fetch().catch(() => null);
+        if (!channels) return;
+        const textChannels = channels.filter(c => c.isTextBased());
+        console.log(`[Catch-Up Forum] Scanning ${textChannels.size} text channels for missed forum links...`);
+
+        for (const [channelId, channel] of textChannels) {
+            try {
+                const fetched = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+                if (!fetched || fetched.size === 0) continue;
+                const fetchedArray = Array.from(fetched.values());
+                const missedLinks = fetchedArray.filter(msg => {
+                    if (msg.author.bot || msg.webhookId) return false;
+                    if (msg.createdTimestamp < startTimestamp) return false;
+                    if (!FORUM_URL_REGEX.test(msg.content)) return false;
+                    const msgIndex = fetchedArray.indexOf(msg);
+                    const subsequent = fetchedArray.slice(0, msgIndex);
+                    const m = msg.content.match(FORUM_URL_REGEX);
+                    if (m) {
+                        const postId = m[0];
+                        const hasResponse = subsequent.some(rm =>
+                            (rm.author.bot || rm.webhookId !== null) && rm.content.includes(postId.split('/comments/')[1] || postId)
+                        );
+                        if (hasResponse) return false;
+                    }
+                    return true;
+                });
+                missedLinks.reverse();
+                for (const req of missedLinks) {
+                    if (inFlightMessages.has(req.id)) continue;
+                    console.log(`[Catch-Up Forum] Found missed forum link from ${req.author.tag} in ${channelId}`);
+                    handleMessageCreate(client, req).catch(err => {
+                        console.error('[Catch-Up Forum] Error handling missed link:', err.message);
+                    });
+                }
+            } catch (channelErr) { /* skip */ }
+        }
+    } catch (err) {
+        console.error('[Catch-Up Forum] Error:', err.message);
+    }
+    console.log('[Catch-Up Forum] Catch-up check completed.');
+}
+
 // --- CLEANUP ABANDONED IN-PROGRESS PLACEHOLDERS ---
 // Scans all guild text channels for bot/webhook messages from the last 2 hours
 // that still show the ⏳ indicator (meaning the bot was killed mid-process),
@@ -844,18 +920,29 @@ async function cleanupAbandonedPlaceholders(clientInstance) {
                     // Extract the Instagram URL from the placeholder text.
                     const urlMatch = text.match(/https?:\/\/(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s>⏳]+/i) ||
                                      text.match(/<(https?:\/\/(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^>]+)>/i);
-                    if (!urlMatch) continue;
-                    const url = urlMatch[1] || urlMatch[0];
+                    // Also try forum links (aggregation platform)
+                    let forumUrlMatch = null;
+                    if (!urlMatch) {
+                        try {
+                            const { FORUM_URL_REGEX } = require('./src/handlers/forumHandler');
+                            forumUrlMatch = text.match(FORUM_URL_REGEX) ||
+                                text.match(new RegExp('<(' + FORUM_URL_REGEX.source + ')>', 'i'));
+                        } catch (_) {}
+                    }
+                    if (!urlMatch && !forumUrlMatch) continue;
+                    const url = (urlMatch && (urlMatch[1] || urlMatch[0])) || (forumUrlMatch && (forumUrlMatch[1] || forumUrlMatch[0]));
                     const key = `${msg.channel.id}:${url}`;
                     if (RECOVERY_SEEN_KEY_LB.has(key)) continue;
                     RECOVERY_SEEN_KEY_LB.add(key);
 
                     placeholderCount++;
-                    console.log(`[Startup Cleanup] Found abandoned Instagram placeholder ${msg.id} in channel ${channelId}: "${text.substring(0, 80)}..."`);
+                    console.log(`[Startup Cleanup] Found abandoned placeholder ${msg.id} in channel ${channelId}: "${text.substring(0, 80)}..."`);
 
                     // Build a recovered placeholder and re-process the URL.
                     const { buildRecoveredPlaceholder, extractPlaceholderBaseContent } = require('./src/utils/webhook');
+                    const isForumUrl = !!forumUrlMatch;
                     const { handleInstagramMessage } = require('./src/services/instagram');
+                    const { handleForumMessage } = isForumUrl ? require('./src/handlers/forumHandler') : { handleForumMessage: null };
                     try {
                         const recoveredPlaceholder = await buildRecoveredPlaceholder(clientInstance, msg);
                         const remadeContent = extractPlaceholderBaseContent(msg.content || '') || url;
@@ -873,8 +960,9 @@ async function cleanupAbandonedPlaceholders(clientInstance) {
                                 return target[prop];
                             }
                         });
-                        console.log(`[Startup Cleanup] Resuming abandoned Instagram placeholder ${msg.id} for URL ${url}`);
-                        handleInstagramMessage(clientInstance, recoveryMessage, url, remadeContent, recoveredPlaceholder).catch(err => {
+                        console.log(`[Startup Cleanup] Resuming abandoned placeholder ${msg.id} for URL ${url}`);
+                        const handler = isForumUrl ? handleForumMessage : handleInstagramMessage;
+                        handler(clientInstance, recoveryMessage, url, remadeContent, recoveredPlaceholder).catch(err => {
                             console.error(`[Startup Cleanup] Error resuming placeholder ${msg.id}:`, err.message);
                         });
                     } catch (err) {

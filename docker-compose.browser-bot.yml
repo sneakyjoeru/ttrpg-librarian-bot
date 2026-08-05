@@ -1,0 +1,45 @@
+# Browser container — shared headless Chrome for forum-post media extraction.
+#
+# This container is NOT built from a Dockerfile — it uses the public
+# browserless/chrome image directly. It just needs to be on the same
+# Docker network as the bot so the bot can reach it by hostname.
+#
+# ─── Deploy ───────────────────────────────────────────────────────────
+# On the N150 host:
+#
+#   cd /home/sneakyjoe/bots/librarian-bot
+#   sudo docker compose -f docker-compose.browser-bot.yml up -d
+#
+# The bot (librarian-bot) must also be connected to the same network.
+# rebuild-run.sh handles that automatically — it connects librarian-bot
+# to the `ollama_default` network, and this compose file attaches
+# browser-bot to the same network.
+#
+# ─── Sharing with discord-joe ─────────────────────────────────────────
+# discord-joe can use the SAME browser-bot container. Just connect
+# discord-joe to the ollama_default network as well (or run this compose
+# on the host once — the container is shared, not per-bot).
+#
+# ─── Obfuscation note ─────────────────────────────────────────────────
+# The container name "browser-bot" is intentionally generic — it does NOT
+# mention the target platform. The platform actively scans open-source
+# repos for automation tooling, so we keep all references generic.
+
+services:
+  browser-bot:
+    image: browserless/chrome:latest
+    container_name: browser-bot
+    restart: unless-stopped
+    environment:
+      - MAX_CONCURRENT_SESSIONS=2
+      - DEFAULT_STEALTH=true
+      - TOKEN=
+      - CONNECTION_TIMEOUT=60000
+      - HOST=0.0.0.0
+      - PORT=3000
+    networks:
+      - ollama_default
+
+networks:
+  ollama_default:
+    external: true
