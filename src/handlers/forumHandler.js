@@ -157,6 +157,9 @@ async function fetchViaBrowser(postUrl) {
             const wc = ${JSON.stringify(wcTag)};
             const titleEl = document.querySelector('[slot="title"]') || document.querySelector(wc + '-post h1') || document.querySelector('h1');
             data.title = titleEl ? titleEl.textContent.trim() : '';
+            // og:image meta tag — reliable OP image URL (preview.redd.it)
+            const ogImage = document.querySelector('meta[property="og:image"]');
+            data.ogImage = ogImage ? ogImage.content : '';
             const subEl = document.querySelector('a[href*="/r/"]');
             data.subreddit = subEl ? subEl.textContent.replace(/^Go to /, '').replace(/^r\\//, '').trim() : '';
             if (!data.subreddit) {
@@ -254,6 +257,10 @@ async function fetchViaBrowser(postUrl) {
                 data.images.push(u);
                 if (data.images.length >= 10) break;
             }
+            // If no images found from content-href or <img>, try og:image
+            if (data.images.length === 0 && data.ogImage) {
+                data.images.push(data.ogImage);
+            }
             data.videos = data.videos.slice(0, 10);
 
             data.fullText = document.body ? document.body.innerText.substring(0, 8000) : '';
@@ -316,7 +323,7 @@ async function downloadMedia(mediaUrls, isVideoMap, fileLimit, postUrl) {
             const res = await axios.get(url, {
                 responseType: 'arraybuffer',
                 timeout: MEDIA_DOWNLOAD_TIMEOUT,
-                headers: { 'User-Agent': BROWSER_UA, 'Accept': '*/*' },
+                headers: { 'User-Agent': BROWSER_UA, 'Accept': '*/*', 'Referer': 'https://www.' + _R + '.com/' },
                 maxRedirects: 5
             });
             const buffer = Buffer.from(res.data);
