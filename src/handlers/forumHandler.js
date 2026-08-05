@@ -151,9 +151,6 @@ async function fetchViaBrowser(postUrl) {
         const staticHost = _STATIC;  // redditstatic
         const mediaHost = _MEDIA;    // redditmedia.com
         const vHost = _V;            // v.redd.it
-        const iHost = _I;            // i.redd.it
-        const prevHost = _PREV;      // preview.redd.it
-        const extPrevHost = _EXT_PREV; // external-preview.redd.it
 
         const extractJs = `(() => {
             const data = {};
@@ -203,16 +200,10 @@ async function fetchViaBrowser(postUrl) {
                     const w = img.naturalWidth || img.width || 0;
                     const h = img.naturalHeight || img.height || 0;
                     if (w > 0 && h > 0 && (w < 64 || h < 64)) return false;
-                    // When the post has a video, be very aggressive about skipping
-                    // images — only keep i.redd.it images that are clearly content
-                    // (not poster frames, not UI elements). Skip ALL preview/external
-                    // preview images (poster frames) and any non-content hosts.
-                    if (hasVideo) {
-                        if (s.includes(${JSON.stringify(prevHost)}) || s.includes(${JSON.stringify(extPrevHost)})) return false;
-                        // Only keep i.redd.it images when there's a video — everything
-                        // else is likely a UI element or poster frame
-                        if (!s.includes(${JSON.stringify(iHost)})) return false;
-                    }
+                    // When the post has a video, skip ALL images.
+                    // A video-only post has no image content — any <img> tags
+                    // are poster frames, UI elements, or avatars.
+                    if (hasVideo) return false;
                     return true;
                 })
                 .map(img => img.src || '');
@@ -510,45 +501,7 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                     }
                 }
 
-                // 6. Create thread + post description
-                if (placeholder.sentMsg) {
-                    try {
-                        const threadName = `📰 ${(pageData.title || 'Forum post').substring(0, 90)}`;
-                        const channel = placeholder.sentMsg.channel;
-                        const targetMsg = await channel.messages.fetch(placeholder.sentMsg.id).catch(() => null);
-                        if (targetMsg) {
-                            let thread;
-                            if (targetMsg.hasThread && targetMsg.thread) {
-                                thread = targetMsg.thread;
-                                if (typeof thread.setArchived === 'function') await thread.setArchived(false).catch(() => {});
-                                console.log('[Forum Interceptor] Reusing existing thread:', thread.id);
-                            } else {
-                                thread = await targetMsg.startThread({ name: threadName, autoArchiveDuration: 1440 });
-                                const authorId = message.author && message.author.id;
-                                if (authorId && thread.members) { try { await thread.members.remove(authorId); } catch (_) {} }
-                            }
-                            // Clean old bot messages for re-runs
-                            try {
-                                const oldMsgs = await thread.messages.fetch({ limit: 50 }).catch(() => null);
-                                if (oldMsgs) {
-                                    for (const m of oldMsgs.values()) {
-                                        if (m.author.id === client.user.id || m.webhookId !== null) {
-                                            await m.delete().catch(() => {});
-                                        }
-                                    }
-                                }
-                            } catch (_) { /* non-fatal */ }
-                            const description = formatPostDescription(pageData);
-                            if (description.trim()) {
-                                for (const chunk of splitIntoChunks(description, DISCORD_MESSAGE_LIMIT - 10)) {
-                                    await thread.send({ content: chunk });
-                                }
-                            }
-                        }
-                    } catch (e) { console.error('[Forum Interceptor] Thread creation failed:', e.message); }
-                }
-
-                // 7. Done — no OCR/transcription for this handler
+                // 6. Done — no thread, no OCR/transcription for this handler
                 placeholder.stageMode = 'done';
                 await finalizePlaceholderClean(placeholder, mainContent, true);
                 job.success({ stage: 'forum_media_posted', media: attachments.length });
