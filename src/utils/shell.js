@@ -4,7 +4,7 @@ const path = require('path');
 
 function runCommand(cmd, timeoutMs = 20000) {
     return new Promise((resolve, reject) => {
-        exec(cmd, { timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+        exec(cmd, { timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
             if (err) {
                 err.stdout = stdout;
                 err.stderr = stderr;

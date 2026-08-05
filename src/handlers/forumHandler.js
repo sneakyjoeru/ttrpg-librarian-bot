@@ -347,15 +347,17 @@ async function downloadWithYtDlp(url, prefix) {
         if (fs.existsSync(p)) { cookiesFlag = `--cookies "${p}"`; break; }
     }
 
-    const cmd = `"${ytDlp}" ${cookiesFlag} --no-playlist --merge-output-format mp4 -o "${outputPattern}" "${url}"`;
+    const cmd = `"${ytDlp}" ${cookiesFlag} --no-playlist --no-progress --merge-output-format mp4 -o "${outputPattern}" "${url}"`;
     try {
-        await runCommand(cmd, 30000);
+        await runCommand(cmd, 60000);
         const files = fs.readdirSync(tempDir);
         const matching = files.filter(f => f.startsWith(prefix));
         if (matching.length === 0) return null;
         const attachments = [];
         for (const file of matching) {
             const fp = path.join(tempDir, file);
+            const stat = fs.statSync(fp);
+            if (stat.size < 1000) { try { fs.unlinkSync(fp); } catch (e) {} continue; }
             const buf = fs.readFileSync(fp);
             try { fs.unlinkSync(fp); } catch (e) {}
             const ext = path.extname(file).substring(1) || 'mp4';
