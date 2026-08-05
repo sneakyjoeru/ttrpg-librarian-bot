@@ -555,19 +555,30 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
 
                             // Post body text in thread as blockquote
                             if (pageData.bodyText && pageData.bodyText.trim()) {
-                                // Collapse multiple consecutive empty lines to max 1
-                                let bodyText = pageData.bodyText.trim().replace(/\n{3,}/g, '\n\n');
+                                // Clean up whitespace from HTML textContent:
+                                // 1. Replace whitespace-only lines with truly empty lines
+                                // 2. Collapse 2+ consecutive empty lines to max 1
+                                // 3. Trim leading/trailing whitespace from each line
+                                // 4. Remove leading/trailing empty lines from the whole text
+                                let bodyText = pageData.bodyText
+                                    .split('\n')
+                                    .map(l => l.trim())
+                                    .join('\n')
+                                    .replace(/\n{3,}/g, '\n\n')
+                                    .trim();
                                 for (const chunk of splitIntoChunks(bodyText, DISCORD_MESSAGE_LIMIT - 10)) {
-                                    // Build blockquote: prefix each non-empty line with '> '
+                                    // Build blockquote: prefix each line with '> '
                                     // Empty lines become just '>' (no trailing space)
-                                    const quoted = chunk.split('\n').map(line => {
-                                        const trimmed = line.trimEnd();
+                                    // Strip trailing '>' lines from the end
+                                    const lines = chunk.split('\n');
+                                    // Remove trailing empty lines
+                                    while (lines.length > 0 && !lines[lines.length - 1].trim()) lines.pop();
+                                    const quoted = lines.map(line => {
+                                        const trimmed = line.trim();
                                         return trimmed ? '> ' + trimmed : '>';
                                     }).join('\n');
-                                    // Remove trailing '>' lines at the end
-                                    const cleaned = quoted.replace(/(\n>)+$/, '').replace(/(>\s*)+$/, '').trimEnd();
-                                    if (cleaned) {
-                                        await thread.send({ content: cleaned, suppressEmbeds: true }).catch(() => {});
+                                    if (quoted) {
+                                        await thread.send({ content: quoted, suppressEmbeds: true }).catch(() => {});
                                     }
                                 }
                             }
