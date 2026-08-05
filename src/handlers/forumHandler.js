@@ -183,6 +183,14 @@ async function fetchViaBrowser(postUrl) {
                 const c = u.replace(/&amp;/g, '&');
                 if (!data.videos.includes(c)) data.videos.push(c);
             }
+            // Extract fallback_url MP4s BEFORE the image filter so hasVideo
+            // is correctly set when we decide whether to keep any images.
+            const fbUrls = postHtml.match(/fallback_url"?\\s*:\\s*"([^"]+\\.mp4[^"]*)"/gi) || [];
+            for (const m of fbUrls) {
+                const um = m.match(/"([^"]+\\.mp4[^"]*)"/);
+                if (um) { const u = um[1].replace(/&amp;/g, '&'); if (!data.videos.includes(u)) data.videos.push(u); }
+            }
+            data.videos = data.videos.slice(0, 10);
             const hasVideo = data.videos.length > 0;
 
             const allImgs = Array.from(postContainer.querySelectorAll('img'))
@@ -213,11 +221,6 @@ async function fetchViaBrowser(postUrl) {
                 u = u.replace(/\\?width=\\d+&height=\\d+.*$/, '').replace(/\\?auto=webp.*$/, '').replace(/&amp;/g, '&');
                 if (!seen.has(u) && u.length > 30) { seen.add(u); data.images.push(u); }
                 if (data.images.length >= 10) break;
-            }
-            const fbUrls = postHtml.match(/fallback_url"?\\s*:\\s*"([^"]+\\.mp4[^"]*)"/gi) || [];
-            for (const m of fbUrls) {
-                const um = m.match(/"([^"]+\\.mp4[^"]*)"/);
-                if (um) { const u = um[1].replace(/&amp;/g, '&'); if (!data.videos.includes(u)) data.videos.push(u); }
             }
             data.videos = data.videos.slice(0, 10);
 
