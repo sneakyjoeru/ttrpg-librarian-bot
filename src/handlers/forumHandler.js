@@ -555,9 +555,20 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
 
                             // Post body text in thread as blockquote
                             if (pageData.bodyText && pageData.bodyText.trim()) {
-                                const bodyText = pageData.bodyText.trim();
+                                // Collapse multiple consecutive empty lines to max 1
+                                let bodyText = pageData.bodyText.trim().replace(/\n{3,}/g, '\n\n');
                                 for (const chunk of splitIntoChunks(bodyText, DISCORD_MESSAGE_LIMIT - 10)) {
-                                    await thread.send({ content: '> ' + chunk.split('\n').join('\n> '), suppressEmbeds: true }).catch(() => {});
+                                    // Build blockquote: prefix each non-empty line with '> '
+                                    // Empty lines become just '>' (no trailing space)
+                                    const quoted = chunk.split('\n').map(line => {
+                                        const trimmed = line.trimEnd();
+                                        return trimmed ? '> ' + trimmed : '>';
+                                    }).join('\n');
+                                    // Remove trailing '>' lines at the end
+                                    const cleaned = quoted.replace(/(\n>)+$/, '').replace(/(>\s*)+$/, '').trimEnd();
+                                    if (cleaned) {
+                                        await thread.send({ content: cleaned, suppressEmbeds: true }).catch(() => {});
+                                    }
                                 }
                             }
                         }
@@ -593,16 +604,19 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
 // ── Chunking helper ──────────────────────────────────────────────────────────
 
 function splitIntoChunks(text, maxLen) {
-    if (!text || text.length <= maxLen) return [text];
+    if (!text || text.length <= maxLen) return [text ? text.trimStart() : text];
     const chunks = [];
     let start = 0;
     while (start < text.length) {
+        // Skip leading newlines at the start of each chunk
+        while (start < text.length && text[start] === '\n') start++;
+        if (start >= text.length) break;
         let end = start + maxLen;
         if (end < text.length) {
             const lastNl = text.lastIndexOf('\n', end);
             if (lastNl > start + maxLen * 0.5) end = lastNl;
         }
-        chunks.push(text.substring(start, end));
+        chunks.push(text.substring(start, end).trimEnd());
         start = end;
     }
     return chunks;
