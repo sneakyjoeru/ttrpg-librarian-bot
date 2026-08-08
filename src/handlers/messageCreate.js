@@ -4,6 +4,7 @@ const { getLibrarianData, syncChannelNameToRoleCount } = require('../utils/helpe
 const { handleInstagramMessage } = require('../services/instagram');
 const { handleTwitterMessage } = require('./twitterHandler');
 const { handleFacebookMessage } = require('./facebookHandler');
+const { handleTelegramMessage } = require('./telegramHandler');
 const { handleArticleMessage } = require('./articleHandler');
 const { handleForumMessage, FORUM_URL_REGEX } = require('./forumHandler');
 const { handleRagQuery } = require('../services/rag');
@@ -185,6 +186,9 @@ async function _handleMessageCreateInner(client, message) {
             if (igM) { let u = igM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; u = u.replace(/(www\.|m\.)?(?:dd|kk|ee|uu|rx)instagram\.com/i, 'instagram.com'); allMatches.push({ url: u, kind: 'instagram' }); }
             const fbM = haystack.match(facebookRe);
             if (fbM) { let u = fbM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'facebook' }); }
+            const telegramRe = /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/[a-zA-Z0-9_]+\/[a-zA-Z0-9_]+[^\s)\]>]*/i;
+            const tgM = haystack.match(telegramRe);
+            if (tgM) { let u = tgM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'telegram' }); }
             const artM = haystack.match(articleRe);
             if (artM) { let u = artM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'article' }); }
             const forumM = haystack.match(FORUM_URL_REGEX);
@@ -226,6 +230,7 @@ async function _handleMessageCreateInner(client, message) {
                 if (matchKind === 'twitter') await handleTwitterMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'instagram') await handleInstagramMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'facebook') await handleFacebookMessage(client, synthMsg, matchUrl, newText, placeholder);
+                else if (matchKind === 'telegram') await handleTelegramMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'article') await handleArticleMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'forum') await handleForumMessage(client, synthMsg, matchUrl, newText, placeholder);
             }
@@ -300,6 +305,11 @@ async function _handleMessageCreateInner(client, message) {
                 if (fbM) { let u = fbM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'facebook'; }
             }
             if (!foundUrl) {
+                const telegramRe = /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/[a-zA-Z0-9_]+\/[a-zA-Z0-9_]+[^\s)\]>]*/i;
+                const tgM = haystack.match(telegramRe);
+                if (tgM) { let u = tgM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'telegram'; }
+            }
+            if (!foundUrl) {
                 const artM = haystack.match(articleRe);
                 if (artM) { let u = artM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'article'; }
             }
@@ -338,6 +348,7 @@ async function _handleMessageCreateInner(client, message) {
             if (foundKind === 'twitter') await handleTwitterMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'instagram') await handleInstagramMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'facebook') await handleFacebookMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
+            else if (foundKind === 'telegram') await handleTelegramMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'article') await handleArticleMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'forum') await handleForumMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
         } catch (processErr) {
@@ -396,6 +407,20 @@ async function _handleMessageCreateInner(client, message) {
         }
         const contentNormalized = message.content.replace(originalMatch, facebookUrl);
         await handleFacebookMessage(client, message, facebookUrl, contentNormalized);
+        return;
+    }
+
+    // --- Telegram Link Interceptor (t.me / telegram.me) ---
+    const telegramRegex = /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/[a-zA-Z0-9_]+\/[a-zA-Z0-9_]+[^\s)]*/i;
+    const tgMatch = message.content.match(telegramRegex);
+    if (tgMatch) {
+        const originalMatch = tgMatch[0];
+        let telegramUrl = originalMatch.replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, '');
+        if (!/^https?:\/\//i.test(telegramUrl)) {
+            telegramUrl = 'https://' + telegramUrl;
+        }
+        const contentNormalized = message.content.replace(originalMatch, telegramUrl);
+        await handleTelegramMessage(client, message, telegramUrl, contentNormalized);
         return;
     }
 
