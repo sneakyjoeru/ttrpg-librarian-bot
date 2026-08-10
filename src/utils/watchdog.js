@@ -20,7 +20,7 @@ function start(options = {}) {
   watchdogTimer = setInterval(() => {
     lastHeartbeat = Date.now();
     try { fs.writeFileSync(HEARTBEAT_FILE, new Date().toISOString()); } catch (_) {}
-  }, 10000);
+  }, 30000);
 
   const checkTimer = setInterval(() => {
     const elapsed = Date.now() - lastHeartbeat;
@@ -43,6 +43,6 @@ function start(options = {}) {
   console.log(`[Watchdog] Started — timeout: ${watchdogTimeoutMs / 1000}s, channel: ${logChannelId || 'none'}`);
 }
 
-function stop() { if (watchdogTimer) clearInterval(watchdogTimer); watchdogTimer = null; }
+function stop() { if (watchdogTimer) clearInterval(watchdogTimer); watchdogTimer = null; try { fs.unlinkSync(HEARTBEAT_FILE); } catch (_) {} }
 
 module.exports = { start, stop };
