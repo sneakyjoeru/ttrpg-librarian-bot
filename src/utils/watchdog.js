@@ -1,11 +1,16 @@
 // watchdog.js — Detects event loop blockage and exits the process so Docker
-// can restart it. Same as discord-joe's watchdog.
+// can restart it. Also writes a heartbeat file for downtime detection.
+const fs = require('fs');
+const path = require('path');
+
 let watchdogTimer = null;
 let lastHeartbeat = Date.now();
 let watchdogTimeoutMs = 120000;
 let clientInstance = null;
 let logChannelId = null;
 let isExiting = false;
+
+const HEARTBEAT_FILE = path.join(process.cwd(), 'last_heartbeat.txt');
 
 function start(options = {}) {
   watchdogTimeoutMs = options.timeoutMs || 120000;
@@ -14,6 +19,7 @@ function start(options = {}) {
 
   watchdogTimer = setInterval(() => {
     lastHeartbeat = Date.now();
+    try { fs.writeFileSync(HEARTBEAT_FILE, new Date().toISOString()); } catch (_) {}
   }, 10000);
 
   const checkTimer = setInterval(() => {
