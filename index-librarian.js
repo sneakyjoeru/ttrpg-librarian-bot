@@ -62,6 +62,7 @@ const handleChannelUpdate = require('./src/handlers/channelUpdate');
 const handleChannelDelete = require('./src/handlers/channelDelete');
 const { handleReactionAdd, handleReactionRemove } = require('./src/handlers/reactions');
 const { inFlightMessages } = require('./src/utils/inFlightTracker');
+const watchdog = require('./src/utils/watchdog');
 
 const client = new Client({
     intents: [
@@ -84,6 +85,9 @@ client.once(Events.ClientReady, async () => {
         status: 'online'
     });
     console.log(`🏁🏁🏁🏁🏁 Online as ${client.user.tag}`);
+
+    // Start watchdog — detects event loop blockage and forces restart
+    watchdog.start({ timeoutMs: 120000, client: client, channelId: SYSTEM_CHANNEL_ID });
 
     // iGPU passthrough check: log at startup whether /dev/dri is present so
     // the user can immediately see if they need to rebuild (Docker restart
