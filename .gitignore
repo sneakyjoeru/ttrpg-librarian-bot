@@ -4,6 +4,7 @@ node_modules/
 *.log
 cookies.txt
 instagram-cookies.txt
+secrets.txt
 .ssh/
 .ssh
 id_rsa
