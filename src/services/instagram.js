@@ -673,6 +673,17 @@ async function downloadWithDirectInstagram(instagramUrl) {
 // thumbnail URLs (from the embedded timeline JSON), then reposts them as a card
 // with the userpic attached and the bio quoted. Returns true if it handled the
 // URL (so handleInstagramMessage can early-return), false otherwise.
+function sanitizeInstagramUrl(url) {
+    if (!url || typeof url !== 'string') return url;
+    let u = url.trim();
+    // Normalize mirror domains + www./m. to canonical instagram.com.
+    u = u.replace(/^(https?:\/\/)?(?:www\.|m\.)?(?:dd|kk|ee|uu|rx)?instagram\.com/i, 'https://instagram.com');
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    // Strip everything from the first '?' or '#' onward (query + fragment).
+    u = u.replace(/[?#].*$/, '');
+    return u;
+}
+
 function isInstagramProfileUrl(url) {
     const clean = url.replace(/[?#].*$/, '');
     // Must be instagram.com/<something> but NOT a known non-profile path.
@@ -1056,6 +1067,18 @@ async function fetchInstagramProfileFeed(username, cookieHeader, browserUa, maxP
 
 async function handleInstagramProfile(client, message, profileUrl, remadeContent, recoveredPlaceholder = null) {
     console.log(`[Instagram Interceptor] Profile URL detected: ${profileUrl}`);
+
+    // Sanitize the profile URL (strip tracking query/fragment, normalize mirrors)
+    // so the reposted profile card link and downstream fetches are tracking-free.
+    const rawProfileUrl = profileUrl;
+    profileUrl = sanitizeInstagramUrl(profileUrl);
+    if (remadeContent && typeof remadeContent === 'string' && rawProfileUrl !== profileUrl) {
+        remadeContent = remadeContent
+            .split(rawProfileUrl).join(profileUrl)
+            .replace(/(https?:\/\/)?(www\.|m\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s?#]*\?[^)\s>]*/gi, profileUrl)
+            .replace(/(https?:\/\/)?(www\.|m\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s?#]*#[^\s)>]*/gi, profileUrl);
+    }
+
     const isRecovery = !!recoveredPlaceholder;
     let placeholder;
     if (isRecovery) {
@@ -1588,6 +1611,21 @@ async function downloadWithFixer(instagramUrl, domain) {
 }
 
 async function handleInstagramMessage(client, message, instagramUrl, remadeContent, recoveredPlaceholder = null) {
+    // Sanitize the URL: strip tracking query params/fragment and normalize
+    // mirror domains to canonical instagram.com. The cleaned URL is used both
+    // for processing (download/scrape) and for the reposted message so no
+    // tracking info is ever posted back into the channel. Also replace the raw
+    // (unsanitized) URL inside remadeContent with the cleaned one so the user's
+    // text + link line that the bot reposts carries only the sanitized link.
+    const rawInstagramUrl = instagramUrl;
+    instagramUrl = sanitizeInstagramUrl(instagramUrl);
+    if (remadeContent && typeof remadeContent === 'string' && rawInstagramUrl !== instagramUrl) {
+        remadeContent = remadeContent
+            .split(rawInstagramUrl).join(instagramUrl)
+            .replace(/(https?:\/\/)?(www\.|m\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s?#]*\?[^)\s>]*/gi, instagramUrl)
+            .replace(/(https?:\/\/)?(www\.|m\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s?#]*#[^\s)>]*/gi, instagramUrl);
+    }
+
     // Profile URLs (instagram.com/<username>) are handled by a dedicated profile
     // parser that returns the userpic, bio, and last 4 posts — NOT the media
     // download pipeline (which expects /p/, /reel/, or /tv/ and would mangle the
