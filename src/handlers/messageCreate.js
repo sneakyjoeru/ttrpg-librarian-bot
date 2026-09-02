@@ -4,6 +4,7 @@ const { getLibrarianData, syncChannelNameToRoleCount } = require('../utils/helpe
 const { handleInstagramMessage } = require('../services/instagram');
 const { handleTwitterMessage } = require('./twitterHandler');
 const { handleFacebookMessage } = require('./facebookHandler');
+const { handleTiktokMessage } = require('./tiktokHandler');
 const { handleTelegramMessage } = require('./telegramHandler');
 const { handleArticleMessage } = require('./articleHandler');
 const { handleForumMessage, FORUM_URL_REGEX } = require('./forumHandler');
@@ -186,6 +187,9 @@ async function _handleMessageCreateInner(client, message) {
             if (igM) { let u = igM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; u = u.replace(/(www\.|m\.)?(?:dd|kk|ee|uu|rx)instagram\.com/i, 'instagram.com'); allMatches.push({ url: u, kind: 'instagram' }); }
             const fbM = haystack.match(facebookRe);
             if (fbM) { let u = fbM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'facebook' }); }
+            const tiktokReEdit = /(?:https?:\/\/)?(?:(?:vm|vt)\.tiktok\.com\/[^\s)\]>]+|(?:www\.|m\.)?tiktok\.com\/(?:@[^\s\/]+\/(?:video|photo)\/|t\/|v\/|embed\/)[^\s)\]>]+)/i;
+            const ttMEdit = haystack.match(tiktokReEdit);
+            if (ttMEdit) { let u = ttMEdit[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'tiktok' }); }
             const telegramRe = /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/[a-zA-Z0-9_]+\/[a-zA-Z0-9_]+[^\s)\]>]*/i;
             const tgM = haystack.match(telegramRe);
             if (tgM) { let u = tgM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; allMatches.push({ url: u, kind: 'telegram' }); }
@@ -230,6 +234,7 @@ async function _handleMessageCreateInner(client, message) {
                 if (matchKind === 'twitter') await handleTwitterMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'instagram') await handleInstagramMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'facebook') await handleFacebookMessage(client, synthMsg, matchUrl, newText, placeholder);
+                else if (matchKind === 'tiktok') await handleTiktokMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'telegram') await handleTelegramMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'article') await handleArticleMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'forum') await handleForumMessage(client, synthMsg, matchUrl, newText, placeholder);
@@ -305,6 +310,11 @@ async function _handleMessageCreateInner(client, message) {
                 if (fbM) { let u = fbM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'facebook'; }
             }
             if (!foundUrl) {
+                const tiktokReProcess = /(?:https?:\/\/)?(?:(?:vm|vt)\.tiktok\.com\/[^\s)\]>]+|(?:www\.|m\.)?tiktok\.com\/(?:@[^\s\/]+\/(?:video|photo)\/|t\/|v\/|embed\/)[^\s)\]>]+)/i;
+                const ttM = haystack.match(tiktokReProcess);
+                if (ttM) { let u = ttM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'tiktok'; }
+            }
+            if (!foundUrl) {
                 const telegramRe = /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/[a-zA-Z0-9_]+\/[a-zA-Z0-9_]+[^\s)\]>]*/i;
                 const tgM = haystack.match(telegramRe);
                 if (tgM) { let u = tgM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'telegram'; }
@@ -348,6 +358,7 @@ async function _handleMessageCreateInner(client, message) {
             if (foundKind === 'twitter') await handleTwitterMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'instagram') await handleInstagramMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'facebook') await handleFacebookMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
+            else if (foundKind === 'tiktok') await handleTiktokMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'telegram') await handleTelegramMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'article') await handleArticleMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'forum') await handleForumMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
@@ -407,6 +418,22 @@ async function _handleMessageCreateInner(client, message) {
         }
         const contentNormalized = message.content.replace(originalMatch, facebookUrl);
         await handleFacebookMessage(client, message, facebookUrl, contentNormalized);
+        return;
+    }
+
+    // --- TikTok Link Interceptor (tiktok.com videos/photo carousels + vm./vt.
+    // short share links). Ported from robot-joe; content-shaped URLs only, so
+    // profile mentions (tiktok.com/@user) are not intercepted.
+    const tiktokRegex = /(?:https?:\/\/)?(?:(?:vm|vt)\.tiktok\.com\/[^\s)\]>]+|(?:www\.|m\.)?tiktok\.com\/(?:@[^\s\/]+\/(?:video|photo)\/|t\/|v\/|embed\/)[^\s)\]>]+)/i;
+    const ttMatch = message.content.match(tiktokRegex);
+    if (ttMatch) {
+        const originalMatch = ttMatch[0];
+        let tiktokUrl = originalMatch.replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, '');
+        if (!/^https?:\/\//i.test(tiktokUrl)) {
+            tiktokUrl = 'https://' + tiktokUrl;
+        }
+        const contentNormalized = message.content.replace(originalMatch, tiktokUrl);
+        await handleTiktokMessage(client, message, tiktokUrl, contentNormalized);
         return;
     }
 
