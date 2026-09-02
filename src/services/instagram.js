@@ -1879,56 +1879,15 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
             }
 
             try {
-                // Parse numbers from message content (excluding the Instagram URL)
-                const urlIndex = remadeContent.indexOf(instagramUrl);
-                let beforeUrl = remadeContent.substring(0, urlIndex);
-                let afterUrl = remadeContent.substring(urlIndex + instagramUrl.length);
-
-                const parseMatches = (matches) => {
-                    const result = [];
-                    for (const m of matches) {
-                        const str = m[0];
-                        const val = Math.abs(parseInt(str, 10));
-                        const isNegative = str.startsWith('-');
-                        result.push({ val, isNegative });
-                    }
-                    return result;
-                };
-
-                const beforeNumbers = parseMatches([...beforeUrl.matchAll(/(?:^|(?<=[\s,]))-?\d+\b/g)]);
-                const afterNumbers = parseMatches([...afterUrl.matchAll(/(?:^|(?<=[\s,]))-?\d+\b/g)]);
-                const numbers = [...beforeNumbers, ...afterNumbers];
-
+                // Media index selection (shared engine ported from discord-joe:
+                // +N/N, -N, -l/-л/-п, N-M and comparison ranges, with sentence
+                // guards for bare numbers/ranges). See utils/mediaSelectors.js.
+                const { applyIndexSelection } = require('../utils/mediaSelectors');
                 let cleanedRemadeContent = remadeContent;
-                if (downloadSuccess && numbers.length > 0) {
-                    const positiveIndices = numbers.filter(n => !n.isNegative).map(n => n.val);
-                    const negativeNumbers = numbers.filter(n => n.isNegative);
-
-                    if (positiveIndices.length > 0) {
-                        attachments = attachments.filter((_, idx) => positiveIndices.includes(idx + 1));
-                    }
-
-                    if (negativeNumbers.length === 1) {
-                        const count = negativeNumbers[0].val;
-                        if (count < attachments.length) {
-                            attachments = attachments.slice(0, attachments.length - count);
-                        } else {
-                            attachments = [];
-                        }
-                    } else if (negativeNumbers.length > 1) {
-                        const excludeIndices = new Set(negativeNumbers.map(n => n.val));
-                        attachments = attachments.filter((_, idx) => !excludeIndices.has(idx + 1));
-                    }
-
-                    const cleanSection = (text) => {
-                        return text
-                            .replace(/(?:^|(?<=[\s,]))-?\d+\b/g, '')
-                            .replace(/[,\s]+/g, ' ')
-                            .trim();
-                    };
-                    beforeUrl = cleanSection(beforeUrl);
-                    afterUrl = cleanSection(afterUrl);
-                    cleanedRemadeContent = (beforeUrl ? beforeUrl + ' ' : '') + instagramUrl + (afterUrl ? ' ' + afterUrl : '');
+                if (downloadSuccess) {
+                    const sel = applyIndexSelection(remadeContent, instagramUrl, attachments);
+                    attachments = sel.attachments;
+                    cleanedRemadeContent = sel.cleanedRemadeContent;
                 }
 
                 // Generate standard/original link and modified fallback link

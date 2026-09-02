@@ -408,57 +408,15 @@ async function handleTelegramMessage(client, message, telegramUrl, remadeContent
             }
 
             try {
-                const urlIndex = remadeContent.indexOf(telegramUrl);
-                let beforeUrl = remadeContent.substring(0, urlIndex);
-                let afterUrl = remadeContent.substring(urlIndex + telegramUrl.length);
-
-                const parseMatches = (matches) => {
-                    const result = [];
-                    for (const m of matches) {
-                        const str = m[0].toLowerCase();
-                        if (str === '-l') {
-                            result.push({ isLast: true, isNegative: true });
-                        } else {
-                            const val = Math.abs(parseInt(str, 10));
-                            const isNegative = str.startsWith('-');
-                            result.push({ val, isNegative, isLast: false });
-                        }
-                    }
-                    return result;
-                };
-
-                const beforeNumbers = parseMatches([...beforeUrl.matchAll(/(?:^|(?<=[\s,]))(?:-?\d+|-l)\b/gi)]);
-                const afterNumbers = parseMatches([...afterUrl.matchAll(/(?:^|(?<=[\s,]))(?:-?\d+|-l)\b/gi)]);
-                const numbers = [...beforeNumbers, ...afterNumbers];
-
+                // Media index selection (shared engine ported from discord-joe:
+                // +N/N, -N, -l/-л/-п, N-M and comparison ranges, with sentence
+                // guards for bare numbers/ranges). See utils/mediaSelectors.js.
+                const { applyIndexSelection } = require('../utils/mediaSelectors');
                 let cleanedRemadeContent = remadeContent;
-                if (downloadSuccess && numbers.length > 0) {
-                    const positiveIndices = numbers.filter(n => !n.isNegative).map(n => n.val);
-                    const excludeIndices = new Set();
-                    const negativeTokens = numbers.filter(n => n.isNegative);
-                    for (const n of negativeTokens) {
-                        if (n.isLast) {
-                            excludeIndices.add(attachments.length);
-                        } else {
-                            excludeIndices.add(n.val);
-                        }
-                    }
-
-                    if (positiveIndices.length > 0) {
-                        attachments = attachments.filter((_, idx) => positiveIndices.includes(idx + 1));
-                    }
-
-                    attachments = attachments.filter((_, idx) => !excludeIndices.has(idx + 1));
-
-                    const cleanSection = (text) => {
-                        return text
-                            .replace(/(?:^|(?<=[\s,]))(?:-?\d+|-l)\b/gi, '')
-                            .replace(/[,\s]+/g, ' ')
-                            .trim();
-                    };
-                    beforeUrl = cleanSection(beforeUrl);
-                    afterUrl = cleanSection(afterUrl);
-                    cleanedRemadeContent = (beforeUrl ? beforeUrl + ' ' : '') + telegramUrl + (afterUrl ? ' ' + afterUrl : '');
+                if (downloadSuccess) {
+                    const sel = applyIndexSelection(remadeContent, telegramUrl, attachments);
+                    attachments = sel.attachments;
+                    cleanedRemadeContent = sel.cleanedRemadeContent;
                 }
 
                 const standardUrl = telegramUrl
