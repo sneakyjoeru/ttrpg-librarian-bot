@@ -12,6 +12,115 @@ const {
     IGPU_MIN_VIDEO_BITRATE
 } = require('../config');
 
+// Local exec helper that keeps stderr on success — cropdetect writes its
+// crop= suggestions to stderr. (shell.runCommand only surfaces stdout.)
+const { exec } = require('child_process');
+function runCommandWithStderr(cmd, timeoutMs = 20000) {
+    return new Promise((resolve, reject) => {
+        exec(cmd, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+            if (error && error.killed) return reject(new Error(`Command timed out after ${timeoutMs}ms`));
+            // ffmpeg -f null exits 0; treat non-zero as failure but still hand
+            // back stderr for diagnostics.
+            if (error && !stderr) return reject(error);
+            resolve({ stdout: stdout || '', stderr: stderr || '' });
+        });
+    });
+}
+
+/**
+ * Detects the bounding box of the actual video CONTENT vs a static border of
+ * any color, and builds a crop for the transcode. Two ffmpeg passes:
+ *
+ *  1. MOTION box — consecutive-frame differences (tblend=all_mode=difference)
+ *     are black wherever the picture is static and bright where it moves; an
+ *     accumulating cropdetect (reset=0) on that stream finds where the image
+ *     changes over time.
+ *  2. DETAIL box — edgedetect + cropdetect on sampled original frames. Static
+ *     text or graphics anywhere produce edges, plain borders (black, white,
+ *     any solid color or smooth gradient) do not.
+ *
+ * The final crop is the UNION of the two boxes: borders around the actual
+ * content are removed, but static background text is kept in the final video
+ * (the librarian has no OCR, so "has detail" is the text heuristic).
+ *
+ * Returns {x,y,w,h} (even-rounded) or null when no worthwhile crop exists.
+ */
+async function detectContentCrop(inputPath, duration, videoWidth, videoHeight) {
+    if (duration <= 0 || videoWidth <= 0 || videoHeight <= 0) return null;
+    const parseLastCrop = (stderr) => {
+        const matches = [...stderr.matchAll(/crop=(\d+):(\d+):(\d+):(\d+)/g)];
+        if (!matches.length) return null;
+        const m = matches[matches.length - 1];
+        return { w: parseInt(m[1]), h: parseInt(m[2]), x: parseInt(m[3]), y: parseInt(m[4]) };
+    };
+    const unionBoxes = (boxes) => {
+        if (!boxes.length) return null;
+        const x = Math.max(0, Math.min(...boxes.map(b => b.x)));
+        const y = Math.max(0, Math.min(...boxes.map(b => b.y)));
+        const w = Math.min(videoWidth - x, Math.max(...boxes.map(b => b.x + b.w)) - x);
+        const h = Math.min(videoHeight - y, Math.max(...boxes.map(b => b.y + b.h)) - y);
+        return (w > 0 && h > 0) ? { x, y, w, h } : null;
+    };
+
+    // Pass 1: motion box over up to three 4s windows.
+    const span = Math.min(4, duration);
+    const starts = duration > 14 ? [0.15, 0.5, 0.8].map(p => p * duration) : [0];
+    const motionBoxes = [];
+    for (const start of starts) {
+        try {
+            const t = Math.min(span, Math.max(0.5, duration - start));
+            const cmd = `ffmpeg -ss ${start.toFixed(3)} -t ${t.toFixed(3)} -i "${inputPath}" ` +
+                `-vf "tblend=all_mode=difference,cropdetect=limit=26:round=2:reset=0" -an -f null -`;
+            const res = await runCommandWithStderr(cmd, 30000);
+            const box = parseLastCrop(res.stderr);
+            if (box) motionBoxes.push(box);
+        } catch (err) {
+            console.warn(`[Media Crop] Motion cropdetect window at ${start.toFixed(1)}s failed:`, err.message);
+        }
+    }
+    const motionBox = unionBoxes(motionBoxes);
+    if (!motionBox) {
+        console.log('[Media Crop] No motion box detected — skipping auto-crop.');
+        return null;
+    }
+    const motionShare = (motionBox.w * motionBox.h) / (videoWidth * videoHeight);
+    if (motionShare > 0.92 || motionShare < 0.25) {
+        console.log(`[Media Crop] Motion box covers ${(motionShare * 100).toFixed(0)}% of the frame — skipping auto-crop.`);
+        return null;
+    }
+
+    // Pass 2: detail (edges/text) box over 5 sampled frames.
+    const detailBoxes = [];
+    for (const p of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+        try {
+            const cmd = `ffmpeg -ss ${(p * duration).toFixed(3)} -i "${inputPath}" -vframes 1 ` +
+                `-vf "edgedetect=low=0.08:high=0.15,cropdetect=limit=24:round=2" -f null -`;
+            const res = await runCommandWithStderr(cmd, 15000);
+            const box = parseLastCrop(res.stderr);
+            if (box) detailBoxes.push(box);
+        } catch (err) {
+            console.warn(`[Media Crop] Edge cropdetect at ${(p * 100).toFixed(0)}% failed:`, err.message);
+        }
+    }
+    const detailBox = unionBoxes(detailBoxes);
+
+    // Content = moving pixels ∪ static detail (text). Plain borders die.
+    const finalBox = unionBoxes([motionBox, ...(detailBox ? [detailBox] : [])]);
+    if (!finalBox) return null;
+    const finalShare = (finalBox.w * finalBox.h) / (videoWidth * videoHeight);
+    if (finalShare > 0.92) {
+        console.log(`[Media Crop] Content (motion+detail) covers ${(finalShare * 100).toFixed(0)}% of the frame — not worth cropping.`);
+        return null;
+    }
+    const x = Math.round(finalBox.x / 2) * 2;
+    const y = Math.round(finalBox.y / 2) * 2;
+    const w = Math.max(64, Math.round(finalBox.w / 2) * 2);
+    const h = Math.max(64, Math.round(finalBox.h / 2) * 2);
+    console.log(`[Media Crop] Auto-crop selected: ${w}x${h} at ${x},${y} ` +
+        `(motion ${(motionShare * 100).toFixed(0)}%, final ${(finalShare * 100).toFixed(0)}% of ${videoWidth}x${videoHeight}).`);
+    return { x, y, w, h };
+}
+
 /**
  * Returns the maximum file upload size in bytes for a Discord guild based on its boost tier.
  * @param {object|null} guild - The Discord guild object, or null for DMs.
@@ -134,6 +243,24 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
             console.warn('[FFmpeg Compress] Warning: failed to probe video dimensions with ffprobe:', ffprobeErr.message);
         }
 
+        // --- Auto-crop analysis: crop static borders (any color) around the
+        // moving content; static text in the background is kept (edge-detail
+        // union). Applied to every encode path below. Best-effort.
+        let cropFilter = '';
+        let cropW = width, cropH = height;
+        if (width > 0 && height > 0 && duration > 0) {
+            try {
+                const box = await detectContentCrop(inputPath, duration, width, height);
+                if (box && (box.x > 0 || box.y > 0 || box.w < width || box.h < height)) {
+                    cropFilter = `crop=${box.w}:${box.h}:${box.x}:${box.y},`;
+                    cropW = box.w;
+                    cropH = box.h;
+                }
+            } catch (cropErr) {
+                console.warn('[Media Crop] Auto-crop analysis failed:', cropErr.message);
+            }
+        }
+
         // 0. Try LOCAL iGPU (Intel N100/N150 Quick Sync) first.
         //    Only attempted when the host CPU is detected as one of the
         //    supported Intel SoCs AND /dev/dri/renderD128 is exposed to the
@@ -144,7 +271,7 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
         if (isIgpuAvailable) {
             console.log(`[FFmpeg Compress] ${igpuInfo.reason}. Attempting local iGPU VAAPI transcoding first...`);
             const renderNode = igpuInfo.renderNode || IGPU_RENDER_NODE;
-            const scaleFilter = buildVaapiScaleFilter(width, height);
+            const scaleFilter = buildVaapiScaleFilter(cropW, cropH);
 
             // Bitrate-capped first attempt: for long clips, compute a target
             // video bitrate from targetSizeBytes/duration and encode once with
@@ -163,7 +290,7 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                     const totalBitrate = Math.max(IGPU_MIN_VIDEO_BITRATE, Math.min(IGPU_MAX_VIDEO_BITRATE, Math.floor(videoBits / duration) - audioBitrate));
                     const vBitrate = Math.floor(totalBitrate / 1000);
                     const igpuBcCmd = `ffmpeg -hwaccel vaapi -vaapi_device ${renderNode} -i "${inputPath}" ` +
-                        `-vf 'format=nv12,hwupload,${scaleFilter}' -b:v ${vBitrate}k -maxrate ${vBitrate}k -bufsize ${Math.floor(vBitrate * 2)}k -c:v h264_vaapi -c:a aac -b:a 96k -movflags +faststart -y "${igpuBcPath}"`;
+                        `-vf '${cropFilter}format=nv12,hwupload,${scaleFilter}' -b:v ${vBitrate}k -maxrate ${vBitrate}k -bufsize ${Math.floor(vBitrate * 2)}k -c:v h264_vaapi -c:a aac -b:a 96k -movflags +faststart -y "${igpuBcPath}"`;
                     console.log(`[FFmpeg Compress] Local iGPU bitrate-cap attempt (${vBitrate}k for ${duration.toFixed(1)}s, target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)...`);
                     await runCommandWithProgress(igpuBcCmd, duration, 'igpu', onProgress, timeout);
                     if (fs.existsSync(igpuBcPath)) {
@@ -197,7 +324,7 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                 const igpuMp4Path = path.join(tempDir, `${prefix}_igpu_${i}.mp4`);
                 try {
                     const igpuCmd = `ffmpeg -hwaccel vaapi -vaapi_device ${renderNode} -i "${inputPath}" ` +
-                        `-vf 'format=nv12,hwupload,${scaleFilter}' -rc_mode CQP -qp ${qp} -c:v h264_vaapi -c:a aac -b:a 96k -movflags +faststart -y "${igpuMp4Path}"`;
+                        `-vf '${cropFilter}format=nv12,hwupload,${scaleFilter}' -rc_mode CQP -qp ${qp} -c:v h264_vaapi -c:a aac -b:a 96k -movflags +faststart -y "${igpuMp4Path}"`;
 
                     console.log(`[FFmpeg Compress] Local iGPU attempt ${i + 1}/${qpValues.length} (QP: ${qp}, target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)...`);
                     await runCommandWithProgress(igpuCmd, duration, 'igpu', onProgress, timeout);
@@ -254,13 +381,13 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                         console.log(`[FFmpeg Compress] Dynamically calculated target bitrate: ${videoBitrate} for duration ${duration.toFixed(2)}s`);
                     }
 
-                    const scaleFilter = buildVaapiScaleFilter(width, height);
+                    const scaleFilter = buildVaapiScaleFilter(cropW, cropH);
 
                     const transcoderContainer = process.env.TRANSCODER_CONTAINER || 'transcoder';
                     const sshPrefix = buildSshPrefix();
                     const netCmd = `${sshPrefix} ` +
                         `"sudo docker exec -i ${transcoderContainer} ffmpeg -hwaccel vaapi -vaapi_device /dev/dri/renderD128 -i pipe:0 ` +
-                        `-vf 'format=nv12,hwupload,${scaleFilter}' -b:v ${videoBitrate} -c:v hevc_vaapi -c:a aac -f mpegts pipe:1" ` +
+                        `-vf '${cropFilter}format=nv12,hwupload,${scaleFilter}' -b:v ${videoBitrate} -c:v hevc_vaapi -c:a aac -f mpegts pipe:1" ` +
                         `< "${inputPath}" > "${networkTsPath}"`;
                     
                     await runCommandWithProgress(netCmd, duration, 'network', onProgress, timeout);
@@ -326,8 +453,8 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
         //    (Phase B2) remains as a fallback if 2-pass fails. Mirrors robot-joe.
         if (!isNasAvailable) {
             console.log('[FFmpeg Compress] NAS is not available. Running local CPU compression fallback...');
-            const activeWidth = width;
-            const activeHeight = height;
+            const activeWidth = cropW || width;
+            const activeHeight = cropH || height;
             let cpuScale;
             if (activeWidth > 0 && activeHeight > 0) {
                 if (activeHeight >= activeWidth) {
@@ -344,7 +471,7 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
             } else {
                 cpuScale = `scale='min(720,iw)':'min(720,ih)':force_original_aspect_ratio=decrease`;
             }
-            const cpuScaleArg = `-vf "${cpuScale}"`;
+            const cpuScaleArg = `-vf "${cropFilter}${cpuScale}"`;
 
             // B1. Two-pass bitrate-targeted encode (fastest path to hit an exact
             //     target size). 2-pass libx264 analyses the content in pass 1 and
