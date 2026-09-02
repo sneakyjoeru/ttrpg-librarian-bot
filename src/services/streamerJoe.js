@@ -12,8 +12,7 @@
 //    5 min; the first config with a non-empty `features` object wins (the
 //    operator's dashboard toggles steer the bot). Best-effort — when
 //    streamer-joe is unreachable the DEFAULT_FEATURES below apply, which keep
-//    every currently active librarian feature ON and the data-exporting
-//    knowledge_population OFF.
+//    every currently active librarian feature ON.
 
 const https = require('https');
 const axios = require('axios');
@@ -26,9 +25,9 @@ const DEFAULT_FEATURES = {
     media_parsing: true,   // Twitter/IG/FB/TikTok/Telegram/forum interceptors
     media_transcode: true, // ffmpeg compression of oversized media
     news_parsing: true,    // news-article interceptor
-    // OFF unless the dashboard explicitly enables it — the fallback must
-    // never turn data export on by itself.
-    knowledge_population: false,
+    // NOTE: knowledge_population is deliberately absent — Discord→knowledge
+    // export is a discord-joe-only feature; the librarian never pushes its
+    // guild's messages to streamer-joe.
 };
 
 const _BASE_CANDIDATES = [];

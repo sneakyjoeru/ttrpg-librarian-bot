@@ -101,14 +101,6 @@ client.once(Events.ClientReady, async () => {
     } catch (err) {
         console.warn('[StreamerJoe] poller failed to start:', err.message);
     }
-    // Knowledge population (gated at runtime by the knowledge_population
-    // toggle, off by default): periodic Discord→streamer-joe message export.
-    try {
-        const { startKnowledgeSync } = require('./src/services/knowledgeSync');
-        startKnowledgeSync(client);
-    } catch (err) {
-        console.warn('[KnowledgeSync] failed to start:', err.message);
-    }
     // Per-guild language config: initial scan of channels + user messages
     // (skipped when a fresh config exists). Used to answer in the language of
     // language-specific channels.
