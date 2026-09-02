@@ -81,6 +81,16 @@ function buildVaapiScaleFilter(width, height) {
  * @returns {Promise<{buffer: Buffer, ext: string}|null>} The compressed buffer and extension, or null on failure.
  */
 async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, timeoutMs, onProgress) {
+    // media_transcode dashboard toggle: when off, behave like a failed
+    // compression — callers drop the oversized file / fall back to a link,
+    // exactly as when ffmpeg can't fit the target size.
+    try {
+        const { isDiscordFeatureEnabled } = require('../services/streamerJoe');
+        if (!isDiscordFeatureEnabled('media_transcode')) {
+            console.log('[MediaCompressor] media_transcode disabled via dashboard — skipping compression.');
+            return null;
+        }
+    } catch (_) {}
     const timeout = timeoutMs || FFMPEG_TIMEOUT;
     const prefix = `ffcomp_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const tempDir = os.tmpdir();

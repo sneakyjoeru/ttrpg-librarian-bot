@@ -89,6 +89,43 @@ client.once(Events.ClientReady, async () => {
     // Start watchdog — detects event loop blockage and forces restart
     watchdog.start({ timeoutMs: 120000, client: client, channelId: SYSTEM_CHANNEL_ID });
 
+    // Streamer-joe dashboard feature toggles (media_parsing/media_transcode/
+    // news_parsing/llm_chat/knowledge_population). Best-effort: when
+    // streamer-joe is unreachable the defaults keep every active feature ON
+    // and knowledge_population OFF. Ported from discord-joe.
+    try {
+        const streamerJoe = require('./src/services/streamerJoe');
+        streamerJoe.startDiscordFeaturesPoller().catch(err => {
+            console.warn('[StreamerJoe] initial flag fetch failed (using defaults):', err.message);
+        });
+    } catch (err) {
+        console.warn('[StreamerJoe] poller failed to start:', err.message);
+    }
+    // Knowledge population (gated at runtime by the knowledge_population
+    // toggle, off by default): periodic Discord→streamer-joe message export.
+    try {
+        const { startKnowledgeSync } = require('./src/services/knowledgeSync');
+        startKnowledgeSync(client);
+    } catch (err) {
+        console.warn('[KnowledgeSync] failed to start:', err.message);
+    }
+    // Per-guild language config: initial scan of channels + user messages
+    // (skipped when a fresh config exists). Used to answer in the language of
+    // language-specific channels.
+    try {
+        const guildLanguages = require('./src/services/guildLanguages');
+        guildLanguages.scanAllGuilds(client).catch(err => {
+            console.warn('[GuildLanguages] startup scan failed:', err.message);
+        });
+        client.on('guildCreate', (guild) => {
+            guildLanguages.ensureGuildScanned(client, guild, true).catch(err => {
+                console.warn(`[GuildLanguages] scan on guildCreate failed for ${guild.id}:`, err.message);
+            });
+        });
+    } catch (err) {
+        console.warn('[GuildLanguages] failed to start:', err.message);
+    }
+
     // iGPU passthrough check: log at startup whether /dev/dri is present so
     // the user can immediately see if they need to rebuild (Docker restart
     // doesn't re-apply --device flags; only a fresh docker run via

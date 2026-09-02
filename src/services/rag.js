@@ -244,6 +244,18 @@ ${formattedTargetMessages || 'None found in the last 100 messages.'}
     - Generate ONLY the final answer. Do NOT append, repeat, or continue any chat history, dialogue turns, or conversation logs.
     - Seed value: ${seed}. Use this only to vary wording naturally; avoid repeating the same opener/closer patterns from recent chat history.`;
 
+        // Per-server language config: language-specific channels (and guilds
+        // whose main language isn't English) get a reply-language override.
+        // '' for unknown/unscanned channels — default English stays.
+        try {
+            const { getChannelLanguage, LANG_NAMES_EN } = require('./guildLanguages');
+            const chLang = message.guild ? getChannelLanguage(message.guild.id, message.channel.id) : null;
+            if (chLang && chLang !== 'en') {
+                const langName = LANG_NAMES_EN[chLang] || chLang;
+                systemMessage += `\n- LANGUAGE OVERRIDE (top priority, replaces "Answer in English" above): this channel is a ${langName}-language channel. Answer ONLY in ${langName}.`;
+            }
+        } catch (_) {}
+
         const userPrompt = `Internet Search Context:
 ${searchContext}
 
