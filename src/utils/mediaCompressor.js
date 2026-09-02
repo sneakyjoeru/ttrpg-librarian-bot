@@ -546,11 +546,20 @@ async function compressVideoToFit(inputBuffer, inputExtension, targetSizeBytes, 
                     const vBitrate = Math.floor(totalBitrate / 1000);
                     console.log(`[FFmpeg Compress] 2-pass encode: ${vBitrate}k video / 64k audio for ${duration.toFixed(1)}s (target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)...`);
                     // Pass 1: analysis (output to null, write stats to pass log).
+                    // Combined 2-pass percentage: pass 1 maps to 0-50, pass 2
+                    // to 50-100 so the visible percent never drops back to 0
+                    // when the second pass starts.
+                    const pass1Progress = onProgress
+                        ? (info) => onProgress({ ...info, percent: Math.round((info.percent || 0) / 2) })
+                        : onProgress;
+                    const pass2Progress = onProgress
+                        ? (info) => onProgress({ ...info, percent: 50 + Math.round((info.percent || 0) / 2) })
+                        : onProgress;
                     const pass1Cmd = `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset veryfast -b:v ${vBitrate}k -pass 1 -passlogfile "${passLogPrefix}" ${cpuScaleArg} -an -f mp4 /dev/null`;
-                    await runCommandWithProgress(pass1Cmd, duration, 'local', onProgress, timeout);
+                    await runCommandWithProgress(pass1Cmd, duration, 'local', pass1Progress, timeout);
                     // Pass 2: encode using the pass-1 stats.
                     const pass2Cmd = `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset veryfast -b:v ${vBitrate}k -pass 2 -passlogfile "${passLogPrefix}" ${cpuScaleArg} -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart "${outputPath}"`;
-                    await runCommandWithProgress(pass2Cmd, duration, 'local', onProgress, timeout);
+                    await runCommandWithProgress(pass2Cmd, duration, 'local', pass2Progress, timeout);
                     if (fs.existsSync(outputPath)) {
                         const stats = fs.statSync(outputPath);
                         console.log(`[FFmpeg Compress] 2-pass output: ${(stats.size / 1024 / 1024).toFixed(1)}MB (target ${(targetSizeBytes / 1024 / 1024).toFixed(1)}MB)`);
