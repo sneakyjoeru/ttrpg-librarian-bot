@@ -45,6 +45,61 @@ function runCommandWithStderr(cmd, timeoutMs = 20000) {
  *
  * Returns {x,y,w,h} (even-rounded) or null when no worthwhile crop exists.
  */
+
+/**
+ * Blurred/zoomed-copy background padding via STRONG-edge analysis: only the
+ * real content (and sharp overlay text) survives edgedetect(0.3/0.5), a
+ * blurred copy does not. Crop applied per axis, only when BOTH margins clear
+ * MIN_MARGIN (blur padding is roughly centered). Raw x1/x2/y1/y2 bounds are
+ * parsed since the crop= suggestion can go negative on an axis with no
+ * strong edges.
+ */
+async function detectBlurredPaddingCrop(inputPath, duration, videoWidth, videoHeight) {
+    if (duration <= 0 || videoWidth <= 0 || videoHeight <= 0) return null;
+    const MIN_MARGIN = 40;
+    const PAD = 16;
+    const span = Math.min(2, duration);
+    const starts = duration > 8 ? [0.2, 0.5, 0.8].map(p => p * duration) : [0];
+    let x1 = null, x2 = null, y1 = null, y2 = null;
+    for (const start of starts) {
+        try {
+            const t = Math.min(span, Math.max(0.5, duration - start));
+            const cmd = `ffmpeg -ss ${start.toFixed(3)} -t ${t.toFixed(3)} -i "${inputPath}" ` +
+                `-vf "edgedetect=low=0.3:high=0.5,cropdetect=limit=16:round=2:reset=0" -an -f null -`;
+            const res = await runCommandWithStderr(cmd, 30000);
+            const matches = [...res.stderr.matchAll(/x1:(\d+) x2:(\d+) y1:(\d+) y2:(\d+)/g)];
+            if (!matches.length) continue;
+            const m = matches[matches.length - 1];
+            const [sx1, sx2, sy1, sy2] = [parseInt(m[1]), parseInt(m[2]), parseInt(m[3]), parseInt(m[4])];
+            if (sx1 <= sx2) { x1 = x1 === null ? sx1 : Math.min(x1, sx1); x2 = x2 === null ? sx2 : Math.max(x2, sx2); }
+            if (sy1 <= sy2) { y1 = y1 === null ? sy1 : Math.min(y1, sy1); y2 = y2 === null ? sy2 : Math.max(y2, sy2); }
+        } catch (err) {
+            console.warn(`[Media Crop] Sharp-edge window at ${start.toFixed(2)}s failed:`, err.message);
+        }
+    }
+    if (y1 === null && x1 === null) return null;
+    let fx = 0, fw = videoWidth, fy = 0, fh = videoHeight;
+    if (x1 !== null && x1 >= MIN_MARGIN && (videoWidth - 1 - x2) >= MIN_MARGIN) {
+        fx = Math.max(0, x1 - PAD);
+        fw = Math.min(videoWidth - fx, (x2 + PAD) - fx + 1);
+    }
+    if (y1 !== null && y1 >= MIN_MARGIN && (videoHeight - 1 - y2) >= MIN_MARGIN) {
+        fy = Math.max(0, y1 - PAD);
+        fh = Math.min(videoHeight - fy, (y2 + PAD) - fy + 1);
+    }
+    if (fx === 0 && fy === 0 && fw === videoWidth && fh === videoHeight) return null;
+    const areaShare = (fw * fh) / (videoWidth * videoHeight);
+    if (areaShare > 0.92 || areaShare < 0.25) return null;
+    const box = {
+        x: Math.round(fx / 2) * 2,
+        y: Math.round(fy / 2) * 2,
+        w: Math.max(64, Math.round(fw / 2) * 2),
+        h: Math.max(64, Math.round(fh / 2) * 2),
+    };
+    console.log(`[Media Crop] Blurred-padding crop detected (strong edges): ${box.w}x${box.h} at ${box.x},${box.y} (${(areaShare * 100).toFixed(0)}% of frame).`);
+    return box;
+}
+
 async function detectContentCrop(inputPath, duration, videoWidth, videoHeight) {
     if (duration <= 0 || videoWidth <= 0 || videoHeight <= 0) return null;
     const parseLastCrop = (stderr) => {
@@ -79,13 +134,15 @@ async function detectContentCrop(inputPath, duration, videoWidth, videoHeight) {
         }
     }
     const motionBox = unionBoxes(motionBoxes);
-    if (!motionBox) {
-        console.log('[Media Crop] No motion box detected — skipping auto-crop.');
-        return null;
+    const motionShare = motionBox ? (motionBox.w * motionBox.h) / (videoWidth * videoHeight) : 1;
+    if (!motionBox || motionShare > 0.92) {
+        // Motion everywhere (or nothing usable): the classic blur-padded copy
+        // background moves with the video — try the strong-edge detector.
+        console.log('[Media Crop] Motion covers the frame — checking for blurred-copy padding...');
+        return await detectBlurredPaddingCrop(inputPath, duration, videoWidth, videoHeight);
     }
-    const motionShare = (motionBox.w * motionBox.h) / (videoWidth * videoHeight);
-    if (motionShare > 0.92 || motionShare < 0.25) {
-        console.log(`[Media Crop] Motion box covers ${(motionShare * 100).toFixed(0)}% of the frame — skipping auto-crop.`);
+    if (motionShare < 0.25) {
+        console.log(`[Media Crop] Motion box covers ${(motionShare * 100).toFixed(0)}% of the frame — mostly-still video, skipping auto-crop.`);
         return null;
     }
 
