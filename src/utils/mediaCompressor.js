@@ -116,6 +116,78 @@ async function detectBlurredPaddingCrop(inputPath, duration, videoWidth, videoHe
     return box;
 }
 
+
+/**
+ * Value-based letterbox detection for mostly-still videos (where the motion
+ * box cannot be trusted): per sampled frame, cropdetect finds near-BLACK
+ * margins and a negated pass finds near-WHITE margins; the content box is
+ * their intersection, aggregated across frames, then expanded over the
+ * strong-edge bounds so border text survives.
+ */
+async function detectValueLetterboxCrop(inputPath, duration, videoWidth, videoHeight) {
+    if (duration <= 0 || videoWidth <= 0 || videoHeight <= 0) return null;
+    const crops = [];
+    for (const pfrac of [0.2, 0.5, 0.8]) {
+        const time = pfrac * duration;
+        try {
+            const detect = async (vf) => {
+                const res = await runCommandWithStderr(
+                    `ffmpeg -ss ${time.toFixed(3)} -i "${inputPath}" -vframes 1 -vf "${vf}" -f null -`, 15000);
+                const m = res.stderr.match(/crop=(\d+):(\d+):(\d+):(\d+)/);
+                if (!m) return null;
+                const b = { w: parseInt(m[1]), h: parseInt(m[2]), x: parseInt(m[3]), y: parseInt(m[4]) };
+                return (b.w > 0 && b.h > 0) ? b : null;
+            };
+            const blackBox = await detect('cropdetect=limit=24:round=2');
+            const whiteBox = await detect('negate,cropdetect=limit=24:round=2');
+            let frameBox = null;
+            if (blackBox && whiteBox) {
+                const x = Math.max(blackBox.x, whiteBox.x);
+                const y = Math.max(blackBox.y, whiteBox.y);
+                const right = Math.min(blackBox.x + blackBox.w, whiteBox.x + whiteBox.w);
+                const bottom = Math.min(blackBox.y + blackBox.h, whiteBox.y + whiteBox.h);
+                if (right - x > 0 && bottom - y > 0) frameBox = { x, y, w: right - x, h: bottom - y };
+            } else {
+                frameBox = blackBox || whiteBox;
+            }
+            crops.push(frameBox || { x: 0, y: 0, w: videoWidth, h: videoHeight });
+        } catch (err) {
+            crops.push({ x: 0, y: 0, w: videoWidth, h: videoHeight });
+        }
+    }
+    if (!crops.length) return null;
+    let x = Math.max(0, Math.min(...crops.map(c => c.x)));
+    let y = Math.max(0, Math.min(...crops.map(c => c.y)));
+    let right = Math.max(...crops.map(c => c.x + c.w));
+    let bottom = Math.max(...crops.map(c => c.y + c.h));
+    // Border text protection: expand over strong-edge bounds.
+    try {
+        const span = Math.min(2, duration);
+        const res = await runCommandWithStderr(
+            `ffmpeg -ss ${(0.4 * duration).toFixed(3)} -t ${span.toFixed(3)} -i "${inputPath}" ` +
+            `-vf "edgedetect=low=0.3:high=0.5,cropdetect=limit=16:round=2:reset=0" -an -f null -`, 30000);
+        const ms = [...res.stderr.matchAll(/x1:(\d+) x2:(\d+) y1:(\d+) y2:(\d+)/g)];
+        if (ms.length) {
+            const m = ms[ms.length - 1];
+            const [ex1, ex2, ey1, ey2] = [parseInt(m[1]), parseInt(m[2]), parseInt(m[3]), parseInt(m[4])];
+            if (ex1 <= ex2) { x = Math.min(x, ex1); right = Math.max(right, ex2 + 1); }
+            if (ey1 <= ey2) { y = Math.min(y, ey1); bottom = Math.max(bottom, ey2 + 1); }
+        }
+    } catch (_) {}
+    const w = Math.min(videoWidth - x, right - x);
+    const h = Math.min(videoHeight - y, bottom - y);
+    if (w <= 0 || h <= 0) return null;
+    if (x <= 8 && y <= 8 && w >= videoWidth - 16 && h >= videoHeight - 16) return null;
+    const share = (w * h) / (videoWidth * videoHeight);
+    if (share > 0.92 || share < 0.25) return null;
+    const box = {
+        x: Math.round(x / 2) * 2, y: Math.round(y / 2) * 2,
+        w: Math.max(64, Math.round(w / 2) * 2), h: Math.max(64, Math.round(h / 2) * 2),
+    };
+    console.log(`[Media Crop] Value letterbox crop (mostly-still video): ${box.w}x${box.h} at ${box.x},${box.y} (${(share * 100).toFixed(0)}%).`);
+    return box;
+}
+
 async function detectContentCrop(inputPath, duration, videoWidth, videoHeight) {
     if (duration <= 0 || videoWidth <= 0 || videoHeight <= 0) return null;
     const parseLastCrop = (stderr) => {
@@ -158,8 +230,8 @@ async function detectContentCrop(inputPath, duration, videoWidth, videoHeight) {
         return await detectBlurredPaddingCrop(inputPath, duration, videoWidth, videoHeight);
     }
     if (motionShare < 0.25) {
-        console.log(`[Media Crop] Motion box covers ${(motionShare * 100).toFixed(0)}% of the frame — mostly-still video, skipping auto-crop.`);
-        return null;
+        console.log(`[Media Crop] Motion box covers ${(motionShare * 100).toFixed(0)}% of the frame — mostly-still video, using value-based letterbox detection.`);
+        return await detectValueLetterboxCrop(inputPath, duration, videoWidth, videoHeight);
     }
 
     // Pass 2: detail (edges/text) box over 5 sampled frames.

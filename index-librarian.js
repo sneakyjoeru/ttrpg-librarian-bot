@@ -64,6 +64,12 @@ const { handleReactionAdd, handleReactionRemove } = require('./src/handlers/reac
 const { inFlightMessages } = require('./src/utils/inFlightTracker');
 const watchdog = require('./src/utils/watchdog');
 
+// Process boot timestamp: a message created AFTER this process started can
+// never be "abandoned"/"missed" from a previous session — the live handler
+// owns it. Guards the startup cleanup + catch-up scans against racing a post
+// that arrives during boot (double-processing; observed on discord-joe).
+const PROCESS_BOOT_TS = Date.now();
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -801,6 +807,7 @@ async function catchUpMissedInstagramLinks(maxLookbackHours = null) {
                 const missedLinks = fetchedArray.filter(msg => {
                     if (msg.author.bot || msg.webhookId) return false;
                     if (msg.createdTimestamp < startTimestamp) return false;
+                    if (msg.createdTimestamp >= PROCESS_BOOT_TS) return false; // live handler owns fresh posts
                     if (!instagramRegex.test(msg.content)) return false;
                     // Check if a bot/webhook response already exists for this message
                     const msgIndex = fetchedArray.indexOf(msg);
@@ -881,6 +888,7 @@ async function catchUpMissedForumLinks(maxLookbackHours = null) {
                 const missedLinks = fetchedArray.filter(msg => {
                     if (msg.author.bot || msg.webhookId) return false;
                     if (msg.createdTimestamp < startTimestamp) return false;
+                    if (msg.createdTimestamp >= PROCESS_BOOT_TS) return false; // live handler owns fresh posts
                     if (!FORUM_URL_REGEX.test(msg.content)) return false;
                     const msgIndex = fetchedArray.indexOf(msg);
                     const subsequent = fetchedArray.slice(0, msgIndex);
@@ -944,6 +952,8 @@ async function cleanupAbandonedPlaceholders(clientInstance) {
 
                 for (const msg of messages.values()) {
                     if (msg.createdTimestamp < TWO_HOURS_AGO) continue;
+                    // Created during THIS session — live handlers own it.
+                    if (msg.createdTimestamp >= PROCESS_BOOT_TS) continue;
                     // Only bot/webhook messages with the ⏳ indicator.
                     const isBotOrWebhook = msg.author.bot || msg.webhookId !== null;
                     if (!isBotOrWebhook) continue;

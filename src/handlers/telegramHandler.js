@@ -451,6 +451,15 @@ async function handleTelegramMessage(client, message, telegramUrl, remadeContent
                     await updateWorkingPlaceholder(placeholder, currentText, attachments, true, effectiveFileLimit, fallbackContent);
                     await finalizePlaceholderClean(placeholder, currentText, true);
                     job.success({ stage: 'telegram_repost', media: attachments.length, source: successfulSource });
+                } else if (placeholder && placeholder.sentMsg && placeholder.sentMsg.attachments && placeholder.sentMsg.attachments.size > 0) {
+                    // Download failed but the message ALREADY carries media (e.g.
+                    // /process re-run while the source is unavailable). Never
+                    // replace existing media with a bare link — keep the post as
+                    // is and just clear the working indicator.
+                    console.log('[Telegram Interceptor] Downloads failed but the existing message already has media — keeping it untouched.');
+                    const keepContent = placeholder.baseText || cleanedRemadeContent || '';
+                    await finalizePlaceholderClean(placeholder, keepContent, true).catch(() => {});
+                    job.success({ stage: 'telegram_kept_existing_media', reason: 'all_downloads_failed' });
                 } else {
                     console.log(`[Telegram Interceptor] All downloads failed. Posting markdown hyperlink fallback: [${displayUrl}](${standardUrl})`);
                     await updateWorkingPlaceholder(placeholder, fallbackContent, [], false, 0, fallbackContent);

@@ -1905,6 +1905,15 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                     } else {
                         await updateWorkingPlaceholder(placeholder, successText, attachments, true, effectiveFileLimit, fallbackContent);
                     }
+                } else if (placeholder && placeholder.sentMsg && placeholder.sentMsg.attachments && placeholder.sentMsg.attachments.size > 0) {
+                    // Download failed but the message ALREADY carries media (e.g.
+                    // /process re-run while the source is unavailable). Never
+                    // replace existing media with a bare link — keep the post as
+                    // is and just clear the working indicator.
+                    console.log('[Instagram Interceptor] Downloads failed but the existing message already has media — keeping it untouched.');
+                    const keepContent = placeholder.baseText || cleanedRemadeContent || '';
+                    await finalizePlaceholderClean(placeholder, keepContent, true).catch(() => {});
+                    job.success({ stage: 'instagram_kept_existing_media', reason: 'all_downloads_failed' });
                 } else {
                     console.log(`[Instagram Interceptor] All downloads failed. Posting markdown hyperlink for Discord embed: [${displayUrl}](${fallbackUrl})`);
                     await updateWorkingPlaceholder(placeholder, fallbackContent, [], false, 0, fallbackContent);
