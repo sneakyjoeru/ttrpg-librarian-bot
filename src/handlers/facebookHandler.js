@@ -21,7 +21,7 @@ const { AttachmentBuilder } = require('discord.js');
 const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT, FILE_SIZE_SAFETY_FACTOR, PROGRESS_UPDATE_INTERVAL_MS, RAG_SEARCH_TIMEOUT, RAG_OLLAMA_TIMEOUT_SHORT } = require('../config');
 const { sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage, finalizePlaceholderClean } = require('../utils/webhook');
 const { inFlightPlaceholders } = require('../utils/inFlightTracker');
-const { runCommand, findYtDlpPath } = require('../utils/shell');
+const { runCommand, findYtDlpPath, cookiesFlagForYtDlp } = require('../utils/shell');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
 const mediaQueue = require('../utils/mediaQueue');
 const { detectFileType } = require('../utils/fileTypeDetector');
@@ -76,7 +76,7 @@ async function downloadWithYtDlp(url) {
     const outputPattern = path.join(tempDir, `${prefix}.%(ext)s`);
 
     const cookiesPath = locateCookies();
-    const cookiesFlag = cookiesPath ? `--cookies "${cookiesPath}"` : '';
+    const cookiesFlag = cookiesFlagForYtDlp(cookiesPath);
     if (!cookiesPath) {
         console.log(`[Facebook Interceptor] No cookies file located; yt-dlp will run unauthenticated (fine for public posts).`);
     } else {

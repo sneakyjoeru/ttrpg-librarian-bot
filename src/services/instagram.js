@@ -6,7 +6,7 @@ const snapinsta = require('snapinsta');
 const { AttachmentBuilder } = require('discord.js');
 const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT, FILE_SIZE_SAFETY_FACTOR } = require('../config');
 const { sendRepostedMessage, sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage, finalizePlaceholderClean } = require('../utils/webhook');
-const { runCommand, findYtDlpPath } = require('../utils/shell');
+const { runCommand, findYtDlpPath, cookiesFlagForYtDlp } = require('../utils/shell');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
 const mediaQueue = require('../utils/mediaQueue');
 const { detectFileType } = require('../utils/fileTypeDetector');
@@ -1349,7 +1349,7 @@ async function downloadWithYtDlp(url) {
     for (const p of pathsToCheck) {
         if (fs.existsSync(p)) {
             console.log(`[Instagram Interceptor] Found cookies file: ${p}. Passing to yt-dlp.`);
-            cookiesFlag = `--cookies "${p}"`;
+            cookiesFlag = cookiesFlagForYtDlp(p);
             found = true;
             break;
         }

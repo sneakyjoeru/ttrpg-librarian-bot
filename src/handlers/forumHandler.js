@@ -20,7 +20,7 @@ const { AttachmentBuilder } = require('discord.js');
 const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT, FILE_SIZE_SAFETY_FACTOR, DISCORD_MESSAGE_LIMIT } = require('../config');
 const { sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage, finalizePlaceholderClean } = require('../utils/webhook');
 const { inFlightPlaceholders } = require('../utils/inFlightTracker');
-const { runCommand, findYtDlpPath } = require('../utils/shell');
+const { runCommand, findYtDlpPath, cookiesFlagForYtDlp } = require('../utils/shell');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
 const mediaQueue = require('../utils/mediaQueue');
 const { detectFileType } = require('../utils/fileTypeDetector');
@@ -376,7 +376,7 @@ async function downloadWithYtDlp(url, prefix) {
         '/tmp/cookies.txt'
     ];
     for (const p of cookiePaths) {
-        if (fs.existsSync(p)) { cookiesFlag = `--cookies "${p}"`; break; }
+        if (fs.existsSync(p)) { cookiesFlag = cookiesFlagForYtDlp(p); break; }
     }
 
     const cmd = `"${ytDlp}" ${cookiesFlag} --no-playlist --no-progress --merge-output-format mp4 -o "${outputPattern}" "${url}"`;

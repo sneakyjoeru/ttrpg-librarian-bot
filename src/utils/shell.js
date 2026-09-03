@@ -235,7 +235,28 @@ function findYtDlpPath() {
     return 'yt-dlp'; // fallback
 }
 
+
+// yt-dlp REWRITES the file passed via --cookies on every run — and after an
+// auth failure it writes the jar back WITHOUT the session cookies, silently
+// destroying the master cookies.txt (observed 2026-09-03: every failed
+// Instagram download scrubbed the fresh sessionid, causing repeated
+// auto-logins). Always hand yt-dlp a throwaway copy.
+function cookiesFlagForYtDlp(cookiesPath) {
+    if (!cookiesPath) return '';
+    try {
+        const os = require('os');
+        const fs = require('fs');
+        const path = require('path');
+        const tmp = path.join(os.tmpdir(), `ytdlp_cookies_${Date.now()}_${Math.floor(Math.random() * 10000)}.txt`);
+        fs.copyFileSync(cookiesPath, tmp);
+        return `--cookies "${tmp}"`;
+    } catch (_) {
+        return ''; // run unauthenticated rather than risk the master file
+    }
+}
+
 module.exports = {
+    cookiesFlagForYtDlp,
     runCommand,
     runCommandStream,
     buildSshPrefix,
