@@ -78,18 +78,34 @@ async function detectBlurredPaddingCrop(inputPath, duration, videoWidth, videoHe
         }
     }
     if (y1 === null && x1 === null) return null;
+    // Per-axis: both margins must clear MIN_MARGIN and be roughly symmetric
+    // (≤3x) — blur padding is centered; a lopsided margin is usually smooth
+    // REAL content near one frame edge.
     let fx = 0, fw = videoWidth, fy = 0, fh = videoHeight;
-    if (x1 !== null && x1 >= MIN_MARGIN && (videoWidth - 1 - x2) >= MIN_MARGIN) {
-        fx = Math.max(0, x1 - PAD);
-        fw = Math.min(videoWidth - fx, (x2 + PAD) - fx + 1);
+    if (x1 !== null) {
+        const mL = x1, mR = videoWidth - 1 - x2;
+        if (mL >= MIN_MARGIN && mR >= MIN_MARGIN && Math.max(mL, mR) / Math.max(1, Math.min(mL, mR)) <= 3) {
+            fx = Math.max(0, x1 - PAD);
+            fw = Math.min(videoWidth - fx, (x2 + PAD) - fx + 1);
+        }
     }
-    if (y1 !== null && y1 >= MIN_MARGIN && (videoHeight - 1 - y2) >= MIN_MARGIN) {
-        fy = Math.max(0, y1 - PAD);
-        fh = Math.min(videoHeight - fy, (y2 + PAD) - fy + 1);
+    if (y1 !== null) {
+        const mT = y1, mB = videoHeight - 1 - y2;
+        if (mT >= MIN_MARGIN && mB >= MIN_MARGIN && Math.max(mT, mB) / Math.max(1, Math.min(mT, mB)) <= 3) {
+            fy = Math.max(0, y1 - PAD);
+            fh = Math.min(videoHeight - fy, (y2 + PAD) - fy + 1);
+        }
     }
     if (fx === 0 && fy === 0 && fw === videoWidth && fh === videoHeight) return null;
     const areaShare = (fw * fh) / (videoWidth * videoHeight);
     if (areaShare > 0.92 || areaShare < 0.25) return null;
+    // ASPECT SANITY: the inner video of a blur-pad has a real video shape;
+    // out-of-range results are false positives on smooth real content.
+    const aspect = fw / fh;
+    if (aspect < 0.5 || aspect > 2.0) {
+        console.log(`[Media Crop] Sharp-content box aspect ${aspect.toFixed(2)} is not a plausible video shape — skipping blur-pad crop.`);
+        return null;
+    }
     const box = {
         x: Math.round(fx / 2) * 2,
         y: Math.round(fy / 2) * 2,
