@@ -188,7 +188,104 @@ async function detectValueLetterboxCrop(inputPath, duration, videoWidth, videoHe
     return box;
 }
 
+async function tightenUniformPadding(inputPath, duration, W, H) {
+    if (duration <= 0 || W <= 0 || H <= 0) return null;
+    const BAND = 10;
+    const UNIFORM_SPREAD = 42;   // YHIGH-YLOW within a padding band
+    const COLOR_TOL = 26;        // band YAVG vs the edge's own colour
+    const times = duration > 6 ? [0.25, 0.5, 0.75].map(p => p * duration) : [Math.min(1, duration / 2)];
+
+    // signalstats of a crop region → {avg, low, high} luma, or null.
+    const stats = async (crop, t) => {
+        try {
+            const cmd = `ffmpeg -ss ${t.toFixed(3)} -i "${inputPath}" -vframes 1 -vf "crop=${crop},signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-" -f null - 2>&1`;
+            const res = await runCommandWithStderr(
+                `ffmpeg -ss ${t.toFixed(3)} -i "${inputPath}" -vframes 1 -vf "crop=${crop},signalstats,metadata=print" -f null -`, 12000);
+            const out = res.stderr;
+            const g = (k) => { const m = out.match(new RegExp('lavfi\\.signalstats\\.' + k + '=([\\d.]+)')); return m ? parseFloat(m[1]) : null; };
+            const avg = g('YAVG'), low = g('YLOW'), high = g('YHIGH');
+            if (avg === null) return null;
+            return { avg, low: low === null ? avg : low, high: high === null ? avg : high };
+        } catch (_) { return null; }
+    };
+
+    // Trim px from one edge for one timestamp. edge: 'top'|'bottom'|'left'|'right'.
+    const trimEdgeAt = async (edge, t) => {
+        const vert = edge === 'top' || edge === 'bottom';
+        const limit = Math.floor((vert ? H : W) * 0.45); // never trim past 45%
+        let edgeColor = null;
+        let trimmed = 0;
+        for (let off = 0; off + BAND <= limit; off += BAND) {
+            let crop;
+            if (edge === 'top') crop = `${W}:${BAND}:0:${off}`;
+            else if (edge === 'bottom') crop = `${W}:${BAND}:0:${H - BAND - off}`;
+            else if (edge === 'left') crop = `${BAND}:${H}:${off}:0`;
+            else crop = `${BAND}:${H}:${W - BAND - off}:0`;
+            const s = await stats(crop, t);
+            if (!s) break;
+            if (edgeColor === null) edgeColor = s.avg;
+            const uniform = (s.high - s.low) <= UNIFORM_SPREAD;
+            const sameColor = Math.abs(s.avg - edgeColor) <= COLOR_TOL;
+            if (uniform && sameColor) trimmed = off + BAND;
+            else break;
+        }
+        return trimmed;
+    };
+
+    const minTrim = { top: Infinity, bottom: Infinity, left: Infinity, right: Infinity };
+    for (const t of times) {
+        for (const edge of ['top', 'bottom', 'left', 'right']) {
+            const v = await trimEdgeAt(edge, t);
+            if (v < minTrim[edge]) minTrim[edge] = v;
+        }
+    }
+    for (const k of Object.keys(minTrim)) if (!isFinite(minTrim[k])) minTrim[k] = 0;
+
+    // Preserve a breathing-room MARGIN on any trimmed edge — never crop flush
+    // to the text/content pixels. Only applied where there was padding to trim.
+    const MARGIN = 14;
+    for (const k of Object.keys(minTrim)) {
+        if (minTrim[k] > 0) minTrim[k] = Math.max(0, minTrim[k] - MARGIN);
+    }
+
+    const x = Math.round(minTrim.left / 2) * 2;
+    const y = Math.round(minTrim.top / 2) * 2;
+    const w = Math.round((W - minTrim.left - minTrim.right) / 2) * 2;
+    const h = Math.round((H - minTrim.top - minTrim.bottom) / 2) * 2;
+    if (x <= 4 && y <= 4 && w >= W - 8 && h >= H - 8) return null; // nothing to trim
+    if (w < 64 || h < 64) return null;
+    const share = (w * h) / (W * H);
+    if (share < 0.20) return null; // implausible — bail
+    console.log(`[Media Crop] Uniform-padding trim: ${w}x${h} at ${x},${y} (trims T${minTrim.top}/B${minTrim.bottom}/L${minTrim.left}/R${minTrim.right}).`);
+    return { x, y, w, h };
+}
+
+/**
+ * Public content crop for the transcode path: runs the core detector, then
+ * trims any remaining UNIFORM padding (keeping a 14px margin) — the per-edge
+ * intersection, so tightening only ever removes padding. Applies ONLY inside
+ * compressVideoToFit (gated by media_transcode), never as a standalone pass.
+ */
 async function detectContentCrop(inputPath, duration, videoWidth, videoHeight) {
+    let box = await _detectContentCropCore(inputPath, duration, videoWidth, videoHeight);
+    try {
+        const pad = await tightenUniformPadding(inputPath, duration, videoWidth, videoHeight);
+        if (pad) {
+            const base = box || { x: 0, y: 0, w: videoWidth, h: videoHeight };
+            const x1 = Math.max(base.x, pad.x), y1 = Math.max(base.y, pad.y);
+            const x2 = Math.min(base.x + base.w, pad.x + pad.w), y2 = Math.min(base.y + base.h, pad.y + pad.h);
+            if (x2 - x1 >= 64 && y2 - y1 >= 64) {
+                const t = { x: Math.round(x1 / 2) * 2, y: Math.round(y1 / 2) * 2,
+                    w: Math.round((x2 - x1) / 2) * 2, h: Math.round((y2 - y1) / 2) * 2 };
+                const trims = t.x > 0 || t.y > 0 || t.w < videoWidth - 8 || t.h < videoHeight - 8;
+                if (trims) { console.log(`[Media Crop] Final box after padding-trim: ${t.w}x${t.h} at ${t.x},${t.y}.`); return t; }
+            }
+        }
+    } catch (e) { console.warn('[Media Crop] Uniform-padding trim failed:', e.message); }
+    return box;
+}
+
+async function _detectContentCropCore(inputPath, duration, videoWidth, videoHeight) {
     if (duration <= 0 || videoWidth <= 0 || videoHeight <= 0) return null;
     const parseLastCrop = (stderr) => {
         const matches = [...stderr.matchAll(/crop=(\d+):(\d+):(\d+):(\d+)/g)];
