@@ -176,6 +176,9 @@ const helpText = `**Librarian Bot Functions:**
 \`/set-topic [text]\` - Set channel topic (preserves bot metadata)
 \`/update-players [count]\` - Change player count and role name
 \`/campaign-rename [new_name]\` - Rename this campaign channel
+\`/campaign-members list\` - Show campaign players
+\`/campaign-members add [user]\` - Add a player to this campaign
+\`/campaign-members remove [user]\` - Remove a player from this campaign
 \`/pin [message_id]\` - Pin a message (or last message if empty)
 \`/unpin [message_id]\` - Unpin a message (or last pinned if empty)
 \`/archive [confirmation]\` - Archive campaign channel
@@ -220,6 +223,19 @@ const commands = [
     new SlashCommandBuilder().setName('campaign-rename')
         .setDescription('Rename this campaign channel, keeping the creator and player count (DM or Admin)')
         .addStringOption(opt => opt.setName('new_name').setDescription('New campaign name').setRequired(true)),
+    new SlashCommandBuilder().setName('campaign-members')
+        .setDescription('Manage the players of this campaign channel (DM or Admin)')
+        .addSubcommand(sub => sub
+            .setName('list')
+            .setDescription('List the players (campaign role members) of this campaign'))
+        .addSubcommand(sub => sub
+            .setName('add')
+            .setDescription('Add a player to this campaign')
+            .addStringOption(opt => opt.setName('user').setDescription('User ID, mention, or nickname').setRequired(true)))
+        .addSubcommand(sub => sub
+            .setName('remove')
+            .setDescription('Remove a player from this campaign')
+            .addStringOption(opt => opt.setName('user').setDescription('User ID, mention, or nickname').setRequired(true))),
     new SlashCommandBuilder().setName('poll-librarian')
         .setDescription('Create a custom poll (up to 10 options)')
         .addStringOption(opt => opt.setName('question').setDescription('The question for the poll').setRequired(true))

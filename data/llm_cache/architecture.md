@@ -85,7 +85,7 @@
     `src/handlers/twitterHandler.js`, `facebookHandler.js`,
     `articleHandler.js` (ported from robot-joe, minus the OCR/Whisper
     translation/transcription pipeline).
-  - Slash commands — 19 commands (see section 7).
+  - Slash commands — 20 commands (see section 7).
   - Text commands: `/restart`, `/delete [count]`, `/edit-last [text]`,
     `/process` (re-process link in thread), `!pin` / `!unpin` for DM/admin.
   - The `messageCreate` guard skips `message.author.bot` AND
@@ -183,7 +183,7 @@
 │   │   ├── facebookHandler.js   #   Facebook/fb.watch interceptor (yt-dlp +
 │   │   │                         #   fdown.net fixer + generic og:video scrape;
 │   │   │                         #   ported from robot-joe, no OCR/translation)
-│   │   ├── interactions.js       #   Slash command dispatcher (all 19
+│   │   ├── interactions.js       #   Slash command dispatcher (all 20
 │   │   │                         #   commands; see section 7)
 │   │   ├── messageCreate.js      #   Text dispatcher — Twitter/X,
 │   │   │                         #   Facebook, Instagram link, news-article
@@ -392,6 +392,15 @@ Discord Gateway
    │       ├─ /campaign-rename     — rename channel & role with new campaign
    │       │                         name (keeps creator + player count);
    │       │                         DM-owner or Admin only
+   │       ├─ /campaign-members    — list/add/remove subcommands: campaign
+   │       │                         roster IS the campaign role. list shows
+   │       │                         all role members; add/remove accept a
+   │       │                         user ID, mention, or exact nickname/
+   │       │                         username (resolveGuildMember; ambiguous
+   │       │                         names must be re-run with ID/mention),
+   │       │                         then role add/remove + channel-name
+   │       │                         count sync (mirrors the ✋ reaction flow).
+   │       │                         DM-owner or Admin only.
    │       ├─ /roll                — dice + (if natural 1) Ollama roast
    │       └─ /restart             — admin (slash OR text): rebuild the Docker
    │                                 image via the mounted Docker socket and
@@ -532,7 +541,9 @@ Driven entirely by the **channel topic** — there's no database.
 [steady state]
    - Channel renames (manual, via /update-players, or via /campaign-rename)
      auto-sync the role
-   - ✋ reactions on the OP toggle the role
+   - ✋ reactions on the OP toggle the role; /campaign-members add/remove
+     do the same from the DM's command line (with the same count sync)
+   - /campaign-members list shows the current roster
    - 🤖 must be present (i.e. bot reacted) for ✋ to take effect
 
 [/archive with confirmation: "yes, I want to archive <channel-name>"]
@@ -696,6 +707,8 @@ Admin-only checks use the `DM_ROLE_ID` role or `PermissionFlagsBits.Administrato
 | `/set-topic <text>` | DM/Admin | rewrites topic but preserves the LIBRARIAN_DATA token; trims to fit Discord's 1024-char limit |
 | `/update-players <count>` | DM/Admin | renames channel AND linked role to `<name>-<newcount>` (note: Discord limits renames to 2/10min) |
 | `/campaign-rename <new_name>` | DM/Admin | active campaign channels only, and only the DM who owns the campaign (from the topic's LIBRARIAN_DATA / SETUP token) or an Admin. Replaces the campaign-name segment of `campaignName-creatorName-playerCount` while preserving the trailing creator-name + player-count segments (`buildCampaignChannelName` in `helpers.js`; for 2-segment names only the count is kept). Spaces in the new name are turned into dashes; result capped at 100 chars. Renames the linked campaign role FIRST (mirroring /update-players) so the channelUpdate auto-sync sees matching names and skips — no double update. Pre-OP (SETUP) channels resolve their role via the `ROLE:<id>` token; channels without any role still rename the channel alone. |
+| `/campaign-members list` | DM/Admin | active campaign channels only, and only the DM who owns the campaign (from the topic's LIBRARIAN_DATA / SETUP token) or an Admin. Lists all members of the linked campaign role (the campaign roster) sorted by display name, as an ephemeral message. Channels without a linked role yet (pre-OP, no players listed at creation) get a hint to use the ✋ reaction instead. |
+| `/campaign-members add <user>` / `/campaign-members remove <user>` | DM/Admin | same gate as list. The user argument accepts a raw user ID, a `<@id>`/`<@!id>` mention, or an exact (case-insensitive) display name / username via `resolveGuildMember` (`helpers.js`; the guild member cache is fully populated at startup). Ambiguous nickname matches return the candidate list and ask for an ID/mention. add/remove apply to the linked campaign role and then run `syncChannelNameToRoleCount` so the channel name's trailing player count stays in sync — mirroring the ✋ reaction flow. Already-member add / not-member remove are reported without changes. Pre-OP (SETUP) channels resolve their role via the `ROLE:<id>` token. |
 | `/poll-librarian <question> <options>` | anyone | 2-10 comma-separated options, auto-reacts 1️⃣..🔟; embed is edited live to show voter mentions per option plus 🥇 winner / 🥈 runner-up; in game (active campaign) channels only the channel DM + campaign-role members may vote |
 | `/schedule-poll <input>` | DM/Admin | Free-text spec `days [time] [days [time] ...] weeks` (e.g. `Wednesday Friday 4`, `Wed Fri 18:00-22:00 4`, `Wed 14:00-16:00 Fri 18:00-22:00 4`). Day tokens also accept the group shortcuts `weekdays`/`wdy` (Mon–Fri) and `weekends`/`wke`/`wkd` (Sat–Sun), expanding to one poll option per weekday × week for the next N weeks (≤9 dates vote with 1️⃣..🔟, >9 dates switch to RANDOM_EMOJIS; cap 20 options / 10 weeks). A time token applies to all days in its preceding group; days with no time are all-day. Reuses polls.js live results + game-channel voter restriction (active channels: only channel DM + campaign-role members + admins may vote; others auto-removed). State persisted to `data/schedules.json`. In an active campaign channel, whenever every campaign-role member (DM is optional — may abstain) has voted for the same date(s) (unanimous), the bot auto-generates + posts a Google-importable `.ics` (floating local times; all-day → `VALUE=DATE`) — and re-posts a fresh `.ics` each time the confirmed set of dates changes (tracked via the `lastEmittedConfirmed` signature). Dates are computed in `TIMEZONE` via `Intl.DateTimeFormat` (no tz library). |
 | `/roll <formula> [class] [context]` | anyone | dice parser; on natural 1 (d20) generates an Ollama roast with the class + context + last 10 channel messages as flavour; falls back to `FALLBACK_ROASTS[]` if Ollama is down |
@@ -762,5 +775,13 @@ concurrent writes never clobber each other.
   associations. Handlers that depend on it (e.g. the
   `isMessageTiedToUser` heuristic) fall back to content-based heuristics
   on a miss.
+- `resolveGuildMember` (campaign-members commands) matches nicknames/
+  usernames EXACTLY (case-insensitive) against the startup-populated
+  member cache; partial names and unknown IDs fail with a helpful
+  ephemeral message, and ambiguous names list their candidates.
 - The 2-rename-per-10-minute Discord limit is a hard ceiling on
   `/update-players` and `/campaign-rename`; neither handler retries.
+  `/campaign-members` add/remove call `syncChannelNameToRoleCount` after
+  every successful role change, so repeated adds/removes can also hit the
+  rename rate limit — the sync failure is silently skipped (best-effort),
+  the role change itself is NOT rolled back.
