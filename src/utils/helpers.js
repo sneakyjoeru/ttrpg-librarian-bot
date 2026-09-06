@@ -158,10 +158,63 @@ function buildCampaignChannelName(currentName, newCampaignName) {
     return newName;
 }
 
+/**
+ * Resolves a user reference for the campaign-members commands: a raw user
+ * ID, a `<@id>` / `<@!id>` mention, or an exact (case-insensitive) display
+ * name (nickname) / username lookup against the guild member cache.
+ *
+ * The bot fetches all guild members at startup, so nickname lookups run
+ * against a fully populated cache.
+ *
+ * @param {import('discord.js').Guild} guild  The guild to resolve against.
+ * @param {string} rawInput                   The raw user input string.
+ * @returns {Promise<import('discord.js').GuildMember|
+ *   {error:'empty'}|{error:'not_found'}|
+ *   {error:'ambiguous',ambiguous:string[]}>}
+ *   The resolved member, or an error descriptor (with the list of matching
+ *   candidates for ambiguous nickname/username matches).
+ */
+async function resolveGuildMember(guild, rawInput) {
+    const input = String(rawInput || '').trim();
+    if (!input) return { error: 'empty' };
+
+    // 1) `<@id>` / `<@!id>` mention → direct fetch.
+    const mentionMatch = input.match(/^<@!?(\d{17,20})>$/);
+    if (mentionMatch) {
+        const member = await guild.members.fetch(mentionMatch[1]).catch(() => null);
+        return member || { error: 'not_found' };
+    }
+
+    // 2) Raw snowflake ID → direct fetch.
+    if (/^\d{17,20}$/.test(input)) {
+        const member = await guild.members.fetch(input).catch(() => null);
+        return member || { error: 'not_found' };
+    }
+
+    // 3) Nickname (display name) or username — exact, case-insensitive.
+    // A leading "@" (typed without Discord's mention autocomplete) is
+    // tolerated and stripped.
+    const lower = input.replace(/^@/, '').toLowerCase();
+    const candidates = guild.members.cache.filter(m => {
+        const displayName = (m.displayName || '').toLowerCase();
+        const username = (m.user && m.user.username) ? m.user.username.toLowerCase() : '';
+        return displayName === lower || username === lower;
+    });
+    if (candidates.size === 0) return { error: 'not_found' };
+    if (candidates.size === 1) return candidates.first();
+    return {
+        error: 'ambiguous',
+        ambiguous: [...candidates.values()].map(m =>
+            `• ${m.displayName} (@${m.user.username}, ID: ${m.id})`
+        )
+    };
+}
+
 module.exports = {
     getLibrarianData,
     syncChannelNameToRoleCount,
     buildCampaignChannelName,
+    resolveGuildMember,
     estimateTokens,
     isHistoryOrAnalysisQuery,
     getLastUpdates

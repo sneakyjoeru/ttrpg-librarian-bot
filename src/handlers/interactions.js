@@ -1,6 +1,6 @@
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
 const axios = require('axios');
-const { getLibrarianData, buildCampaignChannelName } = require('../utils/helpers');
+const { getLibrarianData, buildCampaignChannelName, resolveGuildMember, syncChannelNameToRoleCount } = require('../utils/helpers');
 const {
     helpText,
     SERVER_ID,
@@ -529,6 +529,110 @@ async function handleInteraction(client, interaction) {
         } catch (error) {
             console.error('Campaign-rename error:', error);
             return interaction.reply({ content: 'Failed to rename the channel. Note: Discord limits channel renames to 2 times per 10 minutes.', ephemeral: true });
+        }
+    }
+
+    if (commandName === 'campaign-members') {
+        // list / add / remove subcommands — active campaign channels only,
+        // gated to the DM who owns the campaign (or an Admin), mirroring
+        // /campaign-rename. The campaign roster IS the campaign role.
+        if (interaction.channel.parentId !== ACTIVE_CATEGORY_ID) {
+            return interaction.reply({ content: 'This command can only be used in an active campaign channel.', ephemeral: true });
+        }
+
+        const metaData = await getLibrarianData(interaction.channel);
+
+        // Resolve the linked campaign role: LIBRARIAN_DATA channels via the
+        // metadata; SETUP (pre-OP) channels via the ROLE:<id> token that
+        // /new-campaign writes when players were listed at creation time.
+        let linkedRoleId = null;
+        if (metaData) {
+            linkedRoleId = metaData.roleId;
+        } else {
+            const roleMatch = (interaction.channel.topic || '').match(/ROLE:(\d+)/);
+            linkedRoleId = roleMatch ? roleMatch[1] : null;
+        }
+
+        if (!metaData) {
+            const topic = interaction.channel.topic || '';
+            if (topic.startsWith('SETUP|')) {
+                const setupMatch = topic.match(/DM:(\d+)/);
+                const setupDmId = setupMatch ? setupMatch[1] : null;
+                if (interaction.user.id !== setupDmId && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.reply({ content: 'Only the DM who created this campaign (or an Admin) can manage its members before the OP is posted.', ephemeral: true });
+                }
+            } else if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({ content: 'Metadata missing in channel topic. Only Admins can manage members here.', ephemeral: true });
+            }
+        } else {
+            if (metaData.dmId !== interaction.user.id && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({ content: 'Only the DM who created the campaign (or an Admin) can manage its members.', ephemeral: true });
+            }
+        }
+
+        const sub = interaction.options.getSubcommand();
+
+        // --- list ---
+        if (sub === 'list') {
+            if (!linkedRoleId) {
+                return interaction.reply({ content: 'No campaign role is linked to this channel yet. Players join via the ✋ reaction on the OP after it is posted.', ephemeral: true });
+            }
+            const role = interaction.guild.roles.cache.get(linkedRoleId);
+            if (!role) {
+                return interaction.reply({ content: 'The linked campaign role no longer exists on this server.', ephemeral: true });
+            }
+            if (role.members.size === 0) {
+                return interaction.reply({ content: `📋 **${interaction.channel.name}** — campaign players (0):\n*No players have the campaign role yet.* Players join via the ✋ reaction on the OP.`, ephemeral: true });
+            }
+            const lines = [...role.members.values()]
+                .sort((a, b) => a.displayName.localeCompare(b.displayName))
+                .map(m => `• ${m.displayName} (@${m.user.username}, ID: ${m.id})`);
+            return interaction.reply({ content: `📋 **${interaction.channel.name}** — campaign players (${role.members.size}):\n${lines.join('\n')}`, ephemeral: true });
+        }
+
+        // --- add / remove ---
+        // role.members is a Collection in discord.js v14 (no .cache),
+        // populated from the startup member fetch.
+        const userInput = interaction.options.getString('user');
+        const resolved = await resolveGuildMember(interaction.guild, userInput);
+
+        if (resolved.error) {
+            if (resolved.error === 'empty') {
+                return interaction.reply({ content: 'Please provide a user: a user ID, a mention, or an exact nickname/username.', ephemeral: true });
+            }
+            if (resolved.error === 'ambiguous') {
+                return interaction.reply({ content: `That nickname matches several members. Please use a user ID or mention instead:\n${resolved.ambiguous.join('\n')}`, ephemeral: true });
+            }
+            return interaction.reply({ content: `Could not find a member matching \`${userInput}\`. Use a user ID, a mention, or an exact nickname/username.`, ephemeral: true });
+        }
+
+        if (!linkedRoleId) {
+            return interaction.reply({ content: 'No campaign role is linked to this channel yet. Players join via the ✋ reaction on the OP after it is posted.', ephemeral: true });
+        }
+        const role = interaction.guild.roles.cache.get(linkedRoleId);
+        if (!role) {
+            return interaction.reply({ content: 'The linked campaign role no longer exists on this server.', ephemeral: true });
+        }
+
+        try {
+            if (sub === 'add') {
+                if (role.members.has(resolved.id)) {
+                    return interaction.reply({ content: `${resolved.displayName} (@${resolved.user.username}) is already a player in this campaign.`, ephemeral: true });
+                }
+                await resolved.roles.add(role);
+                await syncChannelNameToRoleCount(interaction.channel, role).catch(() => {});
+                return interaction.reply({ content: `✅ Added **${resolved.displayName}** (@${resolved.user.username}) to this campaign.`, ephemeral: true });
+            } else {
+                if (!role.members.has(resolved.id)) {
+                    return interaction.reply({ content: `${resolved.displayName} (@${resolved.user.username}) is not a player in this campaign.`, ephemeral: true });
+                }
+                await resolved.roles.remove(role);
+                await syncChannelNameToRoleCount(interaction.channel, role).catch(() => {});
+                return interaction.reply({ content: `✅ Removed **${resolved.displayName}** (@${resolved.user.username}) from this campaign.`, ephemeral: true });
+            }
+        } catch (error) {
+            console.error(`Campaign-members ${sub} error:`, error);
+            return interaction.reply({ content: `Failed to ${sub} the member. Check bot permissions and role hierarchy.`, ephemeral: true });
         }
     }
 
