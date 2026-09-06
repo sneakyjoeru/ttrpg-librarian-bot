@@ -1,6 +1,6 @@
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
 const axios = require('axios');
-const { getLibrarianData } = require('../utils/helpers');
+const { getLibrarianData, buildCampaignChannelName } = require('../utils/helpers');
 const {
     helpText,
     SERVER_ID,
@@ -465,6 +465,70 @@ async function handleInteraction(client, interaction) {
         } catch (error) {
             console.error('Update-players error:', error);
             return interaction.reply({ content: 'Failed to update channel. Note: Discord limits channel renames to 2 times per 10 minutes.', ephemeral: true });
+        }
+    }
+
+    if (commandName === 'campaign-rename') {
+        if (interaction.channel.parentId !== ACTIVE_CATEGORY_ID) {
+            return interaction.reply({ content: 'This command can only be used in an active campaign channel.', ephemeral: true });
+        }
+
+        const metaData = await getLibrarianData(interaction.channel);
+
+        // Resolve the linked campaign role: LIBRARIAN_DATA channels via the
+        // metadata; SETUP (pre-OP) channels via the ROLE:<id> token that
+        // /new-campaign writes when players were listed at creation time.
+        let linkedRoleId = null;
+        if (metaData) {
+            linkedRoleId = metaData.roleId;
+        } else {
+            const roleMatch = (interaction.channel.topic || '').match(/ROLE:(\d+)/);
+            linkedRoleId = roleMatch ? roleMatch[1] : null;
+        }
+
+        if (!metaData) {
+            const topic = interaction.channel.topic || '';
+            if (topic.startsWith('SETUP|')) {
+                const setupMatch = topic.match(/DM:(\d+)/);
+                const setupDmId = setupMatch ? setupMatch[1] : null;
+                if (interaction.user.id !== setupDmId && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.reply({ content: 'Only the DM who created this campaign (or an Admin) can rename it before the OP is posted.', ephemeral: true });
+                }
+            } else if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({ content: 'Metadata missing in channel topic. Only Admins can force rename this channel.', ephemeral: true });
+            }
+        } else {
+            if (metaData.dmId !== interaction.user.id && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({ content: 'Only the DM who created the campaign (or an Admin) can rename this channel.', ephemeral: true });
+            }
+        }
+
+        const newNameInput = (interaction.options.getString('new_name') || '').trim().replace(/\s+/g, '-');
+        if (!newNameInput) {
+            return interaction.reply({ content: 'Please provide a new campaign name.', ephemeral: true });
+        }
+
+        const newName = buildCampaignChannelName(interaction.channel.name, newNameInput);
+        if (!newName) {
+            return interaction.reply({ content: 'Channel name format is invalid for this operation.', ephemeral: true });
+        }
+        if (newName === interaction.channel.name) {
+            return interaction.reply({ content: 'The channel already has that name.', ephemeral: true });
+        }
+
+        try {
+            // Rename the linked campaign role first (mirrors /update-players)
+            // so the channelUpdate auto-sync sees matching names and skips.
+            if (linkedRoleId) {
+                const role = interaction.guild.roles.cache.get(linkedRoleId);
+                if (role) await role.edit({ name: newName });
+            }
+
+            await interaction.channel.setName(newName);
+            return interaction.reply({ content: `Campaign renamed successfully. New name: ${newName}`, ephemeral: true });
+        } catch (error) {
+            console.error('Campaign-rename error:', error);
+            return interaction.reply({ content: 'Failed to rename the channel. Note: Discord limits channel renames to 2 times per 10 minutes.', ephemeral: true });
         }
     }
 
