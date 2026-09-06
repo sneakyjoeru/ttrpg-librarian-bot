@@ -175,6 +175,7 @@ const helpText = `**Librarian Bot Functions:**
 \`/schedule-poll [input]\` - Scheduling poll (e.g. \`Wed Fri 18:00-22:00 4\`)
 \`/set-topic [text]\` - Set channel topic (preserves bot metadata)
 \`/update-players [count]\` - Change player count and role name
+\`/campaign-rename [new_name]\` - Rename this campaign channel
 \`/pin [message_id]\` - Pin a message (or last message if empty)
 \`/unpin [message_id]\` - Unpin a message (or last pinned if empty)
 \`/archive [confirmation]\` - Archive campaign channel
@@ -216,6 +217,9 @@ const commands = [
     new SlashCommandBuilder().setName('update-players')
         .setDescription('Change the number of players in the channel and role name (DM or Admin)')
         .addIntegerOption(opt => opt.setName('count').setDescription('New player count').setRequired(true)),
+    new SlashCommandBuilder().setName('campaign-rename')
+        .setDescription('Rename this campaign channel, keeping the creator and player count (DM or Admin)')
+        .addStringOption(opt => opt.setName('new_name').setDescription('New campaign name').setRequired(true)),
     new SlashCommandBuilder().setName('poll-librarian')
         .setDescription('Create a custom poll (up to 10 options)')
         .addStringOption(opt => opt.setName('question').setDescription('The question for the poll').setRequired(true))

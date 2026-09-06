@@ -135,9 +135,33 @@ function getLastUpdates(count = 5) {
     }
 }
 
+/**
+ * Builds the new channel name for a campaign rename: replaces the
+ * campaign-name segment of `campaignName-creatorName-playerCount` while
+ * preserving the trailing segments (creator name + player count). For
+ * 2-segment names only the trailing player-count segment is preserved
+ * (mirroring /update-players' assumption that the last segment is the
+ * count).
+ *
+ * @param {string} currentName      The current channel name.
+ * @param {string} newCampaignName  The new campaign name (already trimmed +
+ *                                  whitespace-sanitized by the caller).
+ * @returns {string|null} The new channel name (capped at 100 chars), or
+ *   null when the current name has an unexpected format (< 2 segments).
+ */
+function buildCampaignChannelName(currentName, newCampaignName) {
+    const parts = (currentName || '').split('-');
+    if (parts.length < 2) return null;
+    const suffix = parts.length >= 3 ? parts.slice(-2).join('-') : parts[parts.length - 1];
+    let newName = `${newCampaignName}-${suffix}`;
+    if (newName.length > 100) newName = newName.substring(0, 100);
+    return newName;
+}
+
 module.exports = {
     getLibrarianData,
     syncChannelNameToRoleCount,
+    buildCampaignChannelName,
     estimateTokens,
     isHistoryOrAnalysisQuery,
     getLastUpdates
