@@ -785,3 +785,20 @@ concurrent writes never clobber each other.
   every successful role change, so repeated adds/removes can also hit the
   rename rate limit — the sync failure is silently skipped (best-effort),
   the role change itself is NOT rolled back.
+- **Stale-deploy race (2026-09-07 incident):** the host runs an
+  `smb-watcher` daemon (`bots/smb-watcher`, systemd unit `git-watcher`)
+  that rsyncs the NAS working copy into the deploy dir every ~60s
+  (content-checksum mode, `.git` excluded). Since the bot bind-mounts
+  `/usr/src/app` from the deploy dir, Node loads one version of a file at
+  boot while the watcher can rewrite files milliseconds later — leaving the
+  running process on stale code even though disk == git HEAD. On
+  2026-09-07 this shipped a never-committed intermediate handler that
+  crashed every `/campaign-members add` with `Cannot read properties of
+  undefined (reading 'has')` (discord.js v14 has no `Role#members.cache`).
+  Mitigations: (1) `rebuild-run.sh` now arms a stale-code guard — it
+  checksums `src/`+`tests/` at boot and re-checks at +130s and +10min,
+  warning loudly if disk code no longer matches what the process loaded
+  (fix = plain `docker restart`, no rebuild); (2)
+  `tests/test_handler_members_api.js` statically asserts the crash
+  pattern is absent. If a deploy behaves inconsistently with the git
+  state, ALWAYS suspect the watcher — restart before debugging further.

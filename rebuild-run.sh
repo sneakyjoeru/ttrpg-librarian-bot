@@ -131,4 +131,44 @@ fi
 
 docker run -d --name librarian-bot --restart unless-stopped $ollama_network_args -e SHARE_PASS -e HOST_PATH="$(pwd)" -e TRANSCODER_CONTAINER -e BROWSER_BOT_WS="${BROWSER_BOT_WS:-ws://browser-bot:3000}" -e STREAMER_JOE_API_URL="${STREAMER_JOE_API_URL:-http://192.168.0.99:8777}" $catchup_env -v /var/run/docker.sock:/var/run/docker.sock -v "$(pwd):/usr/src/app" -v /usr/src/app/node_modules $cookies_mount $ssh_key_mount $igpu_mount discord-librarian-bot && \
 sleep 15 && \
+# --- STALE-CODE GUARD ---
+# The smb-watcher daemon (bots/smb-watcher) rsyncs the NAS working copy into
+# this deploy dir every ~60s (rsync -c compares content checksums, and the
+# watch loop re-checks every poll). Because the bot bind-mounts /usr/src/app
+# from this dir, Node can load one version of a file at boot while the watcher
+# rewrites files on disk milliseconds later (recreating them as root) — leaving
+# the RUNNING process on stale code even though disk == git HEAD. This happened
+# on 2026-09-07: a mid-edit intermediate version of interactions.js (line 618,
+# role.members.cache.has) was loaded at boot; the fix landed on disk 86s later;
+# the bot then crashed every /campaign-members add with
+# "Cannot read properties of undefined (reading 'has')" until restarted.
+# Mitigation: record the boot-time checksums of all source files, then verify
+# AFTER the watcher's next poll window(s) have elapsed. If any file on disk no
+# longer matches what the process loaded, print a LOUD warning telling the
+# operator to restart the container (a plain docker restart reloads the fixed
+# code — no image rebuild needed).
+boot_stamp="$(date +%s)"
+boot_dir="$(pwd)"
+boot_manifest="$(mktemp)"
+find src tests -type f \( -name '*.js' -o -name '*.json' \) -exec md5sum {} + 2>/dev/null | sort > "$boot_manifest" || true
+(
+    # Re-check after 2 watcher poll windows (2 * ~60s), then again at boot+10min.
+    for delay in 130 600; do
+        sleep "$delay"
+        cd "$boot_dir" || exit 0
+        now_manifest="$(mktemp)"
+        find src tests -type f \( -name '*.js' -o -name '*.json' \) -exec md5sum {} + 2>/dev/null | sort > "$now_manifest" || true
+        if ! diff -q "$boot_manifest" "$now_manifest" >/dev/null 2>&1; then
+            changed="$(diff "$boot_manifest" "$now_manifest" | grep '^>' | awk '{print $2}' | head -8 | tr '\n' ' ')"
+            echo "⚠️  [rebuild-run][STALE-CODE WARNING] Files changed on disk AFTER the bot booted: ${changed}"
+            echo "⚠️  The running bot process is now on STALE code (smb-watcher rsync or manual edit)."
+            echo "⚠️  Run: docker restart librarian-bot   (no rebuild needed — disk code is what will load)"
+            rm -f "$boot_manifest" "$now_manifest"
+            exit 0
+        fi
+        rm -f "$now_manifest"
+    done
+    rm -f "$boot_manifest"
+) &
+echo "[rebuild-run] Stale-code guard armed (checks at +130s and +10min after boot)."
 docker logs librarian-bot
