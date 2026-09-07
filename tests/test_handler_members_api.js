@@ -55,6 +55,27 @@ const addIdx = src.indexOf('is already a player in this campaign');
 const roleFetchIdx = src.indexOf('const role = interaction.guild.roles.cache.get(linkedRoleId);');
 check('"already a player" check comes after role fetch', addIdx > roleFetchIdx && roleFetchIdx !== -1, true);
 
+// 5) 2026-09-07 "application did not respond" regression: the interaction
+//    reply MUST come before the (rate-limited) channel-rename sync in both
+//    the add and remove branches. Awaiting syncChannelNameToRoleCount
+//    before replying let discord.js's rate limiter sleep for up to ~10 min
+//    inside the awaited rename (2 renames / 10 min quota), blowing Discord's
+//    3-second interaction deadline while the role change had ALREADY
+//    succeeded — users saw "did not respond" but the member WAS added.
+const addReplyIdx = src.indexOf('✅ Added');
+const addSyncIdx = src.indexOf('syncChannelNameToRoleCount', addReplyIdx);
+check('add branch: reply fires before the count sync',
+    addReplyIdx !== -1 && addSyncIdx > addReplyIdx, true);
+const removeReplyIdx = src.indexOf('✅ Removed');
+const removeSyncIdx = src.indexOf('syncChannelNameToRoleCount', removeReplyIdx);
+check('remove branch: reply fires before the count sync',
+    removeReplyIdx !== -1 && removeSyncIdx > removeReplyIdx, true);
+
+// 6) No awaited sync anywhere in the handler — it must always be
+//    fire-and-forget (with .catch) so it can never block a reply.
+const awaitedSyncCount = (src.match(/await\s+syncChannelNameToRoleCount/g) || []).length;
+check('no awaited syncChannelNameToRoleCount in the handler', awaitedSyncCount, 0);
+
 console.log(failures.length === 0
     ? `[Test] RESULT: PASS (${new Date().toISOString()})`
     : `[Test] RESULT: FAIL (${failures.length} failure(s))`);

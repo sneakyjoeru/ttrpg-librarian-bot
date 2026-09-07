@@ -620,15 +620,29 @@ async function handleInteraction(client, interaction) {
                     return interaction.reply({ content: `${resolved.displayName} (@${resolved.user.username}) is already a player in this campaign.`, ephemeral: true });
                 }
                 await resolved.roles.add(role);
-                await syncChannelNameToRoleCount(interaction.channel, role).catch(() => {});
-                return interaction.reply({ content: `✅ Added **${resolved.displayName}** (@${resolved.user.username}) to this campaign.`, ephemeral: true });
+                // Reply FIRST — Discord interactions must be answered within
+                // 3 seconds. syncChannelNameToRoleCount renames the channel,
+                // and channel renames are limited to 2 per 10 minutes; once
+                // that quota is spent, discord.js's rate limiter SLEEPS for
+                // up to ~10 minutes inside the awaited call, which used to
+                // push the reply past the deadline → "The application did
+                // not respond" even though the role add silently succeeded
+                // (2026-09-07 incident, mausritter-stryder channel).
+                await interaction.reply({ content: `✅ Added **${resolved.displayName}** (@${resolved.user.username}) to this campaign.`, ephemeral: true });
+                // Fire-and-forget count sync (same best-effort semantics as
+                // the ✋ reaction flow); failures are silently skipped.
+                syncChannelNameToRoleCount(interaction.channel, role).catch(() => {});
+                return;
             } else {
                 if (!role.members.has(resolved.id)) {
                     return interaction.reply({ content: `${resolved.displayName} (@${resolved.user.username}) is not a player in this campaign.`, ephemeral: true });
                 }
                 await resolved.roles.remove(role);
-                await syncChannelNameToRoleCount(interaction.channel, role).catch(() => {});
-                return interaction.reply({ content: `✅ Removed **${resolved.displayName}** (@${resolved.user.username}) from this campaign.`, ephemeral: true });
+                // Reply FIRST (see the add branch: never await a rate-limited
+                // rename between the interaction and its response).
+                await interaction.reply({ content: `✅ Removed **${resolved.displayName}** (@${resolved.user.username}) from this campaign.`, ephemeral: true });
+                syncChannelNameToRoleCount(interaction.channel, role).catch(() => {});
+                return;
             }
         } catch (error) {
             console.error(`Campaign-members ${sub} error:`, error);
