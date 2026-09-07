@@ -781,10 +781,17 @@ concurrent writes never clobber each other.
   ephemeral message, and ambiguous names list their candidates.
 - The 2-rename-per-10-minute Discord limit is a hard ceiling on
   `/update-players` and `/campaign-rename`; neither handler retries.
-  `/campaign-members` add/remove call `syncChannelNameToRoleCount` after
-  every successful role change, so repeated adds/removes can also hit the
-  rename rate limit — the sync failure is silently skipped (best-effort),
-  the role change itself is NOT rolled back. **Never await that sync
+  Count-sync renames (✋ reactions, `/campaign-members` add/remove) go
+  through `queueChannelRename` instead, which (a) never blocks an
+  interaction reply (callers reply first, renames are fire-and-forget),
+  (b) queues ONE deferred retry when the 2/10-min quota is spent and
+  notifies the user via an ephemeral follow-up / channel notice, and
+  (c) serializes renames per channel and re-validates against the live
+  member count after every completion — because discord.js's own rate
+  limiter QUEUES (does not drop) quota-exceeding setName calls and fires
+  them up to ~10 min later with names computed from stale counts
+  (2026-09-07 incident: sleeping renames woke and clobbered a
+  manually-fixed `-7` name back to `-3`, then `-4`). **Never await that sync
   between an interaction and its reply** (2026-09-07 incident): once the
   rename quota is spent, discord.js's rate limiter SLEEPS for up to ~10
   minutes inside the awaited call, blowing the 3-second interaction
