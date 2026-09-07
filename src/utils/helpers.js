@@ -50,6 +50,134 @@ async function syncChannelNameToRoleCount(channel, role) {
     }
 }
 
+// Discord allows at most 2 channel renames per rolling 10-minute window.
+const RENAME_WINDOW_MS = 10 * 60 * 1000;
+const MAX_RENAMES_PER_WINDOW = 2;
+// A setName that takes longer than this almost certainly slept inside
+// discord.js's rate limiter (queued by the library, NOT dropped) — the name
+// it applies was computed before the sleep and may be stale by minutes.
+const RENAME_SLOW_THRESHOLD_MS = 3000;
+
+// channelId -> rename timestamps within the current rolling window.
+const renameHistory = new Map();
+// channelId -> Timeout for a deferred rename, so concurrent /command calls
+// don't each schedule their own timer for the same channel.
+const pendingRenames = new Map();
+// channelIds with a setName currently in flight. Only ONE rename per
+// channel may be in the air at a time: discord.js's rate limiter QUEUES
+// requests that exceed the 2/10min quota and fires them up to ~10 minutes
+// later with their originally-computed (stale) names — stacking several
+// sleeping renames let them wake up one after another and clobber a
+// manually-fixed name with old player counts (2026-09-07 incident: the
+// channel was manually fixed to -7, then sleeping renames woke up and
+// rewrote it to -3 then -4). Serializing means only the FIRST request can
+// carry a stale name; when it completes, the re-validation below recomputes
+// from fresh data and self-heals.
+const inFlightRenames = new Set();
+
+function computeSyncedChannelName(channel, role) {
+    const parts = channel.name.split('-');
+    if (parts.length < 2) return null; // unexpected format
+    const newCount = role.members.size;
+    const currentCount = parseInt(parts[parts.length - 1], 10);
+    if (isNaN(currentCount) || currentCount === newCount) return null; // no change needed
+    return [...parts.slice(0, -1), newCount].join('-');
+}
+
+/**
+ * Renames the channel (and its linked role) to match the role's current
+ * member count, same as `syncChannelNameToRoleCount`, but instead of
+ * silently swallowing a rate-limit failure it queues one deferred retry for
+ * when Discord's 2-per-10-minutes channel rename limit frees up.
+ *
+ * Fixes (2026-09-07 incidents):
+ *  1. `/campaign-members add` replied "success" but the fire-and-forget
+ *     rename was rejected when the 2/10min quota was spent and silently
+ *     dropped by `.catch(() => {})` — the name stayed stuck below the real
+ *     player count. Now: deferred retry + user notification via onQueued.
+ *  2. Awaiting the rename blew Discord's 3s interaction deadline ("the
+ *     application did not respond") because discord.js's rate limiter
+ *     sleeps up to ~10 min inside an awaited setName. Now: callers reply
+ *     first; renames are fire-and-forget.
+ *  3. Sleeping setName calls woke up ~10 min later and applied names
+ *     computed from stale counts, clobbering a manually-fixed channel name
+ *     (-7 was rewritten to -3, then -4). Now: renames are serialized per
+ *     channel (one in flight) and every completion re-validates against the
+ *     live member count, so a stale application self-heals.
+ *
+ * @param {import('discord.js').GuildChannel} channel
+ * @param {import('discord.js').Role} role
+ * @param {(delayMs: number) => void} [onQueued]  Called synchronously, once,
+ *   if the rename couldn't happen immediately and was deferred instead — use
+ *   it to tell the invoking user the count will update later.
+ */
+async function queueChannelRename(channel, role, onQueued) {
+    if (!channel || !role || !channel.guild) return;
+
+    // Serialize per channel: if a rename is already in flight (it may be
+    // sleeping inside discord.js's rate limiter for up to ~10 minutes),
+    // don't stack another request with a soon-to-be-stale name behind it.
+    // The in-flight completion re-validates against the LIVE member count
+    // (see below), so this call's intent is picked up automatically.
+    if (inFlightRenames.has(channel.id)) return;
+
+    const now = Date.now();
+    const history = (renameHistory.get(channel.id) || []).filter(t => now - t < RENAME_WINDOW_MS);
+    renameHistory.set(channel.id, history);
+
+    if (history.length < MAX_RENAMES_PER_WINDOW) {
+        const newName = computeSyncedChannelName(channel, role);
+        if (!newName) return; // already matches, nothing to do
+        inFlightRenames.add(channel.id);
+        try {
+            const startedAt = Date.now();
+            await channel.setName(newName, 'Player count sync');
+            await role.setName(newName).catch(() => { });
+            // Record the quota slot at COMPLETION time — if the limiter
+            // slept inside the await, the slot was consumed NOW, not when
+            // the call started.
+            history.push(Date.now());
+            if (Date.now() - startedAt > RENAME_SLOW_THRESHOLD_MS) {
+                console.warn(`queueChannelRename: rename of ${channel.id} took ${Math.round((Date.now() - startedAt) / 1000)}s (rate-limiter sleep suspected) — re-validating against the live member count.`);
+            }
+        } catch (err) {
+            console.warn('queueChannelRename immediate rename failed:', err.message);
+        } finally {
+            inFlightRenames.delete(channel.id);
+        }
+        // Post-rename re-validation: the awaited setName may have slept for
+        // minutes, so the name just applied (and the role count used to build
+        // it) may both be stale. Re-run with FRESH objects — it no-ops when
+        // the name already matches, or queues the correction when it
+        // drifted (deferred if the quota is now spent).
+        const freshChannel = channel.guild.channels.cache.get(channel.id);
+        const freshRole = channel.guild.roles.cache.get(role.id);
+        if (freshChannel && freshRole) {
+            await queueChannelRename(freshChannel, freshRole).catch(() => { });
+        }
+        return;
+    }
+
+    // Rename budget spent for this window. Queue a single deferred retry
+    // instead of letting discord.js's own rate limiter sleep for up to
+    // ~10 minutes inside this awaited call.
+    if (pendingRenames.has(channel.id)) return; // already queued; it'll use the latest role count when it fires
+
+    const delayMs = Math.max(0, history[0] + RENAME_WINDOW_MS - now);
+    const timeout = setTimeout(() => {
+        pendingRenames.delete(channel.id);
+        const freshChannel = channel.guild.channels.cache.get(channel.id);
+        const freshRole = channel.guild.roles.cache.get(role.id);
+        if (!freshChannel || !freshRole) return; // channel/role deleted while queued
+        queueChannelRename(freshChannel, freshRole).catch(err =>
+            console.warn('queueChannelRename deferred retry failed:', err.message)
+        );
+    }, delayMs);
+    pendingRenames.set(channel.id, timeout);
+
+    if (typeof onQueued === 'function') onQueued(delayMs);
+}
+
 /**
  * Estimates token size of prompt string
  */
@@ -213,6 +341,7 @@ async function resolveGuildMember(guild, rawInput) {
 module.exports = {
     getLibrarianData,
     syncChannelNameToRoleCount,
+    queueChannelRename,
     buildCampaignChannelName,
     resolveGuildMember,
     estimateTokens,

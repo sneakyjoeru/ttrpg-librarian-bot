@@ -1,6 +1,6 @@
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
 const axios = require('axios');
-const { getLibrarianData, buildCampaignChannelName, resolveGuildMember, syncChannelNameToRoleCount } = require('../utils/helpers');
+const { getLibrarianData, buildCampaignChannelName, resolveGuildMember, queueChannelRename } = require('../utils/helpers');
 const {
     helpText,
     SERVER_ID,
@@ -620,15 +620,42 @@ async function handleInteraction(client, interaction) {
                     return interaction.reply({ content: `${resolved.displayName} (@${resolved.user.username}) is already a player in this campaign.`, ephemeral: true });
                 }
                 await resolved.roles.add(role);
-                await syncChannelNameToRoleCount(interaction.channel, role).catch(() => {});
-                return interaction.reply({ content: `✅ Added **${resolved.displayName}** (@${resolved.user.username}) to this campaign.`, ephemeral: true });
+                // Reply FIRST — Discord interactions must be answered within
+                // 3 seconds. syncChannelNameToRoleCount renames the channel,
+                // and channel renames are limited to 2 per 10 minutes; once
+                // that quota is spent, discord.js's rate limiter SLEEPS for
+                // up to ~10 minutes inside the awaited call, which used to
+                // push the reply past the deadline → "The application did
+                // not respond" even though the role add silently succeeded
+                // (2026-09-07 incident, mausritter-stryder channel).
+                await interaction.reply({ content: `✅ Added **${resolved.displayName}** (@${resolved.user.username}) to this campaign.`, ephemeral: true });
+                // Fire-and-forget count sync; queues a deferred retry (with a
+                // heads-up follow-up) instead of silently dropping the rename
+                // if Discord's 2-per-10-minutes limit is already spent.
+                queueChannelRename(interaction.channel, role, (delayMs) => {
+                    const minutes = Math.ceil(delayMs / 60000);
+                    interaction.followUp({
+                        content: `⏳ Channel rename limit reached (Discord allows 2 per 10 minutes) — the channel/role name will update to the new player count in about ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+                        ephemeral: true
+                    }).catch(() => {});
+                }).catch(() => {});
+                return;
             } else {
                 if (!role.members.has(resolved.id)) {
                     return interaction.reply({ content: `${resolved.displayName} (@${resolved.user.username}) is not a player in this campaign.`, ephemeral: true });
                 }
                 await resolved.roles.remove(role);
-                await syncChannelNameToRoleCount(interaction.channel, role).catch(() => {});
-                return interaction.reply({ content: `✅ Removed **${resolved.displayName}** (@${resolved.user.username}) from this campaign.`, ephemeral: true });
+                // Reply FIRST (see the add branch: never await a rate-limited
+                // rename between the interaction and its response).
+                await interaction.reply({ content: `✅ Removed **${resolved.displayName}** (@${resolved.user.username}) from this campaign.`, ephemeral: true });
+                queueChannelRename(interaction.channel, role, (delayMs) => {
+                    const minutes = Math.ceil(delayMs / 60000);
+                    interaction.followUp({
+                        content: `⏳ Channel rename limit reached (Discord allows 2 per 10 minutes) — the channel/role name will update to the new player count in about ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+                        ephemeral: true
+                    }).catch(() => {});
+                }).catch(() => {});
+                return;
             }
         } catch (error) {
             console.error(`Campaign-members ${sub} error:`, error);

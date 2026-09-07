@@ -708,7 +708,7 @@ Admin-only checks use the `DM_ROLE_ID` role or `PermissionFlagsBits.Administrato
 | `/update-players <count>` | DM/Admin | renames channel AND linked role to `<name>-<newcount>` (note: Discord limits renames to 2/10min) |
 | `/campaign-rename <new_name>` | DM/Admin | active campaign channels only, and only the DM who owns the campaign (from the topic's LIBRARIAN_DATA / SETUP token) or an Admin. Replaces the campaign-name segment of `campaignName-creatorName-playerCount` while preserving the trailing creator-name + player-count segments (`buildCampaignChannelName` in `helpers.js`; for 2-segment names only the count is kept). Spaces in the new name are turned into dashes; result capped at 100 chars. Renames the linked campaign role FIRST (mirroring /update-players) so the channelUpdate auto-sync sees matching names and skips — no double update. Pre-OP (SETUP) channels resolve their role via the `ROLE:<id>` token; channels without any role still rename the channel alone. |
 | `/campaign-members list` | DM/Admin | active campaign channels only, and only the DM who owns the campaign (from the topic's LIBRARIAN_DATA / SETUP token) or an Admin. Lists all members of the linked campaign role (the campaign roster) sorted by display name, as an ephemeral message. Channels without a linked role yet (pre-OP, no players listed at creation) get a hint to use the ✋ reaction instead. |
-| `/campaign-members add <user>` / `/campaign-members remove <user>` | DM/Admin | same gate as list. The user argument accepts a raw user ID, a `<@id>`/`<@!id>` mention, or an exact (case-insensitive) display name / username via `resolveGuildMember` (`helpers.js`; the guild member cache is fully populated at startup). Ambiguous nickname matches return the candidate list and ask for an ID/mention. add/remove apply to the linked campaign role and then run `syncChannelNameToRoleCount` so the channel name's trailing player count stays in sync — mirroring the ✋ reaction flow. Already-member add / not-member remove are reported without changes. Pre-OP (SETUP) channels resolve their role via the `ROLE:<id>` token. |
+| `/campaign-members add <user>` / `/campaign-members remove <user>` | DM/Admin | same gate as list. The user argument accepts a raw user ID, a `<@id>`/`<@!id>` mention, or an exact (case-insensitive) display name / username via `resolveGuildMember` (`helpers.js`; the guild member cache is fully populated at startup). Ambiguous nickname matches return the candidate list and ask for an ID/mention. add/remove apply the linked campaign role, reply IMMEDIATELY (inside the 3s interaction deadline), and only THEN run `syncChannelNameToRoleCount` fire-and-forget so the channel name's trailing player count stays in sync — mirroring the ✋ reaction flow. Already-member add / not-member remove are reported without changes. Pre-OP (SETUP) channels resolve their role via the `ROLE:<id>` token. |
 | `/poll-librarian <question> <options>` | anyone | 2-10 comma-separated options, auto-reacts 1️⃣..🔟; embed is edited live to show voter mentions per option plus 🥇 winner / 🥈 runner-up; in game (active campaign) channels only the channel DM + campaign-role members may vote |
 | `/schedule-poll <input>` | DM/Admin | Free-text spec `days [time] [days [time] ...] weeks` (e.g. `Wednesday Friday 4`, `Wed Fri 18:00-22:00 4`, `Wed 14:00-16:00 Fri 18:00-22:00 4`). Day tokens also accept the group shortcuts `weekdays`/`wdy` (Mon–Fri) and `weekends`/`wke`/`wkd` (Sat–Sun), expanding to one poll option per weekday × week for the next N weeks (≤9 dates vote with 1️⃣..🔟, >9 dates switch to RANDOM_EMOJIS; cap 20 options / 10 weeks). A time token applies to all days in its preceding group; days with no time are all-day. Reuses polls.js live results + game-channel voter restriction (active channels: only channel DM + campaign-role members + admins may vote; others auto-removed). State persisted to `data/schedules.json`. In an active campaign channel, whenever every campaign-role member (DM is optional — may abstain) has voted for the same date(s) (unanimous), the bot auto-generates + posts a Google-importable `.ics` (floating local times; all-day → `VALUE=DATE`) — and re-posts a fresh `.ics` each time the confirmed set of dates changes (tracked via the `lastEmittedConfirmed` signature). Dates are computed in `TIMEZONE` via `Intl.DateTimeFormat` (no tz library). |
 | `/roll <formula> [class] [context]` | anyone | dice parser; on natural 1 (d20) generates an Ollama roast with the class + context + last 10 channel messages as flavour; falls back to `FALLBACK_ROASTS[]` if Ollama is down |
@@ -781,10 +781,25 @@ concurrent writes never clobber each other.
   ephemeral message, and ambiguous names list their candidates.
 - The 2-rename-per-10-minute Discord limit is a hard ceiling on
   `/update-players` and `/campaign-rename`; neither handler retries.
-  `/campaign-members` add/remove call `syncChannelNameToRoleCount` after
-  every successful role change, so repeated adds/removes can also hit the
-  rename rate limit — the sync failure is silently skipped (best-effort),
-  the role change itself is NOT rolled back.
+  Count-sync renames (✋ reactions, `/campaign-members` add/remove) go
+  through `queueChannelRename` instead, which (a) never blocks an
+  interaction reply (callers reply first, renames are fire-and-forget),
+  (b) queues ONE deferred retry when the 2/10-min quota is spent and
+  notifies the user via an ephemeral follow-up / channel notice, and
+  (c) serializes renames per channel and re-validates against the live
+  member count after every completion — because discord.js's own rate
+  limiter QUEUES (does not drop) quota-exceeding setName calls and fires
+  them up to ~10 min later with names computed from stale counts
+  (2026-09-07 incident: sleeping renames woke and clobbered a
+  manually-fixed `-7` name back to `-3`, then `-4`). **Never await that sync
+  between an interaction and its reply** (2026-09-07 incident): once the
+  rename quota is spent, discord.js's rate limiter SLEEPS for up to ~10
+  minutes inside the awaited call, blowing the 3-second interaction
+  deadline → "The application did not respond" while the role change had
+  already silently succeeded (users re-adding members created silent
+  duplicates of work; the channel name then converged ~2 min later).
+  The handler now replies first and runs the sync fire-and-forget;
+  `tests/test_handler_members_api.js` asserts the ordering.
 - **Stale-deploy race (2026-09-07 incident):** the host runs an
   `smb-watcher` daemon (`bots/smb-watcher`, systemd unit `git-watcher`)
   that rsyncs the NAS working copy into the deploy dir every ~60s

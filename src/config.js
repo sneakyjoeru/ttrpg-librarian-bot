@@ -192,6 +192,36 @@ const helpText = `**Librarian Bot Functions:**
 
 *Note: New game channels auto-delete chat until DM posts OP.*`;
 
+// --- BOT FEATURES GUIDE (for the LLM's context, not shown to users directly) ---
+// Unlike helpText (a flat command list), this explains HOW each feature
+// actually behaves so the LLM can answer "how do I..."/"how does X work"
+// questions accurately instead of guessing from command names alone.
+const botFeaturesGuide = `How Librarian Bot's features actually work (use this to answer "how do I..." questions):
+
+**Campaign channels & joining a game:**
+- A DM creates a campaign channel with /new-campaign or /new-private-campaign (private hides it from @everyone). The channel is created empty and auto-deletes any chat sent in it until the DM posts the OP (opening post / session pitch) — this stops chatter before the pitch exists.
+- Once the OP is posted, players join by reacting ✋ on the OP message. That reaction auto-assigns them the campaign's player role — there is no separate "join" command.
+- The channel name format is campaignName-creatorName-playerCount. The trailing number is NOT typed manually day-to-day — it auto-syncs to the campaign role's member count whenever someone joins/leaves (via the ✋ reaction or /campaign-members add/remove).
+- Discord only allows a channel to be renamed 2 times per 10 minutes. If several players join/leave in a burst and that limit is hit, the rename doesn't fail silently anymore — it's queued and completes automatically once the 10-minute window frees up, and the bot posts a heads-up saying the name will update shortly.
+- /campaign-members list/add/remove (DM or Admin only) manages the roster directly — same effect as the ✋ reaction, useful when a player can't react themselves.
+- /update-players [count] force-overwrites the displayed count and role name directly — only needed if the count ever looks wrong and doesn't self-correct.
+- /campaign-rename [new_name] renames just the campaign-name part of the channel, keeping the creator name and player count suffix intact.
+- /archive [confirmation] moves a campaign channel to the archived category once a game has ended.
+- /retro-setup lets an Admin retrofit an old, pre-existing channel: pins the OP, creates/links the campaign role, and writes the bot's tracking metadata into the channel topic.
+
+**Scheduling polls — NOT a "most votes wins" poll:**
+- /schedule-poll [input] (e.g. "Wed Fri 18:00-22:00 4") posts a poll with one reaction emoji per candidate date/time, generated from the day(s)+time window+number of weeks given.
+- It does NOT pick the single best/most-popular date. Instead it watches for full unanimity: only when EVERY member of the campaign's player role has reacted to the same date option (the DM is optional and may abstain) does the bot auto-generate a Google-importable calendar file (.ics) and attach it to the poll, plus mark that date "Consensus Reached" on the embed.
+- More than one date can reach unanimous consensus at the same time (e.g. two sessions agreed on), and if people change their votes so no date is unanimous anymore, the calendar attachment is automatically removed again.
+- Regular /poll-librarian polls (up to 10 options) are just live vote-tally polls with no unanimity or calendar logic — use those for general "which do you prefer" questions, not for locking in a session date.
+
+**Dice rolling:**
+- /roll [formula] [class] [context] rolls dice like 1d20+5. Rolling a natural 1 on a d20 triggers the bot to generate a short, savage, custom AI roast referencing the player's class/context and recent channel chat.
+
+**Media/pin/misc:**
+- /pin, /unpin work on a given message ID or default to the most recent message/pinned message.
+- /delete removes the user's own last bot-reposted message (Admins can bulk-delete with a count); /edit-last replaces the text of the last bot-replaced message; /process re-runs link processing on the current thread.`;
+
 // --- SLASH COMMAND BUILDERS ---
 const commands = [
     new SlashCommandBuilder().setName('librarian-bot').setDescription('Show bot functions'),
@@ -276,6 +306,7 @@ const commands = [
 module.exports = {
     token,
     helpText,
+    botFeaturesGuide,
     commands,
     SERVER_ID,
     ACTIVE_CATEGORY_ID,

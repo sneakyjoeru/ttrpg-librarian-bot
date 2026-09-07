@@ -4,6 +4,7 @@ const { estimateTokens, isHistoryOrAnalysisQuery } = require('../utils/helpers')
 const { consumeQuota, formatDuration } = require('../utils/quota');
 const {
     helpText,
+    botFeaturesGuide,
     SEARXNG_URL,
     OLLAMA_URL,
     OLLAMA_MODEL,
@@ -243,6 +244,8 @@ ${formattedTargetMessages || 'None found in the last 100 messages.'}
 - If a "Target User Context" section is provided below, the user is asking about a specific server member. Use the messages listed in that section to answer the question. Summarize what that person posted or said based on their actual messages. Do NOT say you cannot find them or that they haven't posted.
     - Generate ONLY the final answer. Do NOT append, repeat, or continue any chat history, dialogue turns, or conversation logs.
     - Seed value: ${seed}. Use this only to vary wording naturally; avoid repeating the same opener/closer patterns from recent chat history.`;
+
+        systemMessage += `\n\nIf the user asks how to use a bot feature/command or how something works, answer using this reference (don't dump it verbatim, just use it to answer accurately):\n${botFeaturesGuide}`;
 
         // Per-server language config: language-specific channels (and guilds
         // whose main language isn't English) get a reply-language override.
