@@ -97,7 +97,7 @@ docker kill --signal=SIGUSR2 librarian-bot 2>/dev/null || true
 # Clean any old progress file inside the container
 docker exec librarian-bot rm -f /usr/src/app/build_progress.txt 2>/dev/null || true
 
-BUILDX_GIT_INFO=false docker build --provenance=false ${igpu_build_arg} -t discord-librarian-bot . && \
+BUILDX_GIT_INFO=false docker build ${igpu_build_arg} -t discord-librarian-bot . && \
 # Fix .git ownership: Docker (root) changes .git ownership during build
 # (COPY . ., git operations inside Dockerfile), causing subsequent
 # git fetch/reset to fail with "Permission denied". Always chown .git

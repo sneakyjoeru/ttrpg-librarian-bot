@@ -44,9 +44,9 @@ check('no role.members.cache usage (crash pattern)', badCount, 0);
 const goodCount = (src.match(/role\.members\.has\(/g) || []).length;
 check('role.members.has used in add + remove branches', goodCount >= 2, true);
 
-// 3) Sanity: resolveGuildMember import + both subcommand paths wired.
+// 3) Sanity: resolveGuildMember import + rename/sync helpers wired.
 check('resolveGuildMember imported', src.includes('resolveGuildMember'), true);
-check('syncChannelNameToRoleCount imported', src.includes('syncChannelNameToRoleCount'), true);
+check('queueChannelRename imported', src.includes('queueChannelRename'), true);
 
 // 4) The handler must not gate add/remove behind role.members before the
 //    role is fetched (structural check: the "already a player" reply must
@@ -56,25 +56,25 @@ const roleFetchIdx = src.indexOf('const role = interaction.guild.roles.cache.get
 check('"already a player" check comes after role fetch', addIdx > roleFetchIdx && roleFetchIdx !== -1, true);
 
 // 5) 2026-09-07 "application did not respond" regression: the interaction
-//    reply MUST come before the (rate-limited) channel-rename sync in both
-//    the add and remove branches. Awaiting syncChannelNameToRoleCount
-//    before replying let discord.js's rate limiter sleep for up to ~10 min
-//    inside the awaited rename (2 renames / 10 min quota), blowing Discord's
-//    3-second interaction deadline while the role change had ALREADY
-//    succeeded — users saw "did not respond" but the member WAS added.
+//    reply MUST come before the (rate-limited) channel-rename work in both
+//    the add and remove branches. Awaiting the rename before replying let
+//    discord.js's rate limiter sleep for up to ~10 min inside the awaited
+//    call (2 renames / 10 min quota), blowing Discord's 3-second
+//    interaction deadline while the role change had ALREADY succeeded —
+//    users saw "did not respond" but the member WAS added.
 const addReplyIdx = src.indexOf('✅ Added');
-const addSyncIdx = src.indexOf('syncChannelNameToRoleCount', addReplyIdx);
-check('add branch: reply fires before the count sync',
+const addSyncIdx = src.indexOf('queueChannelRename', addReplyIdx);
+check('add branch: reply fires before the rename work',
     addReplyIdx !== -1 && addSyncIdx > addReplyIdx, true);
 const removeReplyIdx = src.indexOf('✅ Removed');
-const removeSyncIdx = src.indexOf('syncChannelNameToRoleCount', removeReplyIdx);
-check('remove branch: reply fires before the count sync',
+const removeSyncIdx = src.indexOf('queueChannelRename', removeReplyIdx);
+check('remove branch: reply fires before the rename work',
     removeReplyIdx !== -1 && removeSyncIdx > removeReplyIdx, true);
 
-// 6) No awaited sync anywhere in the handler — it must always be
-//    fire-and-forget (with .catch) so it can never block a reply.
-const awaitedSyncCount = (src.match(/await\s+syncChannelNameToRoleCount/g) || []).length;
-check('no awaited syncChannelNameToRoleCount in the handler', awaitedSyncCount, 0);
+// 6) No awaited rename/sync anywhere in the handler — renames are
+//    fire-and-forget (with .catch) so they can never block a reply.
+const awaitedRenameCount = (src.match(/await\s+(queueChannelRename|syncChannelNameToRoleCount)/g) || []).length;
+check('no awaited rename/sync call in the handler', awaitedRenameCount, 0);
 
 console.log(failures.length === 0
     ? `[Test] RESULT: PASS (${new Date().toISOString()})`
