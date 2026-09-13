@@ -204,6 +204,9 @@ async function handleYoutubeSummary(client, message, query, videoId) {
                     name: `📺 ${displayTitle}`.substring(0, 100),
                     autoArchiveDuration: THREAD_AUTO_ARCHIVE_MINUTES
                 });
+                // Discord auto-joins the replied-to user to a thread started on
+                // the reply; drop them so they aren't pinged by every chunk.
+                await thread.members.remove(message.author.id).catch(() => {});
                 for (const chunk of chunks) {
                     await thread.send(chunk);
                 }
