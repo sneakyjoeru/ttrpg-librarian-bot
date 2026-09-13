@@ -31,7 +31,7 @@ function start(options = {}) {
       if (clientInstance && logChannelId) {
         try {
           const channel = clientInstance.channels?.cache?.get(logChannelId);
-          if (channel) channel.send(`⚠️ **Автоматический перезапуск**\n${reason}`).catch(() => {});
+          if (channel) channel.send(`⚠️ **Automatic restart**\n${reason}`).catch(() => {});
         } catch (_) {}
       }
       setTimeout(() => { process.exit(1); }, 2000);

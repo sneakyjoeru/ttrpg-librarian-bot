@@ -157,7 +157,7 @@ function buildMainContent(articleUrl, title, userComment) {
     let parts = [];
     if (userComment) parts.push(userComment);
     if (title) parts.push(`**${title}**`);
-    parts.push(`[Статья/Тред](${articleUrl})`);
+    parts.push(`[Article/Thread](${articleUrl})`);
     return parts.join('\n\n').substring(0, 2000);
 }
 
@@ -191,7 +191,7 @@ function buildThreadName(title) {
         const short = title.replace(/[*_#`~>|]/g, ' ').replace(/\s+/g, ' ').trim();
         if (short) return `📰 ${short}`.substring(0, 100);
     }
-    return '📰 Статья';
+    return '📰 Article';
 }
 
 async function handleArticleMessage(client, message, articleUrl, remadeContent, recoveredPlaceholder = null) {
@@ -317,7 +317,7 @@ async function handleArticleMessage(client, message, articleUrl, remadeContent, 
         } catch (err) {
             console.error('[Article Interceptor] Critical error in handler:', err);
             try {
-                await updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки статьи]\n<${articleUrl}>`, [], false, 0, `<${articleUrl}>`);
+                await updateWorkingPlaceholder(placeholder, `⚠️ [Article processing error]\n<${articleUrl}>`, [], false, 0, `<${articleUrl}>`);
             } catch (_) {}
             job.failure(err.message, { stage: 'critical' });
         } finally {

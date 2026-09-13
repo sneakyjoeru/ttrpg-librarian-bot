@@ -29,6 +29,7 @@ const { handleInstagramMessage } = require('../services/instagram');
 const { handleTwitterMessage } = require('./twitterHandler');
 const { handleFacebookMessage } = require('./facebookHandler');
 const { handleArticleMessage } = require('./articleHandler');
+const { extractYoutubeVideoId, handleYoutubeSummary } = require('../services/youtubeSummary');
 
 async function handleInteraction(client, interaction) {
     if (!interaction.isChatInputCommand()) return;
@@ -1007,28 +1008,28 @@ async function handleInteraction(client, interaction) {
                         }
                     }
                     if (deletedTarget) {
-                        await interaction.editReply({ content: '✅ Успешно удалено последнее сообщение.' }).catch(() => { });
+                        await interaction.editReply({ content: '✅ Last message deleted.' }).catch(() => { });
                     } else {
-                        await interaction.editReply({ content: 'Не найдено подходящих сообщений для удаления.' }).catch(() => { });
+                        await interaction.editReply({ content: 'No suitable messages to delete were found.' }).catch(() => { });
                     }
                 } else {
-                    await interaction.editReply({ content: 'Не найдено сообщений в истории канала.' }).catch(() => { });
+                    await interaction.editReply({ content: 'No messages found in the channel history.' }).catch(() => { });
                 }
             } catch (err) {
                 console.error('[Slash Delete] Error during zero-argument deletion:', err.message);
-                await interaction.editReply({ content: 'Произошла ошибка при удалении сообщений.' }).catch(() => { });
+                await interaction.editReply({ content: 'An error occurred while deleting messages.' }).catch(() => { });
             }
             return;
         }
 
         // Count provided: only admin can bulk delete
         if (interaction.user.id !== SNEAKYJOE_USER_ID) {
-            await interaction.reply({ content: 'У тебя нет прав для выполнения этой команды с аргументами.', ephemeral: true }).catch(() => { });
+            await interaction.reply({ content: 'You do not have permission to use this command with arguments.', ephemeral: true }).catch(() => { });
             return;
         }
 
         if (isNaN(count) || count <= 0) {
-            await interaction.reply({ content: 'Укажи корректное число сообщений для удаления.', ephemeral: true }).catch(() => { });
+            await interaction.reply({ content: 'Please provide a valid number of messages to delete.', ephemeral: true }).catch(() => { });
             return;
         }
 
@@ -1043,13 +1044,13 @@ async function handleInteraction(client, interaction) {
                         console.warn('[Slash Delete] bulkDelete failed, falling back to manual delete:', err.message);
                         for (const msg of fetched.values()) { await msg.delete().catch(() => { }); }
                     });
-                    await interaction.editReply({ content: `Успешно удалено сообщений: ${fetched.size}.` }).catch(() => { });
+                    await interaction.editReply({ content: `Deleted ${fetched.size} message(s).` }).catch(() => { });
                 } else {
-                    await interaction.editReply({ content: 'Не найдено сообщений для удаления.' }).catch(() => { });
+                    await interaction.editReply({ content: 'No messages to delete were found.' }).catch(() => { });
                 }
             } catch (err) {
                 console.error('[Slash Delete] Error during deletion:', err.message);
-                await interaction.editReply({ content: 'Произошла ошибка при удалении сообщений.' }).catch(() => { });
+                await interaction.editReply({ content: 'An error occurred while deleting messages.' }).catch(() => { });
             }
         }
         return;
@@ -1060,7 +1061,7 @@ async function handleInteraction(client, interaction) {
         try {
             const newText = (interaction.options.getString('text') || '').trim();
             if (!newText) {
-                await interaction.reply({ content: 'Укажи новый текст.', ephemeral: true });
+                await interaction.reply({ content: 'Please provide the new text.', ephemeral: true });
                 return;
             }
             const isUserAdmin = interaction.user.id === SNEAKYJOE_USER_ID || !!(interaction.member && interaction.member.permissions && interaction.member.permissions.has(PermissionFlagsBits.Administrator));
@@ -1087,7 +1088,7 @@ async function handleInteraction(client, interaction) {
                 }
             }
             if (!targetMsg) {
-                await interaction.reply({ content: 'Не найдено подходящего сообщения бота для редактирования.', ephemeral: true });
+                await interaction.reply({ content: 'No suitable bot message to edit was found.', ephemeral: true });
                 return;
             }
 
@@ -1096,7 +1097,7 @@ async function handleInteraction(client, interaction) {
                 authorized = await isMessageTiedToUser(targetMsg, interaction.user.id, interaction.user.username, interaction.member ? interaction.member.displayName : interaction.user.username, client);
             }
             if (!authorized) {
-                await interaction.reply({ content: 'Ты можешь редактировать только свои собственные посты, заменённые ботом.', ephemeral: true });
+                await interaction.reply({ content: 'You can only edit your own posts that the bot reposted.', ephemeral: true });
                 return;
             }
 
@@ -1123,9 +1124,9 @@ async function handleInteraction(client, interaction) {
             if (allMatches.length === 0) {
                 try {
                     await targetMsg.edit(newText).catch(() => {});
-                    await interaction.editReply({ content: '✅ Текст отредактирован.' }).catch(() => {});
+                    await interaction.editReply({ content: '✅ Text updated.' }).catch(() => {});
                 } catch (e) {
-                    await interaction.editReply({ content: 'Не удалось отредактировать: ' + e.message }).catch(() => {});
+                    await interaction.editReply({ content: 'Failed to edit: ' + e.message }).catch(() => {});
                 }
                 return;
             }
@@ -1155,10 +1156,10 @@ async function handleInteraction(client, interaction) {
                 else if (matchKind === 'facebook') await handleFacebookMessage(client, synthMsg, matchUrl, newText, placeholder);
                 else if (matchKind === 'article') await handleArticleMessage(client, synthMsg, matchUrl, newText, placeholder);
             }
-            await interaction.editReply({ content: `✅ Редактирование выполнено (${allMatches.map(m => m.kind).join(', ')}).` }).catch(() => {});
+            await interaction.editReply({ content: `✅ Edit complete (${allMatches.map(m => m.kind).join(', ')}).` }).catch(() => {});
         } catch (err) {
             console.error('[Edit-Last Slash] Error:', err.message);
-            try { await interaction.editReply({ content: 'Ошибка при редактировании: ' + err.message }).catch(() => {}); } catch (_) {}
+            try { await interaction.editReply({ content: 'Error while editing: ' + err.message }).catch(() => {}); } catch (_) {}
         }
         return;
     }
@@ -1168,7 +1169,7 @@ async function handleInteraction(client, interaction) {
         try {
             const channel = interaction.channel;
             if (!channel || !channel.isThread()) {
-                await interaction.reply({ content: 'Команда `/process` работает только внутри треда обработанного поста.', ephemeral: true });
+                await interaction.reply({ content: 'The `/process` command only works inside the thread of a processed post.', ephemeral: true });
                 return;
             }
             const thread = channel;
@@ -1177,7 +1178,7 @@ async function handleInteraction(client, interaction) {
             let starterMsg = null;
             try { starterMsg = await thread.fetchStarterMessage(); } catch (_) {}
             if (!starterMsg) {
-                await interaction.reply({ content: 'Не удалось найти исходное сообщение треда для обработки.', ephemeral: true });
+                await interaction.reply({ content: 'Could not find the thread starter message to process.', ephemeral: true });
                 return;
             }
 
@@ -1198,7 +1199,7 @@ async function handleInteraction(client, interaction) {
                 }
             }
             if (!authorized) {
-                await interaction.reply({ content: 'Эту команду может использовать только автор поста или администратор сервера.', ephemeral: true });
+                await interaction.reply({ content: 'Only the post author or a server administrator can use this command.', ephemeral: true });
                 return;
             }
 
@@ -1230,9 +1231,14 @@ async function handleInteraction(client, interaction) {
                 const artM = haystack.match(articleRe);
                 if (artM) { let u = artM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'article'; }
             }
+            let foundYoutubeId = null;
+            if (!foundUrl) {
+                foundYoutubeId = extractYoutubeVideoId(haystack);
+                if (foundYoutubeId) { foundUrl = `https://www.youtube.com/watch?v=${foundYoutubeId}`; foundKind = 'youtube'; }
+            }
 
             if (!foundUrl) {
-                await interaction.reply({ content: 'Не удалось найти исходную ссылку для повторной обработки в этом треде.', ephemeral: true });
+                await interaction.reply({ content: 'Could not find the original link to re-process in this thread.', ephemeral: true });
                 return;
             }
 
@@ -1261,10 +1267,24 @@ async function handleInteraction(client, interaction) {
             else if (foundKind === 'instagram') await handleInstagramMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'facebook') await handleFacebookMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'article') await handleArticleMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
-            await interaction.editReply({ content: `✅ Повторная обработка выполнена (${foundKind}).` }).catch(() => {});
+            else if (foundKind === 'youtube') {
+                // Quota and output belong to the caller and the thread, not the starter message.
+                const ytMsg = new Proxy(synthMsg, {
+                    get(target, prop) {
+                        if (prop === 'author') return interaction.user;
+                        if (prop === 'member') return interaction.member;
+                        if (prop === 'reference') return null;
+                        if (prop === 'channel') return thread;
+                        if (prop === 'reply') return async (options) => thread.send(options).catch(() => null);
+                        return target[prop];
+                    }
+                });
+                await handleYoutubeSummary(client, ytMsg, foundUrl, foundYoutubeId);
+            }
+            await interaction.editReply({ content: `✅ Re-processing complete (${foundKind}).` }).catch(() => {});
         } catch (err) {
             console.error('[Process Slash] Error:', err.message);
-            try { await interaction.editReply({ content: 'Ошибка при повторной обработке: ' + err.message }).catch(() => {}); } catch (_) {}
+            try { await interaction.editReply({ content: 'Error while re-processing: ' + err.message }).catch(() => {}); } catch (_) {}
         }
         return;
     }

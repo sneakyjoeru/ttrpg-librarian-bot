@@ -604,7 +604,7 @@ async function handleFacebookMessage(client, message, facebookUrl, remadeContent
 
                 if (downloadSuccess) {
                     const successText = fallbackContent;
-                    const privateSuppressedText = `[ПРИВАТНОЕ ВИДЕО, ДОСТУП ТОЛЬКО ПО ССЫЛКЕ]\n` + fallbackContent;
+                    const privateSuppressedText = `[PRIVATE VIDEO, LINK ACCESS ONLY]\n` + fallbackContent;
                     let currentText = attachments.isRestrictedVideoFallback ? privateSuppressedText : successText;
 
                     // Librarian bot has no OCR/translation pipeline: post the media and
@@ -640,14 +640,14 @@ async function handleFacebookMessage(client, message, facebookUrl, remadeContent
     }).catch(err => {
         job.failure(err.message, { stage: 'media_queue' });
         if (placeholder) {
-            updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки Facebook]\n<${facebookUrl}>`, [], false, 0, facebookUrl).catch(() => {});
+            updateWorkingPlaceholder(placeholder, `⚠️ [Facebook processing error]\n<${facebookUrl}>`, [], false, 0, facebookUrl).catch(() => {});
         }
     });
     } catch (outerErr) {
         console.error('[Facebook Interceptor] Critical error before queue:', outerErr);
         job.failure(outerErr.message, { stage: 'pre_queue_critical' });
         if (placeholder) {
-            updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки Facebook]\n<${facebookUrl}>`, [], false, 0, facebookUrl).catch(() => {});
+            updateWorkingPlaceholder(placeholder, `⚠️ [Facebook processing error]\n<${facebookUrl}>`, [], false, 0, facebookUrl).catch(() => {});
         }
     } finally {
         if (typingInterval) clearInterval(typingInterval);

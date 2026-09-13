@@ -9,7 +9,7 @@ const { handleTelegramMessage } = require('./telegramHandler');
 const { handleArticleMessage } = require('./articleHandler');
 const { handleForumMessage, FORUM_URL_REGEX } = require('./forumHandler');
 const { handleRagQuery } = require('../services/rag');
-const { resolveYoutubeVideoId, handleYoutubeSummary } = require('../services/youtubeSummary');
+const { resolveYoutubeVideoId, handleYoutubeSummary, extractYoutubeVideoId } = require('../services/youtubeSummary');
 const { isDiscordFeatureEnabled } = require('../services/streamerJoe');
 const { runCommandStream } = require('../utils/shell');
 const { parseRebuildProgressLine } = require('../utils/rebuildProgress');
@@ -90,13 +90,13 @@ async function _handleMessageCreateInner(client, message) {
 
         // Count provided: only admin can bulk delete
         if (message.author.id !== SNEAKYJOE_USER_ID) {
-            try { await message.reply('У тебя нет прав для выполнения этой команды.'); } catch (_) {}
+            try { await message.reply('You do not have permission to use this command.'); } catch (_) {}
             return;
         }
 
         const count = parseInt(deleteMatch[1], 10);
         if (isNaN(count) || count <= 0) {
-            try { await message.reply('Укажи корректное число сообщений для удаления.'); } catch (_) {}
+            try { await message.reply('Please provide a valid number of messages to delete.'); } catch (_) {}
             return;
         }
 
@@ -132,7 +132,7 @@ async function _handleMessageCreateInner(client, message) {
         const newText = (editLastMatch[1] || '').trim();
 
         if (!newText) {
-            try { await message.reply('Укажи новый текст после `/edit-last`. Например: `/edit-last Мой новый комментарий <url>`'); } catch (_) {}
+            try { await message.reply('Provide the new text after `/edit-last`. Example: `/edit-last My new comment <url>`'); } catch (_) {}
             return;
         }
 
@@ -161,7 +161,7 @@ async function _handleMessageCreateInner(client, message) {
             }
 
             if (!targetMsg) {
-                try { await message.reply('Не найдено подходящего сообщения бота для редактирования в этом канале.'); } catch (_) {}
+                try { await message.reply('No suitable bot message to edit was found in this channel.'); } catch (_) {}
                 return;
             }
 
@@ -170,7 +170,7 @@ async function _handleMessageCreateInner(client, message) {
                 authorized = await isMessageTiedToUser(targetMsg, message.author.id, message.author.username, message.member ? message.member.displayName : message.author.username, client);
             }
             if (!authorized) {
-                try { await message.reply('Ты можешь редактировать только свои собственные посты, заменённые ботом.'); } catch (_) {}
+                try { await message.reply('You can only edit your own posts that the bot reposted.'); } catch (_) {}
                 return;
             }
 
@@ -205,7 +205,7 @@ async function _handleMessageCreateInner(client, message) {
                     await targetMsg.edit(newText).catch(() => {});
                     await message.delete().catch(() => {});
                 } catch (editErr) {
-                    try { await message.reply('Не удалось отредактировать сообщение: ' + editErr.message); } catch (_) {}
+                    try { await message.reply('Failed to edit the message: ' + editErr.message); } catch (_) {}
                 }
                 return;
             }
@@ -243,7 +243,7 @@ async function _handleMessageCreateInner(client, message) {
             }
         } catch (editLastErr) {
             console.error('[Edit-Last] Error:', editLastErr.message);
-            try { await message.reply('Ошибка при редактировании: ' + editLastErr.message); } catch (_) {}
+            try { await message.reply('Error while editing: ' + editLastErr.message); } catch (_) {}
         }
         return;
     }
@@ -254,7 +254,7 @@ async function _handleMessageCreateInner(client, message) {
         const isUserAdmin = message.author.id === SNEAKYJOE_USER_ID || !!(message.member && message.member.permissions.has(PermissionFlagsBits.Administrator));
         try {
             if (!message.channel.isThread()) {
-                try { await message.reply('Команда `/process` работает только внутри треда обработанного поста.'); } catch (_) {}
+                try { await message.reply('The `/process` command only works inside the thread of a processed post.'); } catch (_) {}
                 return;
             }
 
@@ -262,7 +262,7 @@ async function _handleMessageCreateInner(client, message) {
             let starterMsg = null;
             try { starterMsg = await thread.fetchStarterMessage(); } catch (_) {}
             if (!starterMsg) {
-                try { await message.reply('Не удалось найти исходное сообщение треда для обработки.'); } catch (_) {}
+                try { await message.reply('Could not find the thread starter message to process.'); } catch (_) {}
                 return;
             }
 
@@ -283,7 +283,7 @@ async function _handleMessageCreateInner(client, message) {
                 }
             }
             if (!authorized) {
-                try { await message.reply('Эту команду может использовать только автор поста или администратор сервера.'); } catch (_) {}
+                try { await message.reply('Only the post author or a server administrator can use this command.'); } catch (_) {}
                 return;
             }
 
@@ -329,9 +329,14 @@ async function _handleMessageCreateInner(client, message) {
                 const forumM = haystack.match(FORUM_URL_REGEX);
                 if (forumM) { let u = forumM[0].replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; foundUrl = u; foundKind = 'forum'; }
             }
+            let foundYoutubeId = null;
+            if (!foundUrl) {
+                foundYoutubeId = extractYoutubeVideoId(haystack);
+                if (foundYoutubeId) { foundUrl = `https://www.youtube.com/watch?v=${foundYoutubeId}`; foundKind = 'youtube'; }
+            }
 
             if (!foundUrl) {
-                try { await message.reply('Не удалось найти исходную ссылку для повторной обработки в этом треде.'); } catch (_) {}
+                try { await message.reply('Could not find the original link to re-process in this thread.'); } catch (_) {}
                 return;
             }
 
@@ -364,9 +369,23 @@ async function _handleMessageCreateInner(client, message) {
             else if (foundKind === 'telegram') await handleTelegramMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'article') await handleArticleMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
             else if (foundKind === 'forum') await handleForumMessage(client, synthMsg, foundUrl, remadeForProcess, recoveredPlaceholder);
+            else if (foundKind === 'youtube') {
+                // Quota and reply target belong to the caller, not the thread starter's author.
+                const ytMsg = new Proxy(synthMsg, {
+                    get(target, prop) {
+                        if (prop === 'author') return message.author;
+                        if (prop === 'member') return message.member;
+                        if (prop === 'reference') return null;
+                        if (prop === 'channel') return thread;
+                        if (prop === 'reply') return async (options) => thread.send(options).catch(() => null);
+                        return target[prop];
+                    }
+                });
+                await handleYoutubeSummary(client, ytMsg, foundUrl, foundYoutubeId);
+            }
         } catch (processErr) {
             console.error('[Process Command] Error:', processErr.message);
-            try { await message.reply('Ошибка при повторной обработке: ' + processErr.message); } catch (_) {}
+            try { await message.reply('Error while re-processing: ' + processErr.message); } catch (_) {}
         }
         return;
     }
@@ -511,7 +530,7 @@ async function _handleMessageCreateInner(client, message) {
         if (!isUserAdmin) {
             console.warn(`[Restart Command] Unauthorized restart attempt by ${message.author.tag} (${message.author.id}) in channel ${message.channel.id}`);
             try {
-                await message.reply('У тебя нет прав для выполнения этой команды.');
+                await message.reply('You do not have permission to use this command.');
             } catch (err) {
                 console.error('Failed to send permission error reply:', err.message);
             }
@@ -524,7 +543,7 @@ async function _handleMessageCreateInner(client, message) {
         if (!hostPath) {
             console.error('[Restart Command] HOST_PATH environment variable is not defined.');
             try {
-                await message.reply('❌ Ошибка: переменная окружения `HOST_PATH` не задана. Перезапуск невозможен.');
+                await message.reply('❌ Error: the `HOST_PATH` environment variable is not set. Restart is not possible.');
             } catch (err) {
                 console.error('Failed to send env error reply:', err.message);
             }
@@ -533,7 +552,7 @@ async function _handleMessageCreateInner(client, message) {
 
         let restartStatusMsg = null;
         try {
-            restartStatusMsg = await message.reply('⏳ Запускаю пересборку контейнера... 0%');
+            restartStatusMsg = await message.reply('⏳ Starting container rebuild... 0%');
         } catch (err) {
             console.error('Failed to send restart starting message:', err.message);
         }
@@ -558,8 +577,8 @@ async function _handleMessageCreateInner(client, message) {
             lastRestartPercent = normalized;
             lastRestartEdit = now;
             sawAnyProgress = true;
-            let statusText = `⏳ Пересборка контейнера: ${normalized}%`;
-            if (stageLabel) statusText += ` (слой ${stageLabel})`;
+            let statusText = `⏳ Rebuilding container: ${normalized}%`;
+            if (stageLabel) statusText += ` (layer ${stageLabel})`;
             if (restartStatusMsg) {
                 restartStatusMsg.edit(statusText).catch(() => {});
             }
@@ -600,7 +619,7 @@ async function _handleMessageCreateInner(client, message) {
         }).then(async () => {
             console.log('[Restart Command] Build successful. Launching helper container to restart...');
             if (restartStatusMsg) {
-                await restartStatusMsg.edit('⏳ Сборка завершена. Перезапуск контейнера...').catch(() => {});
+                await restartStatusMsg.edit('⏳ Build finished. Restarting container...').catch(() => {});
             }
             const normalizedHostPath = hostPath.replace(/\\/g, '/');
             // Build the docker run flags matching rebuild-run.sh (cookies mount,
@@ -644,19 +663,19 @@ async function _handleMessageCreateInner(client, message) {
                 if (restartErr) {
                     console.error('[Restart Command] Failed to start helper container:', restartErr);
                     if (restartStatusMsg) {
-                        restartStatusMsg.edit(`❌ Перезапуск не удался: не удалось запустить вспомогательный контейнер.\n\`\`\`\n${restartErr.message}\n\`\`\``).catch(() => {});
+                        restartStatusMsg.edit(`❌ Restart failed: could not start the helper container.\n\`\`\`\n${restartErr.message}\n\`\`\``).catch(() => {});
                     }
                     return;
                 }
                 console.log('[Restart Command] Helper container started successfully.');
                 if (restartStatusMsg) {
-                    restartStatusMsg.edit('✅ Пересборка завершена: 100%').catch(() => {});
+                    restartStatusMsg.edit('✅ Rebuild complete: 100%').catch(() => {});
                 }
             });
         }).catch(async (err) => {
             console.error('[Restart Command] Rebuild command failed:', err.message);
             if (restartStatusMsg) {
-                await restartStatusMsg.edit(`❌ Пересборка завершилась с ошибкой на ${lastRestartPercent}%`).catch(() => {});
+                await restartStatusMsg.edit(`❌ Rebuild failed at ${lastRestartPercent}%`).catch(() => {});
             }
         });
         return;

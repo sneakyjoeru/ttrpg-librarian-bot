@@ -207,6 +207,8 @@ async function handleYoutubeSummary(client, message, query, videoId) {
                 // Discord auto-joins the replied-to user to a thread started on
                 // the reply; drop them so they aren't pinged by every chunk.
                 await thread.members.remove(message.author.id).catch(() => {});
+                // Link first (embed suppressed) so /process inside the thread can find it.
+                await thread.send(`<https://www.youtube.com/watch?v=${videoId}>`);
                 for (const chunk of chunks) {
                     await thread.send(chunk);
                 }
