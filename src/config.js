@@ -166,6 +166,7 @@ const helpText = `**Librarian Bot Functions:**
 \`/new-thread [name]\` - Create a public thread
 \`/roll [formula] [class] [context]\` - Roll dice (e.g. 1d20+5)
 **@LibrarianBot [question]** - Ask a question (add "no bs" for short answer)
+**@LibrarianBot [YouTube link]** - Summarize a YouTube video (TL;DW); also works by replying to a message with a video link and adding "tldw"/"tldr"/"what's this video about"
 \`/poll-librarian [question] [options]\` - Create a poll (max 10 options)
 
 **🔒 DM / Admin Commands:**
@@ -217,6 +218,12 @@ const botFeaturesGuide = `How Librarian Bot's features actually work (use this t
 
 **Dice rolling:**
 - /roll [formula] [class] [context] rolls dice like 1d20+5. Rolling a natural 1 on a d20 triggers the bot to generate a short, savage, custom AI roast referencing the player's class/context and recent channel chat.
+
+**TL;DW (YouTube video summary):**
+- @mention the bot together with a YouTube link (youtube.com or youtu.be) in the same message and it fetches the video's subtitles/captions (via yt-dlp, not the YouTube API) and replies with a summary. No special keyword is needed in this case — the link plus the mention is enough.
+- Alternatively, reply to a message that contains a YouTube link, @mention the bot, and ask something like "tldw"/"tldr"/"what's in this video"/"о чём видео" — the bot pulls the link out of the message you replied to rather than requiring you to repost it.
+- Long videos are summarized in chunks (transcript split into parts, each summarized, then combined) so there's no hard length limit.
+- Uses the same DeepSeek/quota-then-local-Ollama pipeline as normal chat questions.
 
 **Media/pin/misc:**
 - /pin, /unpin work on a given message ID or default to the most recent message/pinned message.

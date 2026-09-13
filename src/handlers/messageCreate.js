@@ -9,6 +9,7 @@ const { handleTelegramMessage } = require('./telegramHandler');
 const { handleArticleMessage } = require('./articleHandler');
 const { handleForumMessage, FORUM_URL_REGEX } = require('./forumHandler');
 const { handleRagQuery } = require('../services/rag');
+const { resolveYoutubeVideoId, handleYoutubeSummary } = require('../services/youtubeSummary');
 const { isDiscordFeatureEnabled } = require('../services/streamerJoe');
 const { runCommandStream } = require('../utils/shell');
 const { parseRebuildProgressLine } = require('../utils/rebuildProgress');
@@ -677,6 +678,14 @@ async function _handleMessageCreateInner(client, message) {
             console.log('[StreamerJoe] llm_chat disabled — skipping RAG reply');
             return;
         }
+
+        const youtubeVideoId = await resolveYoutubeVideoId(message, query);
+        if (youtubeVideoId) {
+            console.log(`[YouTube Summary] Triggered by ${message.author.tag} (${message.author.id}) for video ${youtubeVideoId}`);
+            await handleYoutubeSummary(client, message, query, youtubeVideoId);
+            return;
+        }
+
         await handleRagQuery(client, message, query);
         return;
     }
@@ -715,6 +724,14 @@ async function _handleMessageCreateInner(client, message) {
                     console.log('[StreamerJoe] llm_chat disabled — skipping RAG reply');
                     return;
                 }
+
+                const youtubeVideoId = await resolveYoutubeVideoId(message, query);
+                if (youtubeVideoId) {
+                    console.log(`[YouTube Summary] Triggered (role-mention) by ${message.author.tag} (${message.author.id}) for video ${youtubeVideoId}`);
+                    await handleYoutubeSummary(client, message, query, youtubeVideoId);
+                    return;
+                }
+
                 await handleRagQuery(client, message, query);
                 return;
             }
