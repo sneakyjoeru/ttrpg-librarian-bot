@@ -333,14 +333,14 @@ async function handleTwitterMessage(client, message, twitterUrl, remadeContent, 
     }).catch(err => {
         job.failure(err.message, { stage: 'media_queue' });
         if (placeholder) {
-            updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки Twitter]\n<${twitterUrl}>`, [], false, 0, twitterUrl).catch(() => {});
+            updateWorkingPlaceholder(placeholder, `⚠️ [Twitter processing error]\n<${twitterUrl}>`, [], false, 0, twitterUrl).catch(() => {});
         }
     });
     } catch (outerErr) {
         console.error('[Twitter Interceptor] Critical error before queue:', outerErr);
         job.failure(outerErr.message, { stage: 'pre_queue_critical' });
         if (placeholder) {
-            updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки Twitter]\n<${twitterUrl}>`, [], false, 0, twitterUrl).catch(() => {});
+            updateWorkingPlaceholder(placeholder, `⚠️ [Twitter processing error]\n<${twitterUrl}>`, [], false, 0, twitterUrl).catch(() => {});
         }
     } finally {
         if (typingInterval) clearInterval(typingInterval);

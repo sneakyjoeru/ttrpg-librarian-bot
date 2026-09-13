@@ -486,7 +486,7 @@ async function handleTiktokMessage(client, message, tiktokUrl, remadeContent, re
 
                 if (downloadSuccess) {
                     const successText = fallbackContent;
-                    const privateSuppressedText = `[ПРИВАТНОЕ ВИДЕО, ДОСТУП ТОЛЬКО ПО ССЫЛКЕ]\n` + fallbackContent;
+                    const privateSuppressedText = `[PRIVATE VIDEO, LINK ACCESS ONLY]\n` + fallbackContent;
                     let currentText = attachments.isRestrictedVideoFallback ? privateSuppressedText : successText;
 
                     // Librarian bot has no OCR/translation pipeline: post the media and
@@ -522,14 +522,14 @@ async function handleTiktokMessage(client, message, tiktokUrl, remadeContent, re
     }).catch(err => {
         job.failure(err.message, { stage: 'media_queue' });
         if (placeholder) {
-            updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки TikTok]\n<${tiktokUrl}>`, [], false, 0, tiktokUrl).catch(() => {});
+            updateWorkingPlaceholder(placeholder, `⚠️ [TikTok processing error]\n<${tiktokUrl}>`, [], false, 0, tiktokUrl).catch(() => {});
         }
     });
     } catch (outerErr) {
         console.error('[TikTok Interceptor] Critical error before queue:', outerErr);
         job.failure(outerErr.message, { stage: 'pre_queue_critical' });
         if (placeholder) {
-            updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки TikTok]\n<${tiktokUrl}>`, [], false, 0, tiktokUrl).catch(() => {});
+            updateWorkingPlaceholder(placeholder, `⚠️ [TikTok processing error]\n<${tiktokUrl}>`, [], false, 0, tiktokUrl).catch(() => {});
         }
     } finally {
         if (typingInterval) clearInterval(typingInterval);

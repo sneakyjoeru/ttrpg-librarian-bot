@@ -409,7 +409,7 @@ async function downloadWithYtDlp(url, prefix) {
 // ── Description formatting ──────────────────────────────────────────────────
 
 function formatPostDescription(pageData) {
-    const title = pageData.title || '(без заголовка)';
+    const title = pageData.title || '(untitled)';
     const subreddit = pageData.subreddit || '';
     const author = pageData.author || '[deleted]';
 
@@ -619,7 +619,7 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
                 job.success({ stage: 'forum_media_posted', media: attachments.length });
             } catch (err) {
                 console.error('[Forum Interceptor] Critical error in mediaQueue:', err);
-                try { await updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки]\n<${postUrl}>`, [], true, 0, `<${postUrl}>`); } catch (_) {}
+                try { await updateWorkingPlaceholder(placeholder, `⚠️ [Processing error]\n<${postUrl}>`, [], true, 0, `<${postUrl}>`); } catch (_) {}
                 job.failure(err.message, { stage: 'critical' });
             } finally {
                 clearInterval(typingInterval);
@@ -627,12 +627,12 @@ async function handleForumMessage(client, message, postUrl, remadeContent, recov
             }
         }).catch(err => {
             job.failure(err.message, { stage: 'media_queue' });
-            if (placeholder) updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки]\n<${postUrl}>`, [], true, 0, postUrl).catch(() => {});
+            if (placeholder) updateWorkingPlaceholder(placeholder, `⚠️ [Processing error]\n<${postUrl}>`, [], true, 0, postUrl).catch(() => {});
         });
     } catch (outerErr) {
         console.error('[Forum Interceptor] Critical error before queue:', outerErr);
         job.failure(outerErr.message, { stage: 'pre_queue_critical' });
-        if (placeholder) updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки]\n<${postUrl}>`, [], true, 0, postUrl).catch(() => {});
+        if (placeholder) updateWorkingPlaceholder(placeholder, `⚠️ [Processing error]\n<${postUrl}>`, [], true, 0, postUrl).catch(() => {});
     } finally {
         if (typingInterval) clearInterval(typingInterval);
         if (placeholderMessageId) inFlightPlaceholders.delete(placeholderMessageId);

@@ -443,7 +443,7 @@ async function handleTelegramMessage(client, message, telegramUrl, remadeContent
 
                 if (downloadSuccess) {
                     const successText = fallbackContent;
-                    const privateSuppressedText = `[ПРИВАТНОЕ ВИДЕО, ДОСТУП ТОЛЬКО ПО ССЫЛКЕ]\n` + fallbackContent;
+                    const privateSuppressedText = `[PRIVATE VIDEO, LINK ACCESS ONLY]\n` + fallbackContent;
                     let currentText = attachments.isRestrictedVideoFallback ? privateSuppressedText : successText;
 
                     // Librarian bot has no OCR/translation pipeline: post the media and
@@ -479,14 +479,14 @@ async function handleTelegramMessage(client, message, telegramUrl, remadeContent
     }).catch(err => {
         job.failure(err.message, { stage: 'media_queue' });
         if (placeholder) {
-            updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки Telegram]\n<${telegramUrl}>`, [], false, 0, telegramUrl).catch(() => {});
+            updateWorkingPlaceholder(placeholder, `⚠️ [Telegram processing error]\n<${telegramUrl}>`, [], false, 0, telegramUrl).catch(() => {});
         }
     });
     } catch (outerErr) {
         console.error('[Telegram Interceptor] Critical error before queue:', outerErr);
         job.failure(outerErr.message, { stage: 'pre_queue_critical' });
         if (placeholder) {
-            updateWorkingPlaceholder(placeholder, `⚠️ [Ошибка обработки Telegram]\n<${telegramUrl}>`, [], false, 0, telegramUrl).catch(() => {});
+            updateWorkingPlaceholder(placeholder, `⚠️ [Telegram processing error]\n<${telegramUrl}>`, [], false, 0, telegramUrl).catch(() => {});
         }
     } finally {
         if (typingInterval) clearInterval(typingInterval);
