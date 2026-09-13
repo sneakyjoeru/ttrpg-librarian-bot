@@ -145,8 +145,9 @@ async function handleYoutubeSummary(client, message, query, videoId) {
 
     try {
         let transcript;
+        let videoTitle = '';
         try {
-            transcript = await getYoutubeTranscript(videoId);
+            ({ transcript, title: videoTitle } = await getYoutubeTranscript(videoId));
         } catch (transcriptErr) {
             console.error('[YouTube Summary] Transcript fetch failed:', transcriptErr.message);
             clearInterval(typingInterval);
@@ -197,9 +198,10 @@ async function handleYoutubeSummary(client, message, query, videoId) {
         const chunks = splitIntoChunks(answer, DISCORD_MESSAGE_LIMIT - 50);
         if (statusMsg && !message.channel.isThread()) {
             try {
-                await statusMsg.edit(`📺 **TL;DW** for <https://youtu.be/${videoId}> — see thread below.`);
+                const displayTitle = videoTitle || `YouTube video ${videoId}`;
+                await statusMsg.edit(`📺 **TL;DW:** ${displayTitle} — see thread below.`);
                 const thread = await statusMsg.startThread({
-                    name: `📺 TL;DW: ${videoId}`,
+                    name: `📺 ${displayTitle}`.substring(0, 100),
                     autoArchiveDuration: THREAD_AUTO_ARCHIVE_MINUTES
                 });
                 for (const chunk of chunks) {

@@ -145,7 +145,7 @@ async function getYoutubeTranscript(videoId) {
     const vttContent = fs.readFileSync(subFilePath, 'utf8');
     try { fs.unlinkSync(subFilePath); } catch (e) { }
 
-    return cleanVtt(vttContent);
+    return { transcript: cleanVtt(vttContent), title: (metadata.title || '').trim() };
 }
 
 module.exports = {
