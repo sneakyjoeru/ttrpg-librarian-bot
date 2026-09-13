@@ -27,6 +27,7 @@ const YOUTUBE_LINK_REGEX = /https?:\/\/(?:www\.)?(?:youtube\.com\/(?:[^\/]+\/.+\
 const TLDW_KEYWORDS = /(?:tl;?dw|tl;?dr|tldw|tldr|пересказ|перескажи|review|обзор|резюме|summary|summarize|содержание|о\s+чём\s+видео|что\s+в\s+видео|what'?s?\s+in\s+(?:the\s+|this\s+)?video|what\s+is\s+this\s+video\s+about|расскажи\s+(?:про\s+)?видео)/i;
 
 const CHUNK_SIZE = 80000; // chars per transcript chunk before we need a map-reduce summary
+const THREAD_AUTO_ARCHIVE_MINUTES = 1440;
 
 function extractYoutubeVideoId(text) {
     if (!text) return null;
@@ -139,7 +140,7 @@ async function handleYoutubeSummary(client, message, query, videoId) {
 
     let statusMsg = null;
     try {
-        statusMsg = await message.reply('⏳ *Получение субтитров...*');
+        statusMsg = await message.reply('⏳ *Fetching subtitles...*');
     } catch (_) {}
 
     try {
@@ -149,7 +150,7 @@ async function handleYoutubeSummary(client, message, query, videoId) {
         } catch (transcriptErr) {
             console.error('[YouTube Summary] Transcript fetch failed:', transcriptErr.message);
             clearInterval(typingInterval);
-            const failMsg = 'Не удалось получить субтитры для этого видео (нет доступных субтитров или ошибка загрузки).';
+            const failMsg = 'Could not fetch subtitles for this video (none available, or the download failed).';
             if (statusMsg) await statusMsg.edit(failMsg).catch(() => {});
             else await message.reply(failMsg).catch(() => {});
             return;
@@ -157,7 +158,7 @@ async function handleYoutubeSummary(client, message, query, videoId) {
 
         if (!transcript || transcript.length < 50) {
             clearInterval(typingInterval);
-            const failMsg = 'Субтитры для этого видео слишком короткие или отсутствуют — не могу составить пересказ.';
+            const failMsg = 'The subtitles for this video are missing or too short to summarize.';
             if (statusMsg) await statusMsg.edit(failMsg).catch(() => {});
             else await message.reply(failMsg).catch(() => {});
             return;
@@ -165,7 +166,7 @@ async function handleYoutubeSummary(client, message, query, videoId) {
 
         if (transcript.length > 500000) transcript = transcript.substring(0, 500000);
 
-        if (statusMsg) await statusMsg.edit('⏳ *Составляю пересказ...*').catch(() => {});
+        if (statusMsg) await statusMsg.edit('⏳ *Summarizing...*').catch(() => {});
 
         const userQuestion = query.replace(YOUTUBE_LINK_REGEX, '').trim();
         const systemMessage = buildSystemMessage(userQuestion);
@@ -176,12 +177,12 @@ async function handleYoutubeSummary(client, message, query, videoId) {
             const chunks = splitIntoChunks(transcript, CHUNK_SIZE);
             const partialSummaries = [];
             for (let i = 0; i < chunks.length; i++) {
-                if (statusMsg) await statusMsg.edit(`⏳ *Анализ части ${i + 1}/${chunks.length}...*`).catch(() => {});
+                if (statusMsg) await statusMsg.edit(`⏳ *Analyzing part ${i + 1}/${chunks.length}...*`).catch(() => {});
                 const chunkPrompt = `Video transcript (part ${i + 1}/${chunks.length}):\n${chunks[i]}\n\nSummarize this part concisely.`;
                 const { answer: partial } = await callLLM(systemMessage, chunkPrompt, quotaDecision);
                 partialSummaries.push(partial);
             }
-            if (statusMsg) await statusMsg.edit('⏳ *Объединение частей...*').catch(() => {});
+            if (statusMsg) await statusMsg.edit('⏳ *Combining parts...*').catch(() => {});
             const combinePrompt = `Here are summaries of consecutive parts of the same video transcript:\n\n${partialSummaries.map((s, i) => `Part ${i + 1}: ${s}`).join('\n\n')}\n\nCombine these into a single coherent summary of the whole video.${userQuestion ? ` The user specifically asked: "${userQuestion}" — make sure to address that.` : ''}`;
             const { answer: combined, quotaExhaustedNotice } = await callLLM(systemMessage, combinePrompt, quotaDecision);
             answer = quotaExhaustedNotice ? `${quotaExhaustedNotice}\n\n${combined}` : combined;
@@ -194,6 +195,22 @@ async function handleYoutubeSummary(client, message, query, videoId) {
         clearInterval(typingInterval);
 
         const chunks = splitIntoChunks(answer, DISCORD_MESSAGE_LIMIT - 50);
+        if (statusMsg && !message.channel.isThread()) {
+            try {
+                await statusMsg.edit(`📺 **TL;DW** for <https://youtu.be/${videoId}> — see thread below.`);
+                const thread = await statusMsg.startThread({
+                    name: `📺 TL;DW: ${videoId}`,
+                    autoArchiveDuration: THREAD_AUTO_ARCHIVE_MINUTES
+                });
+                for (const chunk of chunks) {
+                    await thread.send(chunk);
+                }
+                return;
+            } catch (threadErr) {
+                console.warn('[YouTube Summary] Thread post failed, falling back to plain messages:', threadErr.message);
+            }
+        }
+
         if (statusMsg) {
             await statusMsg.edit(chunks[0]).catch(() => {});
         } else {
@@ -205,7 +222,7 @@ async function handleYoutubeSummary(client, message, query, videoId) {
     } catch (err) {
         clearInterval(typingInterval);
         console.error('[YouTube Summary] Pipeline error:', err);
-        const failMsg = '*Ошибка при составлении пересказа видео.*';
+        const failMsg = '*Failed to summarize this video.*';
         if (statusMsg) await statusMsg.edit(failMsg).catch(() => {});
         else await message.reply(failMsg).catch(() => {});
     }
