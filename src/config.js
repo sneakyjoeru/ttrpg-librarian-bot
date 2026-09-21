@@ -158,7 +158,11 @@ if (!deepseekApiKey && process.env.DEEPSEEK_API_KEY) {
 }
 
 const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || 'https://api.deepseek.com/v1/chat/completions';
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
+// `deepseek-flash` = DeepSeek-V4.1-Flash (cheapest available model). The legacy
+// ids `deepseek-v4-flash` (retired 2026-09-10), `deepseek-chat` and
+// `deepseek-reasoner` are still routed to V4.1-Flash for compatibility but are
+// on their way out — always use the canonical name.
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
 
 // --- HELP TEXT ---
 const helpText = `**Librarian Bot Functions:**
