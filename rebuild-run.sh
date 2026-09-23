@@ -319,7 +319,19 @@ else
     else
         FETCH_OK=true
         if run_git remote get-url origin >/dev/null 2>&1; then
-            if ! timeout 60 run_git fetch origin "$BRANCH" 2>build_fetch.log; then
+            # Timed fetch — a dead network must fail this step fast, not
+            # hang the deploy. Watchdog style (portable: coreutils
+            # 'timeout' is not installed on every host, and it cannot
+            # execute shell functions anyway).
+            run_git fetch origin "$BRANCH" 2>build_fetch.log &
+            FETCH_PID=$!
+            ( sleep 60; kill "$FETCH_PID" 2>/dev/null ) &
+            FETCH_WATCHDOG=$!
+            wait "$FETCH_PID" 2>/dev/null
+            FETCH_RC=$?
+            kill "$FETCH_WATCHDOG" 2>/dev/null
+            wait "$FETCH_WATCHDOG" 2>/dev/null
+            if [ "$FETCH_RC" -ne 0 ]; then
                 FETCH_OK=false
                 echo "[deploy 2/6] WARNING: git fetch origin $BRANCH failed — building the current local HEAD."
                 sed 's/^/[deploy 2/6]   /' build_fetch.log 2>/dev/null | tail -3
