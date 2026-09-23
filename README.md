@@ -16,7 +16,7 @@ The bot runs in a Docker container on an **Intel N150 Mini PC** (12GB RAM + 8GB 
 - **Facebook Media Interceptor**: Reposts `facebook.com`/`fb.watch` reels, posts, photos, and videos. Download strategy: `yt-dlp` (original fbcdn mp4) → `fdown.net` fixer → generic `og:video`/`og:image` scrape. Oversized videos are compressed with ffmpeg.
 - **News Article Interceptor**: For known news domains (themoscowtimes.com, meduza.io, and others), the bot suppresses Discord's link-preview embed, attaches the article's lead image, and reposts the article body text as a blockquote inside a thread on the bot's message.
 - **iGPU & Local CPU Media Compressor**: Automatically compresses oversized video attachments to fit Discord's file size limits. The transcoding pipeline tries (in order): a local iGPU VAAPI stage on supported hosts, and finally a local CPU `libx264 ultrafast` fallback. The old remote NAS network-transcoder stage has been REMOVED (the bot now runs entirely on the N150 host). The local iGPU stage is automatically detected at runtime for Intel N100 / N150 hosts and uses the host's `/dev/dri/renderD128` VAAPI render node for hardware HEVC encoding. See [Intel N100 / N150 iGPU build](#intel-n100--n150-igpu-build-optional) below.
-- **System Message Updates**: Dynamically pulls the last 10 git updates (commit logs) and posts them as clickable GitHub links in a locked `📜 Updates Log` thread attached to the system help message on every restart, keeping the main message uncluttered (just a pointer link + "Last updated" timestamp).
+- **System Message Updates**: Posts the last 10 git updates (commit logs) as clickable GitHub links in a locked `📜 Updates Log` thread attached to the system help message on every restart, keeping the main message uncluttered (just a pointer link + "Last updated" timestamp). The list is read from `git-info.json` — a file that `rebuild-run.sh` bakes into the image on every deploy from exactly the commit being deployed — so the thread always names the code the bot is actually running. On self-hosted installs without a baked file (fresh clones) it falls back to a live `git log` in your checkout, and to a small static list as a last resort.
 - **Natural 1 Roasting**: Integrates with the local Ollama LLM (`qwen2.5:7b` by default) to generate snarky roasts when players roll a critical fail (Nat 1).
 - **RAG QA Mention Pipeline (DeepSeek-primary)**: Answer player questions using web-search context from the local SearXNG instance and recent channel chat history. **DeepSeek is the primary model** while a user has quota (`src/utils/quota.js`, regular + admin tiers); answers are accepted directly (no quality estimation). When quota is exhausted or DeepSeek fails, a single local Ollama attempt (`qwen2.5:7b`) is used. Include `"no bs"` in mentions for short, direct responses.
 - **Monthly Scheduler**: Cron scheduling for monthly miniature queues with a randomized set of fantasy prompts.
@@ -79,16 +79,58 @@ _Note: If Ollama or SearXNG are offline or unreachable, the bot will gracefully 
 
 ### Running the Bot (Recommended: Docker)
 
-The easiest way to build, run, and update the bot is using the provided Docker configuration. This ensures all dependencies are managed correctly inside the container.
-
-To deploy or update the bot, simply run the helper script:
+The easiest way to build, run, and update the bot is the provided `rebuild-run.sh` deploy script. It is self-contained: it works from any directory, runs with or without `sudo` (it escalates itself when needed), and is safe to re-run — a second run simply deploys the current state again.
 
 ```bash
-chmod +x rebuild-run.sh
-./rebuild-run.sh
+git clone https://github.com/sneakyjoeru/ttrpg-librarian-bot.git
+cd ttrpg-librarian-bot
+# one-time: fill in secrets_discord.php (see Configuration above)
+./rebuild-run.sh          # or: sudo ./rebuild-run.sh
 ```
 
-This script will automatically stop and remove any existing container named `librarian-bot`, rebuild the image, and start a new detached, self-restarting container. The script mounts the host's Docker socket (`/var/run/docker.sock`) and code volume dynamically so that the bot can perform administrative rebuilds and self-restarts via the `/restart` slash command.
+The script runs a six-step pipeline and prints one status line per step, ending with a single verdict line you can grep for:
+
+```
+[deploy 1/6] env ok — iGPU render node present ...
+[deploy 2/6] git sync: main 1c07bfd -> 7d380e7 — resetting to origin/main.
+[deploy 3/6] baked git-info.json commit=7d380e7 (history: 12 commits)
+[deploy 4/6] build done
+[deploy 5/6] ...
+[deploy 6/6] verified: container running (restarts=0), baked commit=7d380e7, ready signal seen
+DEPLOY OK commit=7d380e7 image=sha256:....
+```
+
+What each step does (and why):
+
+1. **env** — checks Docker (and passwordless sudo, if you ran it without), detects the Intel iGPU VAAPI render node for transcoding.
+2. **git sync** — `fetch` + reset of the deploy tree to `origin/main`, so the commit baked into the image is the commit you pushed. On a fresh clone this is a no-op (you are already at the upstream HEAD). If the tree has local edits you want in the image, run with `--local` (below). The fetch is non-interactive and time-limited: a dead network fails this step instead of hanging the deploy.
+3. **bake** — regenerates `git-info.json` (last commit + 30 days of history) from the deployed commit. This file is the authoritative source of the `📜 Updates Log` thread message and is visible inside the container at `/usr/src/app/git-info.json`.
+4. **build** — builds the Docker image. The old container **keeps running until the build succeeds** — a failed build never takes the bot down.
+5. **swap** — stops the old container and starts the new one (detached, `--restart unless-stopped`), attaching the shared `ollama_default` network when present. The script mounts the host's Docker socket and the repository directory dynamically so the bot can perform administrative rebuilds and self-restarts via the `/restart` slash command.
+6. **verify** — confirms the container is running, that the baked commit inside the container matches the deployed commit, and that the bot's startup banner appears in the logs.
+
+Flags:
+
+| flag | effect |
+|---|---|
+| *(none)* | full deploy: git sync → bake → build → swap → verify |
+| `--local` | skip the git sync and build the tree exactly as it sits on disk — for local edits, offline hosts, or directories that are not git checkouts |
+| `--status` | read-only report (branch vs `origin/main`, baked commit, container state, lock, rebuild timestamp). Takes no lock, changes nothing. |
+
+Verification after a deploy (all of these should agree on the same commit):
+
+```bash
+./rebuild-run.sh --status
+docker exec librarian-bot cat /usr/src/app/git-info.json
+docker logs --tail 30 librarian-bot
+```
+
+Reliability notes (each encodes a real outage):
+
+- A new run takes over a stale `rebuild.lock` (left behind when a previous run died) and preempts a live one — a newer rebuild supersedes an older one.
+- `rebuild_time.txt` is written fresh on every deploy, so the bot's catch-up scan covers exactly the downtime of this rebuild.
+- A background guard re-checks source files on disk ~2 and ~10 minutes after boot and prints a loud `STALE-CODE WARNING` with the exact command to run if the running process ends up on a different file version than the disk (possible when the directory is also synced from another machine).
+- If the script reports `DEPLOY FAILED step=N reason=...`, the running bot is still on its previous image — fix the cause and re-run.
 
 ### Running Locally (Alternative: Node.js)
 

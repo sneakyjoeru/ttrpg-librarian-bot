@@ -1,4 +1,5 @@
 const { execSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 /**
@@ -219,10 +220,20 @@ function isHistoryOrAnalysisQuery(query) {
 }
 
 /**
- * Dynamically fetches the last `count` git updates (older to newer with
- * dates) or falls back to a default 3-item list. `count` is clamped to
- * [1, 50] to avoid huge pastes and accidental shell-injection from a
- * surprising caller.
+ * Fetches the last `count` git updates (older to newer with dates),
+ * preferring the baked `git-info.json` over a live `git log`, and falling
+ * back to a default 3-item list when neither is available. `count` is
+ * clamped to [1, 50] to avoid huge pastes and accidental shell-injection
+ * from a surprising caller.
+ *
+ * Source order:
+ *   1. Baked git-info.json (history array) — written by rebuild-run.sh on
+ *      every deploy from exactly the commit being deployed, so the thread
+ *      always names the code the bot is actually running. Absent in fresh
+ *      self-hosted clones (gitignored), where source 2 applies.
+ *   2. Live `git log` in the repository — works on self-hosted installs
+ *      where the deployment directory is a git checkout.
+ *   3. Static fallback list (last resort, so the message is never empty).
  *
  * Output is kept compact so it fits Discord's 2000-char message limit even
  * with 10 entries: commit URLs use the SHORT hash (GitHub redirects short
@@ -239,6 +250,36 @@ function getLastUpdates(count = 5) {
         '- 2026-06-11: Updated documentation ([e5f6g7h](https://github.com/sneakyjoeru/ttrpg-librarian-bot/commit/e5f6g7h))',
         '- 2026-06-11: Displayed updates in system message ([i9j0k1l](https://github.com/sneakyjoeru/ttrpg-librarian-bot/commit/i9j0k1l))'
     ];
+
+    // 1) Baked release notes (authoritative for deployed images).
+    try {
+        const repoPath = path.resolve(__dirname, '..', '..');
+        const infoPath = path.join(repoPath, 'git-info.json');
+        if (fs.existsSync(infoPath)) {
+            const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+            const history = Array.isArray(info.history) ? info.history : [];
+            const entries = history.length > 0
+                ? history
+                : (info && info.hash && info.hash !== 'unknown'
+                    ? [{ hash: info.hash, date: info.date || '', message: info.message }]
+                    : []);
+            if (entries.length > 0) {
+                // Baked history is newest-first; flip to older-first like git log.
+                return entries.slice(0, safeCount).reverse().map(entry => {
+                    const safeSubject = ((entry.message || '(no subject)') + '').replace(/\|/g, '\\|');
+                    const trimmed = safeSubject.length > MAX_SUBJECT_LEN
+                        ? safeSubject.slice(0, MAX_SUBJECT_LEN - 1) + '…'
+                        : safeSubject;
+                    const date = entry.date || '';
+                    return `- ${date}: ${trimmed} ([${entry.hash}](${UPDATES_REPO_URL}/${entry.hash}))`;
+                }).join('\n');
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to read baked git-info.json:', e.message);
+    }
+
+    // 2) Live git log (self-hosted installs with a real git checkout).
     try {
         const repoPath = path.resolve(__dirname, '..', '..');
         // Tab-separated fields (%x09) so we can parse reliably and rebuild
