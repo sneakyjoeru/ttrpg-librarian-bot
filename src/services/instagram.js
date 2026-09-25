@@ -282,7 +282,7 @@ function collectMediaItemsFromMediaObject(media) {
     return ordered.length ? ordered : null;
 }
 
-function extractMediaFromEmbeddedJson(html) {
+function extractMediaFromEmbeddedJson(html, shortcode) {
     const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
     let m;
     while ((m = scriptRe.exec(html)) !== null) {
@@ -298,6 +298,14 @@ function extractMediaFromEmbeddedJson(html) {
         const media = extractJsonValueForKey(text, 'xdt_shortcode_media')
             || extractJsonValueForKey(text, 'shortcode_media');
         if (media) {
+            // A feed/login-wall page can embed SOME post's shortcode_media.
+            // When the request names a post and this object provably belongs to
+            // a different one, skip it instead of posting a stranger's media.
+            const own = media.code || media.shortcode;
+            if (shortcode && own && own !== shortcode) {
+                console.log(`[Instagram Interceptor] Ignoring embedded shortcode_media for ${own} (wanted ${shortcode}).`);
+                continue;
+            }
             const items = collectMediaItemsFromMediaObject(media);
             if (items && items.length) return items;
         }
@@ -328,7 +336,7 @@ function extractMediaByShortcodeFromHtml(html, shortcode) {
 }
 
 function extractInstagramMediaFromHtml(html, shortcode) {
-    const structured = extractMediaFromEmbeddedJson(html);
+    const structured = extractMediaFromEmbeddedJson(html, shortcode);
     if (structured && structured.length > 0) {
         return structured;
     }
@@ -336,6 +344,18 @@ function extractInstagramMediaFromHtml(html, shortcode) {
     const byShortcode = extractMediaByShortcodeFromHtml(html, shortcode);
     if (byShortcode && byShortcode.length > 0) {
         return byShortcode;
+    }
+
+    // Everything below is UNSCOPED: it collects every media URL in the page.
+    // Instagram's logged-out / login-wall response (and the Explore feed) embeds
+    // OTHER posts' `video_versions`, so an unscoped scan makes the bot post a
+    // stranger's reel as if it were the link's content (same defect fixed in
+    // discord-joe on 2026-09-25). We know which post we want and both scoped
+    // parses above failed, so this page does not carry that post's media object:
+    // refuse rather than guess.
+    if (shortcode) {
+        console.log(`[Instagram Interceptor] Page carries no media object for ${shortcode} — refusing unscoped media (login wall / preloaded feed).`);
+        return [];
     }
 
     const ordered = [];
