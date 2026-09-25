@@ -97,6 +97,20 @@ const IGPU_VIDEO_BITRATE_MULTIPLIERS = [0.80, 0.65, 0.50, 0.35]; // Same ladder 
 const IGPU_MAX_VIDEO_BITRATE = 4000000;             // 4M ceiling — keeps the bitrate sane on the iGPU
 const IGPU_MIN_VIDEO_BITRATE = 150000;              // 150k floor — don't go below this on tiny clips
 
+// === cobalt (self-hosted media resolver) — extra download tier === //
+// cobalt (https://github.com/imputnet/cobalt) runs as the `cobalt-api`
+// container on the bots host (n150, 192.168.0.99:9000) and is used as an
+// ADDITIONAL attempt in the Instagram / Facebook / TikTok chains: one POST /
+// with the source URL returns either a direct CDN file or a cobalt tunnel URL.
+// Set COBALT_API_URL to an empty string to disable the tier.
+const COBALT_API_URL = process.env.COBALT_API_URL !== undefined
+    ? process.env.COBALT_API_URL
+    : 'http://192.168.0.99:9000/';
+// Optional instance api key (`Authorization: Api-Key <key>`); empty = no auth.
+const COBALT_API_KEY = process.env.COBALT_API_KEY || '';
+// cobalt resolves synchronously, so this covers resolve + file download.
+const COBALT_TIMEOUT_MS = parseInt(process.env.COBALT_TIMEOUT_MS || '45000', 10);
+
 const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
 // Random, distinct, single-glyph emojis used as voting reactions when a
@@ -374,6 +388,9 @@ module.exports = {
     IGPU_VIDEO_BITRATE_MULTIPLIERS,
     IGPU_MAX_VIDEO_BITRATE,
     IGPU_MIN_VIDEO_BITRATE,
+    COBALT_API_URL,
+    COBALT_API_KEY,
+    COBALT_TIMEOUT_MS,
     deepseekApiKey,
     DEEPSEEK_API_URL,
     DEEPSEEK_MODEL

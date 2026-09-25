@@ -22,6 +22,7 @@ const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT, FILE_SIZE_SAFETY_FACTOR, PROGRESS_U
 const { sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage, finalizePlaceholderClean } = require('../utils/webhook');
 const { inFlightPlaceholders } = require('../utils/inFlightTracker');
 const { runCommand, findYtDlpPath, cookiesFlagForYtDlp } = require('../utils/shell');
+const { downloadWithCobalt } = require('../services/cobaltService');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
 const mediaQueue = require('../utils/mediaQueue');
 const { detectFileType } = require('../utils/fileTypeDetector');
@@ -31,6 +32,7 @@ const { startJob } = require('../utils/jobLog');
 // result footer ("Источник загрузки: ...").
 const FB_SCRAPE_LABELS = {
     'ytdlp': 'yt-dlp',
+    'cobalt': 'cobalt',
     'fixer': 'Fixer (fdown.net)',
     'generic': 'Generic og:video/og:image scrape',
     'restricted-fallback': 'Restricted fallback',
@@ -493,14 +495,35 @@ async function handleFacebookMessage(client, message, facebookUrl, remadeContent
                 }
             };
 
+            // cobalt runs its own Facebook extractor; strictly additive (any
+            // unsupported link shape or error just falls through).
+            const runCobalt = async () => {
+                await updatePlaceholderStage(placeholder, `working... <${facebookUrl}>\nstage: cobalt`);
+                const result = await downloadWithCobalt(facebookUrl, {
+                    namePrefix: 'facebook_media',
+                    log: (m) => console.log(`[Facebook Interceptor] ${m}`)
+                });
+                if (result && result.length > 0) {
+                    if (result.isRestrictedVideoFallback) {
+                        if (!fallbackAttachments) fallbackAttachments = result;
+                    } else {
+                        attachments = result;
+                        downloadSuccess = true;
+                        successfulSource = 'cobalt';
+                        console.log(`[Facebook Interceptor] cobalt downloaded ${attachments.length} media item(s).`);
+                    }
+                }
+            };
+
             try {
                 console.log(`[Facebook Interceptor] Facebook URL detected: ${facebookUrl} (isReel=${isReel})`);
                 // yt-dlp is the most reliable source for Facebook public content:
                 // its FB extractor pulls the original mp4 directly from fbcdn.net, so the
                 // user sees the actual reel/post video — not a fixer-branded preview.
-                // Fixers (currently only fdown.net) are kept as a fallback for the rare
-                // case where yt-dlp fails (e.g. login wall or geo-restriction).
+                // cobalt is the second opinion; fixers (fdown.net) and the generic
+                // og: scrape follow.
                 await runYtDlp();
+                if (!downloadSuccess) await runCobalt();
                 if (!downloadSuccess) await runFixers();
                 if (!downloadSuccess) await runGenericScrape();
 

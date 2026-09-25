@@ -22,6 +22,7 @@ const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT, FILE_SIZE_SAFETY_FACTOR, PROGRESS_U
 const { sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage, finalizePlaceholderClean } = require('../utils/webhook');
 const { inFlightPlaceholders } = require('../utils/inFlightTracker');
 const { runCommand, findYtDlpPath, cookiesFlagForYtDlp } = require('../utils/shell');
+const { downloadWithCobalt } = require('../services/cobaltService');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
 const mediaQueue = require('../utils/mediaQueue');
 const { detectFileType } = require('../utils/fileTypeDetector');
@@ -32,6 +33,7 @@ const { startJob } = require('../utils/jobLog');
 const TT_SCRAPE_LABELS = {
     'tikwm': 'tikwm.com API',
     'ytdlp': 'yt-dlp',
+    'cobalt': 'cobalt',
     'generic': 'Generic og:video/og:image scrape',
     'restricted-fallback': 'Restricted fallback',
 };
@@ -388,14 +390,35 @@ async function handleTiktokMessage(client, message, tiktokUrl, remadeContent, re
                 }
             };
 
+            // cobalt runs its own TikTok extractor; strictly additive.
+            const runCobalt = async () => {
+                await updatePlaceholderStage(placeholder, `working... <${tiktokUrl}>\nstage: cobalt`);
+                const result = await downloadWithCobalt(tiktokUrl, {
+                    namePrefix: 'tiktok_media',
+                    log: (m) => console.log(`[TikTok Interceptor] ${m}`)
+                });
+                if (result && result.length > 0) {
+                    if (result.isRestrictedVideoFallback) {
+                        if (!fallbackAttachments) fallbackAttachments = result;
+                    } else {
+                        attachments = result;
+                        downloadSuccess = true;
+                        successfulSource = 'cobalt';
+                        console.log(`[TikTok Interceptor] cobalt downloaded ${attachments.length} media item(s).`);
+                    }
+                }
+            };
+
             try {
                 console.log(`[TikTok Interceptor] TikTok URL detected: ${tiktokUrl}`);
                 // tikwm.com is the most reliable TikTok source (watermark-free
                 // mp4, full photo carousels, resolves short share links);
-                // yt-dlp covers plain videos when tikwm is down; the generic
-                // og: scrape usually only yields the poster image.
+                // yt-dlp covers plain videos when tikwm is down; cobalt is the
+                // second opinion; the generic og: scrape usually only yields the
+                // poster image.
                 await runTikwm();
                 if (!downloadSuccess) await runYtDlp();
+                if (!downloadSuccess) await runCobalt();
                 if (!downloadSuccess) await runGenericScrape();
 
                 if (!downloadSuccess && fallbackAttachments) {

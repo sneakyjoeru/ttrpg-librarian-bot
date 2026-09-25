@@ -8,6 +8,7 @@ const { RAG_TYPING_INTERVAL, FFMPEG_TIMEOUT, FILE_SIZE_SAFETY_FACTOR } = require
 const { sendRepostedMessage, sendWorkingPlaceholder, updateWorkingPlaceholder, updatePlaceholderStage, finalizePlaceholderClean } = require('../utils/webhook');
 const { runCommand, findYtDlpPath, cookiesFlagForYtDlp } = require('../utils/shell');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
+const { downloadWithCobalt } = require('./cobaltService');
 const mediaQueue = require('../utils/mediaQueue');
 const { detectFileType } = require('../utils/fileTypeDetector');
 
@@ -1722,6 +1723,7 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                     const parallelResults = await Promise.race([
                         raceToBestSuccess([
                             downloadWithYtDlp(downloadUrl),
+                            downloadWithCobalt(downloadUrl, { namePrefix: 'instagram_media', expectVideo: isReelOrTv }),
                             downloadWithScrapers(downloadUrl)
                         ]),
                         timeoutPromise
