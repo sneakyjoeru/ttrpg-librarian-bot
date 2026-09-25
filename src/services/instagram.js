@@ -10,7 +10,7 @@ const { runCommand, findYtDlpPath, cookiesFlagForYtDlp } = require('../utils/she
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
 const { downloadWithCobalt } = require('./cobaltService');
 const mediaQueue = require('../utils/mediaQueue');
-const { detectFileType } = require('../utils/fileTypeDetector');
+const { detectFileType, isImageFile } = require('../utils/fileTypeDetector');
 
 const INSTAGRAM_BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -1514,7 +1514,10 @@ async function downloadWithScrapers(downloadUrl) {
                 const buffer = Buffer.from(response.data);
                 const contentType = response.headers['content-type'] || '';
                 let ext = 'jpg';
-                if (contentType.includes('video/mp4')) ext = 'mp4';
+                // A URL that merely contains ".mp4" must not turn a cover JPEG
+                // into a fake video (same guard as downloadWithFixer).
+                if (isImageFile(buffer)) ext = detectFileType(buffer);
+                else if (contentType.includes('video/mp4')) ext = 'mp4';
                 else if (contentType.includes('image/png')) ext = 'png';
                 else if (contentType.includes('image/gif')) ext = 'gif';
                 else if (contentType.includes('video/')) ext = 'mp4';
@@ -1611,11 +1614,27 @@ async function downloadWithFixer(instagramUrl, domain) {
         const buffer = Buffer.from(mediaRes.data);
 
         const contentType = mediaRes.headers['content-type'] || '';
+
+        // The bytes are the authority, not the mirror's markup. InstaFix-style
+        // mirrors (uuinstagram) answer a blocked/gated Reel with a placeholder
+        // page that declares `og:video ... type=video/mp4` (og:video:width and
+        // :height are 0) while the URL it points at serves the JPEG cover —
+        // naming that .mp4 hands Discord an unplayable "video". Only a positive
+        // image signature downgrades the result, so a real mp4 whose ftyp brand
+        // this sniffer does not know is never demoted.
+        if (isVideo && isImageFile(buffer)) {
+            console.log(`[Instagram Interceptor] ${domain} claimed a video but served ${detectFileType(buffer)} (${buffer.length}B) — not posting it as mp4.`);
+            isVideo = false;
+            isRestrictedVideoFallback = true;
+        }
+
         let ext = 'jpg';
         if (isVideo) {
             ext = 'mp4';
         } else {
-            if (contentType.includes('image/png')) ext = 'png';
+            const sniffed = detectFileType(buffer);
+            if (sniffed) ext = sniffed;
+            else if (contentType.includes('image/png')) ext = 'png';
             else if (contentType.includes('image/gif')) ext = 'gif';
             else if (contentType.includes('image/jpeg')) ext = 'jpg';
         }
@@ -1771,13 +1790,17 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
             try {
                 console.log(`[Instagram Interceptor] Instagram URL detected: ${instagramUrl} (downloading from ${downloadUrl})`);
 
-                // 1. For Reels/TV: try fixers FIRST — they return properly-sized MP4s.
+                // 1. For Reels/TV: run the API-speaking resolvers (cobalt +
+                //    yt-dlp, see runParallelScrapers) FIRST. The InstaFix-style
+                //    mirrors are a last resort now: they answer blocked Reels
+                //    with a cover-image placeholder that claims to be an mp4.
                 if (isReelOrTv) {
-                    await runFixers();
+                    await runParallelScrapers();
                 }
 
-                // 2. If fixers didn't succeed (not a Reel/TV, or fixers failed), try
-                //    direct authenticated scrape (best for full slideshows + reels, requires cookies).
+                // 2. If the first tier didn't succeed (not a Reel/TV, or it
+                //    failed), try direct authenticated scrape (best for full
+                //    slideshows + reels, requires cookies).
                 if (!downloadSuccess && hasCookies) {
                     try {
                         await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: direct instagram scrape`);
@@ -1800,8 +1823,8 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                 // 3. If still not successful, try the remaining strategy based on content type
                 if (!downloadSuccess) {
                     if (isReelOrTv) {
-                        console.log(`[Instagram Interceptor] Fixers failed or returned restricted fallback. Trying parallel scrapers...`);
-                        await runParallelScrapers();
+                        console.log(`[Instagram Interceptor] API resolvers failed. Falling back to fixers...`);
+                        await runFixers();
                     } else {
                         await runParallelScrapers();
                         if (!downloadSuccess) {
