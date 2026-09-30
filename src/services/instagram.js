@@ -1945,8 +1945,12 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                 if (downloadSuccess) {
                     const successText = cleanedRemadeContent.replace(instagramUrl, `<${standardUrl}>`);
                     if (attachments.isRestrictedVideoFallback) {
-                        const privateSuppressedText = cleanedRemadeContent.replace(instagramUrl, `[PRIVATE VIDEO, ACCESS ONLY VIA LINK]\n<${standardUrl}>`);
-                        await updateWorkingPlaceholder(placeholder, privateSuppressedText, attachments, true, effectiveFileLimit, fallbackContent);
+                        // Every tier returned only (or nothing but) the reel's cover
+                        // frame — Instagram hands the bot accounts no video bytes for
+                        // this post. Say so instead of dressing the cover up as the
+                        // video; the link still plays it for anyone who can watch it.
+                        const unavailableText = cleanedRemadeContent.replace(instagramUrl, `Video is unavailable for embedding.\n<${standardUrl}>`);
+                        await updateWorkingPlaceholder(placeholder, unavailableText, attachments, true, effectiveFileLimit, fallbackContent);
                     } else {
                         await updateWorkingPlaceholder(placeholder, successText, attachments, true, effectiveFileLimit, fallbackContent);
                     }

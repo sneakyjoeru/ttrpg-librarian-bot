@@ -12,7 +12,7 @@
 // This test drives the real handleInstagramMessage with a stubbed network and
 // asserts:
 //   1. a mirrored og:video that serves image bytes is never named .mp4 and is
-//      treated as a restricted fallback;
+//      reported as "Video is unavailable for embedding.";
 //   2. a genuine mp4 still comes through as .mp4 with no fallback notice;
 //   3. for Reels the API resolvers (cobalt) are tried before the mirrors.
 //
@@ -162,14 +162,14 @@ async function runCase(label, media, expectExt, expectPrivateNotice) {
     const text = captured.text || '';
     console.log(`\n── ${label}`);
     console.log(`   attachments: ${JSON.stringify(names)}`);
-    console.log(`   notice:      ${text.includes('PRIVATE VIDEO') ? 'PRIVATE VIDEO, ACCESS ONLY VIA LINK' : '(none)'}`);
+    console.log(`   notice:      ${text.includes('Video is unavailable for embedding') ? 'Video is unavailable for embedding.' : '(none)'}`);
     console.log(`   call order:  ${events.join(' → ') || '(none)'}`);
 
     assert.ok(atts.length > 0, `${label}: expected an attachment`);
     assert.strictEqual(names[0], `instagram_media_0.${expectExt}`,
         `${label}: expected instagram_media_0.${expectExt}, got ${names[0]}`);
-    assert.strictEqual(text.includes('PRIVATE VIDEO'), expectPrivateNotice,
-        `${label}: private-video notice mismatch`);
+    assert.strictEqual(text.includes('Video is unavailable for embedding'), expectPrivateNotice,
+        `${label}: unavailable-video notice mismatch`);
     return events.slice();
 }
 

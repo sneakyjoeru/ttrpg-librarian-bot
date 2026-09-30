@@ -26,10 +26,12 @@ function extractPlaceholderBaseContent(content) {
     // Strip the `working... <url>` prefix that the bot prepends to placeholders.
     // Matches `working...` optionally followed by a wrapped/unwraped URL + newline.
     text = text.replace(/^working\.\.\.\s*(?:<[^>]*>)?\s*\n?/i, '');
-    // Strip stale `[PRIVATE VIDEO, ACCESS ONLY VIA LINK]` markers left by a
-    // previous restricted-fallback run (catch-up reuses the old placeholder text
-    // as remadeContent, so this marker would otherwise pollute the repost).
+    // Strip stale restricted-video markers left by a previous run (catch-up
+    // reuses the old placeholder text as remadeContent, so the marker would
+    // otherwise pollute the repost). `[PRIVATE VIDEO, ACCESS ONLY VIA LINK]`
+    // is the pre-2026-09-30 wording; keep stripping it for old placeholders.
     text = text.replace(/\[PRIVATE VIDEO, ACCESS ONLY VIA LINK\]\s*/gi, '');
+    text = text.replace(/^Video is unavailable for embedding\.\s*$/gim, '');
     // Strip the `stage:` portion (and everything after it).
     text = text.replace(/(?:^|\n)stage:[\s\S]*$/i, '');
     return text.trimEnd();
