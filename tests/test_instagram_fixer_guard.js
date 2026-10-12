@@ -24,6 +24,19 @@ const assert = require('assert');
 
 const REEL = 'https://instagram.com/reel/DdqlRS4Rrug/';
 
+// --- cropped-rendition fixture (2026-10-12) ---------------------------------
+// Bug: a mirror's og:image is the CDN's signed 640x640 crop
+// (`stp=c327.0.984.983a_dst-jpg_e35_s640x640_tt6`), so a portrait post was
+// posted with the bottom of the frame sliced off. Instagram's own
+// /p/<sc>/media/?size=l 302s to the same photo with `stp=dst-jpg_e35_p1080x1080`
+// — the full frame. This file asserts the bot re-resolves to that URL instead of
+// downloading the crop.
+const PHOTO = 'https://instagram.com/p/DeCropTest/';
+const CROPPED_RENDITION = 'https://scontent-hel3-1.cdninstagram.com/v/t39.30808-6/cropped_n.jpg?stp=c327.0.984.983a_dst-jpg_e35_s640x640_tt6&_nc_ht=scontent-hel3-1.cdninstagram.com&oh=sig&oe=1';
+const FULL_FRAME_RENDITION = 'https://scontent-hel3-1.cdninstagram.com/v/t39.30808-6/full_n.jpg?stp=dst-jpg_e35_p1080x1080_sh2.08_tt6&_nc_ht=scontent-hel3-1.cdninstagram.com&oh=sig&oe=1';
+const CROPPED_BYTES = 44124;   // 640x640 square
+const FULL_BYTES = 168592;     // 1080x1350 full frame
+
 // --- fixtures ---------------------------------------------------------------
 // Smallest buffers that carry each magic signature (detectFileType reads the
 // first 12 bytes). The sizes are padded to look like real payloads.
@@ -57,6 +70,29 @@ const axiosStub = {
         }
         if (/\/videos\/DdqlRS4Rrug\/1/.test(url)) {
             return captured.media;
+        }
+        // Cropped-rendition case: the mirror hands back a cropped og:image, and
+        // Instagram's media endpoint answers with the full-frame signed URL.
+        if (/uuinstagram\.com\/p\/DeCropTest/.test(url)) {
+            events.push('fixer:uuinstagram');
+            return {
+                status: 200,
+                headers: { 'content-type': 'text/html' },
+                data: `<html><head><meta property="og:image" content="${CROPPED_RENDITION.replace(/&/g, '&amp;')}"/>`
+                    + `<meta property="og:image:width" content="640"/></head></html>`
+            };
+        }
+        if (/instagram\.com\/p\/DeCropTest\/media\/\?size=l/.test(url)) {
+            events.push('fullframe:media-endpoint');
+            return { status: 302, headers: { location: FULL_FRAME_RENDITION }, data: '' };
+        }
+        if (url === CROPPED_RENDITION) {
+            events.push('download:cropped');
+            return { status: 200, headers: { 'content-type': 'image/jpeg' }, data: jpegBuffer(CROPPED_BYTES) };
+        }
+        if (url === FULL_FRAME_RENDITION) {
+            events.push('download:fullframe');
+            return { status: 200, headers: { 'content-type': 'image/jpeg' }, data: jpegBuffer(FULL_BYTES) };
         }
         // ee/kkinstagram, raw instagram.com fetches and anything else: fail.
         throw new Error(`stub: unexpected GET ${url}`);
@@ -187,5 +223,27 @@ async function runCase(label, media, expectExt, expectPrivateNotice) {
     assert.ok(fixerAt !== -1, 'fixer mirror was never tried for a Reel');
     assert.ok(cobaltAt < fixerAt, `Reel tier order wrong: ${order.join(' → ')}`);
 
-    console.log('\nPASS — 3/3');
+    // 4. Cropped mirror rendition is replaced by the full-frame media endpoint.
+    events.length = 0;
+    captured.media = null;
+    captured.attachments = null;
+    captured.text = null;
+    queuedJob = null;
+    await handleInstagramMessage({}, fakeMessage(PHOTO), PHOTO, PHOTO);
+    if (queuedJob) await queuedJob;
+
+    const cropAtts = captured.attachments || [];
+    const cropNames = cropAtts.map(a => a.name);
+    const cropBytes = cropAtts.length ? cropAtts[0].attachment.length : 0;
+    console.log(`\n── mirror og:image → cropped 640x640 rendition`);
+    console.log(`   attachments: ${JSON.stringify(cropNames)} (${cropBytes} bytes)`);
+    console.log(`   call order:  ${events.join(' → ') || '(none)'}`);
+    assert.ok(cropAtts.length > 0, 'cropped-rendition case: expected an attachment');
+    assert.strictEqual(cropNames[0], 'instagram_media_0.jpg', `cropped-rendition case: expected instagram_media_0.jpg, got ${cropNames[0]}`);
+    assert.ok(events.includes('fullframe:media-endpoint'), 'cropped-rendition case: the full-frame media endpoint was never queried');
+    assert.ok(events.includes('download:fullframe'), 'cropped-rendition case: the full-frame rendition was never downloaded');
+    assert.ok(!events.includes('download:cropped'), 'cropped-rendition case: the cropped rendition was posted');
+    assert.strictEqual(cropBytes, FULL_BYTES, `cropped-rendition case: expected the ${FULL_BYTES}-byte full frame, got ${cropBytes} bytes`);
+
+    console.log('\nPASS — 4/4');
 })().catch(e => { console.error('\nFAIL —', e.message); process.exit(1); });

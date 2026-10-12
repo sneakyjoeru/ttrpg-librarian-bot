@@ -1542,6 +1542,42 @@ async function downloadWithScrapers(downloadUrl) {
     return null;
 }
 
+// Instagram's CDN carries the rendition transform in the `stp` query param:
+//   stp=c<h>.<w>.<x>.<y>a_dst-jpg_e35_s640x640_tt6   → crop a rect, then clamp to 640
+//   stp=dst-jpg_e35_p1080x1080_sh2.08_tt6            → no crop, full frame
+// The mirrors hand their og:image straight from the first form, so a portrait
+// post arrived as a 640x640 square with the bottom of the frame sliced off.
+// Rewriting the params is not an option: oh/oe sign the whole query string and
+// every variant 403s (measured), so a cropped rendition must be re-resolved.
+function isCroppedRendition(mediaUrl) {
+    const m = /[?&]stp=([^&"']+)/i.exec(mediaUrl || '');
+    if (!m) return false;
+    const stp = m[1];
+    if (/^c\d/i.test(stp)) return true;                     // explicit crop rect
+    const s = /_s(\d{3,4})x(\d{3,4})_/.exec(stp);
+    return !!s && Math.max(+s[1], +s[2]) < 1080;            // preview size clamp
+}
+
+// Fresh signed URL for the FULL frame of a post/reel, straight from Instagram's
+// own media endpoint (302 → cdninstagram.com). Null when Instagram does not
+// answer guests (login-gated post).
+async function resolveFullResMediaUrl(shortcode, isReelOrTv) {
+    if (!shortcode) return null;
+    try {
+        const r = await axios.get(`https://www.instagram.com/${isReelOrTv ? 'reel' : 'p'}/${shortcode}/media/?size=l`, {
+            maxRedirects: 0,
+            validateStatus: s => s < 500,
+            timeout: 15000,
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' }
+        });
+        const loc = r.headers && r.headers.location;
+        if (r.status >= 300 && r.status < 400 && loc && /cdninstagram\.com|fbcdn\.net/i.test(loc) && !isCroppedRendition(loc)) return loc;
+    } catch (err) {
+        console.log(`[Instagram Interceptor] Full-frame endpoint failed: ${err.message}`);
+    }
+    return null;
+}
+
 async function downloadWithFixer(instagramUrl, domain) {
     const fixerUrl = instagramUrl.replace(/(www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com/, domain);
     console.log(`[Instagram Interceptor] Attempting prioritized ${domain} fetch: ${fixerUrl}`);
@@ -1600,7 +1636,21 @@ async function downloadWithFixer(instagramUrl, domain) {
             mediaUrl = `https://${domain}${mediaUrl}`;
         }
 
-        const cleanMediaUrl = mediaUrl.replace(/&amp;/g, '&');
+        let cleanMediaUrl = mediaUrl.replace(/&amp;/g, '&');
+        // Never post a rendition Instagram itself sliced: when the mirror handed
+        // back a URL whose stp directive carries a crop rect (or a sub-1080 size
+        // clamp), re-resolve the full frame through Instagram's own media
+        // endpoint. Images only — for Reels/TV the image is an acknowledged
+        // poster fallback, not the user's content.
+        if (!isVideo && isCroppedRendition(cleanMediaUrl)) {
+            const fullRes = await resolveFullResMediaUrl(getShortcodeFromUrl(instagramUrl), isReelOrTv);
+            if (fullRes) {
+                console.log(`[Instagram Interceptor] ${domain} gave a cropped/scaled rendition (stp crop); upgraded to the full-frame media endpoint URL.`);
+                cleanMediaUrl = fullRes;
+            } else {
+                console.warn(`[Instagram Interceptor] ${domain} gave only a cropped rendition and no full-frame source exists — keeping the preview.`);
+            }
+        }
         console.log(`[Instagram Interceptor] ${domain} resolved media URL: ${cleanMediaUrl}`);
 
         const mediaRes = await axios.get(cleanMediaUrl, {
