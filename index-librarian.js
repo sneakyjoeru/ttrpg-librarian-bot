@@ -6,7 +6,7 @@ if (process.stderr._handle && typeof process.stderr._handle.setBlocking === 'fun
     process.stderr._handle.setBlocking(true);
 }
 
-// Override console logging to prepend UTC timestamp (mirrors discord-joe's index.js)
+// Override console logging to prepend UTC timestamp (mirrors heyrobot-discord-bot's index.js)
 const originalLog = console.log;
 const originalWarn = console.warn;
 const originalError = console.error;
@@ -67,7 +67,7 @@ const watchdog = require('./src/utils/watchdog');
 // Process boot timestamp: a message created AFTER this process started can
 // never be "abandoned"/"missed" from a previous session — the live handler
 // owns it. Guards the startup cleanup + catch-up scans against racing a post
-// that arrives during boot (double-processing; observed on discord-joe).
+// that arrives during boot (double-processing; observed on heyrobot-discord-bot).
 const PROCESS_BOOT_TS = Date.now();
 
 const client = new Client({
@@ -95,17 +95,17 @@ client.once(Events.ClientReady, async () => {
     // Start watchdog — detects event loop blockage and forces restart
     watchdog.start({ timeoutMs: 120000, client: client, channelId: SYSTEM_CHANNEL_ID });
 
-    // Streamer-joe dashboard feature toggles (media_parsing/media_transcode/
+    // Heyrobot-Platform dashboard feature toggles (media_parsing/media_transcode/
     // news_parsing/llm_chat/knowledge_population). Best-effort: when
-    // streamer-joe is unreachable the defaults keep every active feature ON
-    // and knowledge_population OFF. Ported from discord-joe.
+    // heyrobot-platform is unreachable the defaults keep every active feature ON
+    // and knowledge_population OFF. Ported from heyrobot-discord-bot.
     try {
         const streamerJoe = require('./src/services/streamerJoe');
         streamerJoe.startDiscordFeaturesPoller().catch(err => {
-            console.warn('[StreamerJoe] initial flag fetch failed (using defaults):', err.message);
+            console.warn('[HeyrobotPlatform] initial flag fetch failed (using defaults):', err.message);
         });
     } catch (err) {
-        console.warn('[StreamerJoe] poller failed to start:', err.message);
+        console.warn('[HeyrobotPlatform] poller failed to start:', err.message);
     }
     // Per-guild language config: initial scan of channels + user messages
     // (skipped when a fresh config exists). Used to answer in the language of

@@ -408,7 +408,7 @@ async function handleTelegramMessage(client, message, telegramUrl, remadeContent
             }
 
             try {
-                // Media index selection (shared engine ported from discord-joe:
+                // Media index selection (shared engine ported from heyrobot-discord-bot:
                 // +N/N, -N, -l/-л/-п, N-M and comparison ranges, with sentence
                 // guards for bare numbers/ranges). See utils/mediaSelectors.js.
                 const { applyIndexSelection } = require('../utils/mediaSelectors');

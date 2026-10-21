@@ -15,9 +15,9 @@
 # to the `ollama_default` network, and this compose file attaches
 # browser-bot to the same network.
 #
-# ─── Sharing with discord-joe ─────────────────────────────────────────
-# discord-joe can use the SAME browser-bot container. Just connect
-# discord-joe to the ollama_default network as well (or run this compose
+# ─── Sharing with heyrobot-discord-bot ─────────────────────────────────────────
+# heyrobot-discord-bot can use the SAME browser-bot container. Just connect
+# heyrobot-discord-bot to the ollama_default network as well (or run this compose
 # on the host once — the container is shared, not per-bot).
 #
 # ─── Obfuscation note ─────────────────────────────────────────────────

@@ -1,9 +1,9 @@
-// streamerJoe.js — streamer-joe dashboard integration for the librarian bot.
+// streamerJoe.js — heyrobot-platform dashboard integration for the librarian bot.
 //
-// Two pieces, ported from discord-joe (siblingBots.js transport +
+// Two pieces, ported from heyrobot-discord-bot (siblingBots.js transport +
 // discordFeatures.js poller):
 //
-// 1. A TLS-aware HTTP transport: streamer-joe serves a self-signed cert on
+// 1. A TLS-aware HTTP transport: heyrobot-platform serves a self-signed cert on
 //    :8777 while STREAMER_JOE_API_URL may still say http:// — plain http gets
 //    "socket hang up". We try the https:// upgrade first and remember the
 //    first base that answers. Authenticated with X-Service-Key (SHARE_PASS).
@@ -11,7 +11,7 @@
 // 2. The Discord feature-flag poller: GET /api/internal/discord-configs every
 //    5 min; the first config with a non-empty `features` object wins (the
 //    operator's dashboard toggles steer the bot). Best-effort — when
-//    streamer-joe is unreachable the DEFAULT_FEATURES below apply, which keep
+//    heyrobot-platform is unreachable the DEFAULT_FEATURES below apply, which keep
 //    every currently active librarian feature ON.
 
 const https = require('https');
@@ -26,8 +26,8 @@ const DEFAULT_FEATURES = {
     media_transcode: true, // ffmpeg compression of oversized media
     news_parsing: true,    // news-article interceptor
     // NOTE: knowledge_population is deliberately absent — Discord→knowledge
-    // export is a discord-joe-only feature; the librarian never pushes its
-    // guild's messages to streamer-joe.
+    // export is a heyrobot-discord-bot-only feature; the librarian never pushes its
+    // guild's messages to heyrobot-platform.
 };
 
 const _BASE_CANDIDATES = [];
@@ -89,7 +89,7 @@ async function fetchDiscordFeatures() {
         lastFetchAt = Date.now();
     } catch (err) {
         if (lastFetchAt === 0) {
-            console.warn('[StreamerJoe] Could not reach streamer-joe (using default flags):', err.message);
+            console.warn('[HeyrobotPlatform] Could not reach heyrobot-platform (using default flags):', err.message);
         }
     } finally {
         pollInProgress = false;
@@ -100,7 +100,7 @@ async function startDiscordFeaturesPoller(pollMs = DEFAULT_POLL_MS) {
     if (pollTimer) clearInterval(pollTimer);
     await fetchDiscordFeatures();
     pollTimer = setInterval(fetchDiscordFeatures, pollMs);
-    console.log(`[StreamerJoe] Feature poller started (every ${Math.round(pollMs / 1000)}s) — ` +
+    console.log(`[HeyrobotPlatform] Feature poller started (every ${Math.round(pollMs / 1000)}s) — ` +
         Object.entries(cachedFeatures).filter(([, v]) => typeof v === 'boolean')
             .map(([k, v]) => `${k}=${v ? 'on' : 'off'}`).join(', '));
 }

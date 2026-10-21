@@ -1,5 +1,5 @@
 // YouTube transcript fetch via yt-dlp subtitle/caption extraction. Ported
-// verbatim from discord-joe's src/services/ytTranscript.js so the librarian
+// verbatim from heyrobot-discord-bot's src/services/ytTranscript.js so the librarian
 // bot's TL;DW feature behaves the same way (no YouTube Data API, no
 // third-party transcript scraper — just yt-dlp's own subtitle download).
 const fs = require('fs');

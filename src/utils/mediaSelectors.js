@@ -1,5 +1,5 @@
 // mediaSelectors.js — shared media index-selection engine, ported from
-// discord-joe (instagramHandler's selector block, minus the Instagram-only
+// heyrobot-discord-bot (instagramHandler's selector block, minus the Instagram-only
 // -s/-t OCR flags). One implementation for every platform handler so the
 // selector semantics can no longer drift between Instagram/Facebook/Telegram/
 // TikTok (they previously had three divergent copies — e.g. a single "-2"

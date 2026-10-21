@@ -483,7 +483,7 @@ async function handleTiktokMessage(client, message, tiktokUrl, remadeContent, re
             }
 
             try {
-                // Media index selection (shared engine ported from discord-joe:
+                // Media index selection (shared engine ported from heyrobot-discord-bot:
                 // +N/N, -N, -l/-л/-п, N-M and comparison ranges, with sentence
                 // guards for bare numbers/ranges). See utils/mediaSelectors.js.
                 const { applyIndexSelection } = require('../utils/mediaSelectors');

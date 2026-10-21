@@ -350,7 +350,7 @@ function extractInstagramMediaFromHtml(html, shortcode) {
     // Instagram's logged-out / login-wall response (and the Explore feed) embeds
     // OTHER posts' `video_versions`, so an unscoped scan makes the bot post a
     // stranger's reel as if it were the link's content (same defect fixed in
-    // discord-joe on 2026-09-25). We know which post we want and both scoped
+    // heyrobot-discord-bot on 2026-09-25). We know which post we want and both scoped
     // parses above failed, so this page does not carry that post's media object:
     // refuse rather than guess.
     if (shortcode) {
@@ -1974,7 +1974,7 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
             }
 
             try {
-                // Media index selection (shared engine ported from discord-joe:
+                // Media index selection (shared engine ported from heyrobot-discord-bot:
                 // +N/N, -N, -l/-л/-п, N-M and comparison ranges, with sentence
                 // guards for bare numbers/ranges). See utils/mediaSelectors.js.
                 const { applyIndexSelection } = require('../utils/mediaSelectors');

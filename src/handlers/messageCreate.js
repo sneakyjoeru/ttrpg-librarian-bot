@@ -30,7 +30,7 @@ const BULK_DELETE_MAX = 100;
 
 async function handleMessageCreate(client, message) {
     // Mark message as in-flight to prevent catch-up re-dispatch (mirrors
-    // discord-joe). If a real Discord message event is already being
+    // heyrobot-discord-bot). If a real Discord message event is already being
     // processed, the startup catch-up scanner must not re-dispatch the same
     // message id — that would run the Instagram/Twitter/Facebook/article
     // parsers a second time on the same link.
@@ -694,7 +694,7 @@ async function _handleMessageCreateInner(client, message) {
         }
 
         if (!isDiscordFeatureEnabled('llm_chat')) {
-            console.log('[StreamerJoe] llm_chat disabled — skipping RAG reply');
+            console.log('[HeyrobotPlatform] llm_chat disabled — skipping RAG reply');
             return;
         }
 
@@ -740,7 +740,7 @@ async function _handleMessageCreateInner(client, message) {
 
                 console.log(`[Mention] Role-mention fallback triggered by ${message.author.tag} (${message.author.id}) in ${message.channel.id}; matched role(s): ${matchedRoleIds.join(', ')}`);
                 if (!isDiscordFeatureEnabled('llm_chat')) {
-                    console.log('[StreamerJoe] llm_chat disabled — skipping RAG reply');
+                    console.log('[HeyrobotPlatform] llm_chat disabled — skipping RAG reply');
                     return;
                 }
 

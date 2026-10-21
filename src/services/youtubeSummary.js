@@ -1,4 +1,4 @@
-// TL;DW (YouTube video summarization) — ported from discord-joe's tldw
+// TL;DW (YouTube video summarization) — ported from heyrobot-discord-bot's tldw
 // pipeline in messageCreate.js. Fetches the video's transcript via yt-dlp
 // (src/services/ytTranscript.js) and summarizes it with the librarian bot's
 // existing DeepSeek-primary / Ollama-fallback LLM pipeline (mirrors rag.js).
@@ -23,7 +23,7 @@ const YOUTUBE_LINK_REGEX = /https?:\/\/(?:www\.)?(?:youtube\.com\/(?:[^\/]+\/.+\
 
 // Keywords that, combined with a reply-to-a-message-with-a-link, or a bare
 // bot mention with no link of its own, mean "summarize the video" rather than
-// a normal RAG question. Mirrors discord-joe's reviewKeywords set.
+// a normal RAG question. Mirrors heyrobot-discord-bot's reviewKeywords set.
 const TLDW_KEYWORDS = /(?:tl;?dw|tl;?dr|tldw|tldr|пересказ|перескажи|review|обзор|резюме|summary|summarize|содержание|о\s+чём\s+видео|что\s+в\s+видео|what'?s?\s+in\s+(?:the\s+|this\s+)?video|what\s+is\s+this\s+video\s+about|расскажи\s+(?:про\s+)?видео)/i;
 
 const CHUNK_SIZE = 80000; // chars per transcript chunk before we need a map-reduce summary
