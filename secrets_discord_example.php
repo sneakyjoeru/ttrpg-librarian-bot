@@ -12,6 +12,8 @@ $public_key    = '';
 $token         = '';   // This is the Bot Token (keep this very secure)
 $client_id     = '';
 $client_secret = '';
+$deepseek_api_key   = ''; // DeepSeek API key (cloud model)
+$openrouter_api_key = ''; // optional: OpenRouter key, cloud fallback ahead of DeepSeek (GPT-6 Luna)
 
 /**
  * Security Note: 

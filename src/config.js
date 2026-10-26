@@ -149,6 +149,7 @@ const FALLBACK_ROASTS = [
 // --- TOKEN LOADING ---
 let token = '';
 let deepseekApiKey = '';
+let openrouterApiKey = '';
 if (fs.existsSync(SECRETS_PATH)) {
     const phpCode = fs.readFileSync(SECRETS_PATH, 'utf8');
     const tokenMatch = phpCode.match(/\$token\s*=\s*['"]([^'"]+)['"]/);
@@ -158,6 +159,10 @@ if (fs.existsSync(SECRETS_PATH)) {
     const deepseekMatch = phpCode.match(/\$deepseek_api_key\s*=\s*['"]([^'"]+)['"]/);
     if (deepseekMatch) {
         deepseekApiKey = deepseekMatch[1];
+    }
+    const openrouterMatch = phpCode.match(/\$openrouter_api_key\s*=\s*['"]([^'"]+)['"]/);
+    if (openrouterMatch) {
+        openrouterApiKey = openrouterMatch[1];
     }
 }
 if (!token && process.env.DISCORD_TOKEN) {
@@ -170,6 +175,9 @@ if (!token) {
 if (!deepseekApiKey && process.env.DEEPSEEK_API_KEY) {
     deepseekApiKey = process.env.DEEPSEEK_API_KEY;
 }
+if (!openrouterApiKey && process.env.OPENROUTER_API_KEY) {
+    openrouterApiKey = process.env.OPENROUTER_API_KEY;
+}
 
 const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || 'https://api.deepseek.com/v1/chat/completions';
 // `deepseek-flash` = DeepSeek-V4.1-Flash (cheapest available model). The legacy
@@ -177,6 +185,15 @@ const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || 'https://api.deepseek.c
 // `deepseek-reasoner` are still routed to V4.1-Flash for compatibility but are
 // on their way out — always use the canonical name.
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
+
+// OpenRouter (OpenAI-compatible) — cloud fallback that sits IN FRONT of DeepSeek
+// on the quota path (owner request 2026-10-26): OpenRouter GPT-6 Luna → DeepSeek
+// V4.1 Flash → local Ollama. Key: $openrouter_api_key in secrets_discord.php or
+// OPENROUTER_API_KEY. Skipped automatically when no key is configured.
+const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-6-luna';
+const OPENROUTER_MAX_TOKENS = parseInt(process.env.OPENROUTER_MAX_TOKENS || '4096', 10);
+const OPENROUTER_TIMEOUT_MS = parseInt(process.env.OPENROUTER_TIMEOUT_MS || '90000', 10);
 
 // --- HELP TEXT ---
 const helpText = `**Librarian Bot Functions:**
@@ -393,5 +410,10 @@ module.exports = {
     COBALT_TIMEOUT_MS,
     deepseekApiKey,
     DEEPSEEK_API_URL,
-    DEEPSEEK_MODEL
+    DEEPSEEK_MODEL,
+    openrouterApiKey,
+    OPENROUTER_API_URL,
+    OPENROUTER_MODEL,
+    OPENROUTER_MAX_TOKENS,
+    OPENROUTER_TIMEOUT_MS
 };

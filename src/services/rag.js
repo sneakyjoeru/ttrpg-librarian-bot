@@ -17,7 +17,12 @@ const {
     ADMIN_ROLE_ID,
     deepseekApiKey,
     DEEPSEEK_API_URL,
-    DEEPSEEK_MODEL
+    DEEPSEEK_MODEL,
+    openrouterApiKey,
+    OPENROUTER_API_URL,
+    OPENROUTER_MODEL,
+    OPENROUTER_MAX_TOKENS,
+    OPENROUTER_TIMEOUT_MS
 } = require('../config');
 
 const LIBRARIAN_QUIRKS = [
@@ -314,18 +319,58 @@ Answer:`;
             console.log(`[Librarian Bot] Quota OK for user ${message.author.id} (${profile} ${quotaDecision.used}/${quotaDecision.limit} used); routing to DeepSeek first.`);
         }
 
-        // --- LLM PIPELINE (DeepSeek-primary) ---
-        // DeepSeek is the PRIMARY model for all quota-having users. The old local
+        // --- LLM PIPELINE (cloud-primary: OpenRouter → DeepSeek → local Ollama) ---
+        // DeepSeek is the second cloud model for quota-having users. The old local
         // Ollama quality-estimator + DeepSeek-from-Ollama fallback chain has been
         // dropped: DeepSeek answers are accepted directly, and the local Ollama
         // is a single direct fallback (no quality check) used when the user is out
         // of quota or DeepSeek failed. Per-user quota is still enforced.
         if (useDeepSeekFirst) {
-            // --- DEEPSEEK-FIRST PATH ---
-            // Only attempted when the user still has quota. On success we use the
-            // DeepSeek answer directly; on failure we fall back to a single local
-            // Ollama attempt (no quality estimation).
-            if (deepseekApiKey) {
+            // --- OPENROUTER PATH (GPT-6 Luna) — cloud attempt AHEAD of DeepSeek ---
+            // Owner request 2026-10-26: on the quota path try OpenRouter first,
+            // DeepSeek second, local Ollama last. Same quota charge either way.
+            if (openrouterApiKey) {
+                try {
+                    console.log(`[Librarian Bot] Calling OpenRouter (quota path, model: ${OPENROUTER_MODEL})...`);
+                    const orResponse = await axios.post(OPENROUTER_API_URL, {
+                        model: OPENROUTER_MODEL,
+                        messages: [
+                            { role: 'system', content: systemMessage },
+                            { role: 'user', content: userPrompt }
+                        ],
+                        stream: false,
+                        temperature: 0.85,
+                        max_tokens: OPENROUTER_MAX_TOKENS
+                    }, {
+                        timeout: OPENROUTER_TIMEOUT_MS,
+                        headers: {
+                            'Authorization': `Bearer ${openrouterApiKey}`,
+                            'Content-Type': 'application/json',
+                            'HTTP-Referer': 'https://heyrobot.gg',
+                            'X-Title': 'TTRPG Librarian Bot'
+                        }
+                    });
+                    // OpenRouter can answer HTTP 200 with an {error} body (provider outage).
+                    if (orResponse.data && orResponse.data.error) {
+                        throw new Error(orResponse.data.error.message || JSON.stringify(orResponse.data.error));
+                    }
+                    const orText = orResponse.data && orResponse.data.choices && orResponse.data.choices[0] && orResponse.data.choices[0].message && orResponse.data.choices[0].message.content;
+                    if (!orText) throw new Error('OpenRouter returned empty response');
+                    answer = orText;
+                    deepseekSuccess = true; // cloud answer accepted — skip the local path
+                    console.log(`[Librarian Bot] OpenRouter response retrieved successfully (quota path).`);
+                } catch (orErr) {
+                    console.warn(`[Librarian Bot] OpenRouter call failed on quota path, falling back to DeepSeek: ${orErr.message}`);
+                }
+            }
+
+            // --- DEEPSEEK PATH (after OpenRouter) ---
+            // Only attempted when the user still has quota and OpenRouter did not
+            // answer. On success we use the DeepSeek answer directly; on failure we
+            // fall back to a single local Ollama attempt (no quality estimation).
+            if (deepseekSuccess) {
+                // OpenRouter already answered.
+            } else if (deepseekApiKey) {
                 try {
                     console.log(`[Librarian Bot] Calling DeepSeek API (quota path, model: ${DEEPSEEK_MODEL})...`);
                     const deepseekResponse = await axios.post(DEEPSEEK_API_URL, {
