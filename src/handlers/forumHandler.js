@@ -216,7 +216,7 @@ async function fetchViaBrowser(postUrl) {
                     // Skip small UI images (Reddit uses tiny dimensions for icons/buttons)
                     const w = img.naturalWidth || img.width || 0;
                     const h = img.naturalHeight || img.height || 0;
-                    if (w > 0 && h > 0 && (w < 64 || h < 64)) return false;
+                    if (w > 0 && h > 0 && (w <= 96 || h <= 96)) return false;
                     // When the post has a video, skip ALL images.
                     // A video-only post has no image content — any <img> tags
                     // are poster frames, UI elements, or avatars.
@@ -232,6 +232,11 @@ async function fetchViaBrowser(postUrl) {
             const primaryImageUrl = data.ogImage || contentHref || '';
             if (primaryImageUrl && (primaryImageUrl.includes(iReddHost) || primaryImageUrl.includes(prevReddHost))) {
                 let pUrl = primaryImageUrl.replace(/&amp;/g, '&');
+                // Normalize new-style preview.redd.it renditions to the
+                // i.redd.it original (same <id>.<ext>, full quality).
+                if (pUrl.includes('preview.redd.it') && !/-v0-/.test(pUrl)) {
+                    pUrl = pUrl.replace(/preview\\.redd\\.it\\//i, 'i.redd.it/').replace(/\\?.*$/, '');
+                }
                 let pId = '';
                 const pIRedd = pUrl.match(/i\\.redd\\.it\\/([a-zA-Z0-9]+)/i);
                 const pPrev = pUrl.match(/-v0-([a-zA-Z0-9]+)\\./i);
@@ -242,6 +247,12 @@ async function fetchViaBrowser(postUrl) {
             }
             for (let u of allImgs) {
                 u = u.replace(/\\?width=\\d+&height=\\d+.*$/, '').replace(/\\?auto=webp.*$/, '').replace(/&amp;/g, '&');
+                // Normalize new-style preview.redd.it renditions to the
+                // i.redd.it original (same <id>.<ext>, full quality) so
+                // renditions of the same photo dedup into one canonical URL.
+                if (u.includes('preview.redd.it') && !/-v0-/.test(u)) {
+                    u = u.replace(/preview\\.redd\\.it\\//i, 'i.redd.it/').replace(/\\?.*$/, '');
+                }
                 if (!u || u.length <= 30) continue;
                 if (seen.has(u)) continue;
                 // Deduplicate by Reddit image hash — the same image is served
