@@ -261,13 +261,33 @@ async function updateWorkingPlaceholder(placeholder, finalContent, attachments, 
     const cleanFinalContent = removeInProgressStatus(finalContent || '');
 
     if (!suppressEmbeds) {
+        const threadId = placeholder.originalMessage.channel.isThread() ? placeholder.originalMessage.channel.id : undefined;
         try {
             if (isWebhook && webhookClient) {
-                const threadId = placeholder.originalMessage.channel.isThread() ? placeholder.originalMessage.channel.id : undefined;
                 await webhookClient.deleteMessage(sentMsg.id, threadId).catch(() => {});
             } else {
                 await sentMsg.delete().catch(() => {});
             }
+            // Dedupe guard (ported from heyrobot-discord-bot 0672230): the
+            // delete above swallows its errors — if the old message is still
+            // there, the re-post below would leave TWO copies of the post
+            // text in the channel. Verify it is gone before posting the
+            // replacement; retry the delete once if it survived. Non-fatal.
+            try {
+                if (isWebhook && webhookClient) {
+                    const stillThere = await webhookClient.fetchMessage(sentMsg.id, threadId).catch(() => null);
+                    if (stillThere) {
+                        console.log(`[Webhook] Old placeholder ${sentMsg.id} survived delete — retrying once before re-post.`);
+                        await webhookClient.deleteMessage(sentMsg.id, threadId).catch(() => {});
+                    }
+                } else {
+                    const stillThere = await sentMsg.fetch().catch(() => null);
+                    if (stillThere) {
+                        console.log(`[Webhook] Old placeholder ${sentMsg.id} survived delete — retrying once before re-post.`);
+                        await sentMsg.delete().catch(() => {});
+                    }
+                }
+            } catch (_) { /* non-fatal — re-post proceeds */ }
         } catch (delErr) {
             console.error('Failed to delete working placeholder:', delErr);
         }
