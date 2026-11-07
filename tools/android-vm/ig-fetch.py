@@ -333,6 +333,9 @@ def main():
                 else:
                     cmd += ["-c", "copy"]
                 sh(*cmd, dest)
+            if not os.path.exists(dest) or os.path.getsize(dest) < 10240:
+                # 2026-11-07: a 261-byte mp4 (only partial spans cached) was delivered and cached for 7 days
+                leave_app(); print("ERROR: output too small (incomplete cache)"); sys.exit(5)
             shutil.copy(dest, os.path.join(RESULT_CACHE, os.path.basename(dest)))
             print("RESULT", dest, os.path.getsize(dest), "bytes")
         finally:
