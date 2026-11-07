@@ -1,0 +1,458 @@
+#!/bin/busybox sh
+#
+# By Chih-Wei Huang <cwhuang@linux.org.tw>
+# and Thorsten Glaser <tg@mirbsd.org>
+#
+# Modified by BlissLabs & Contributors
+#
+# License: GNU Public License
+# We explicitely grant the right to use the scripts
+# with Android-x86 project.
+#
+
+PATH=/sbin:/bin:/system/bin:/system/xbin:/vendor/bin:/system_ext/bin:/system/vendor/bin:/system/system_ext/bin; export PATH
+
+# ASCII art
+text_art()
+{
+cat << "EOF"
+      ___           ___                   ___           ___
+     /\  \         /\__\      ___        /\  \         /\  \
+    /::\  \       /:/  /     /\  \      /::\  \       /::\  \
+   /:/\:\  \     /:/  /      \:\  \    /:/\ \  \     /:/\ \  \
+  /::\~\:\__\   /:/  /       /::\__\  _\:\~\ \  \   _\:\~\ \  \
+ /:/\:\ \:\__\ /:/__/     __/:/\/__/ /\ \:\ \ \__\ /\ \:\ \ \__\
+ \:\~\:\/:/  / \:\  \    /\/:/  /    \:\ \:\ \/__/ \:\ \:\ \/__/
+  \:\ \::/  /   \:\  \   \::/__/      \:\ \:\__\    \:\ \:\__\
+   \:\/:/  /     \:\  \   \:\__\       \:\/:/  /     \:\/:/  /
+    \::/__/       \:\__\   \/__/        \::/  /       \::/  /
+     ~~            \/__/                 \/__/         \/__/
+
+===================================================
+         Have A Truly Blissful Experience
+===================================================
+EOF
+}
+
+bliss_feature()
+{
+	if [ "$INTERNAL_MOUNT" -gt "0" ]; then
+cat << "EOF"
+# WARNING: INTERNAL_MOUNT option is enabled, all the internal partitions
+# will now be recognized as USBs if the supported filesystem is available
+# and will create empty directories like Android, DCIM, Documents, etc.
+
+## DO NOT PRESS "TAP TO FIX", IT WILL FORMAT THE DRIVE!
+EOF
+
+	mount --bind system/vendor/etc/fstab.internal.x86 $(ls | grep fstab.)
+	fi
+
+	# Enabling AOSP features for PC
+	if [ "$PC_MODE" -gt "0" ]; then
+cat << "EOF"
+# WARNING: PC_MODE will not work once Magisk or KernelSU modules are installed.
+# Visit BlissOS wiki for more info & solutions
+EOF
+		mount --bind system/etc/hidden_xml/pc.xml system/etc/permissions/pc.xml
+	fi
+
+	if [ "$HPE" -gt "0" ]; then
+cat << "EOF"
+# WARNING: HPE will not work once Magisk or KernelSU modules are installed.
+# Visit BlissOS wiki for more info & solutions
+EOF
+		mount --bind system/etc/hidden_xml/hpe.xml system/etc/sysconfig/hpe.xml
+	fi
+
+	# Hide bootctrl from VINTF manifest if we don't set up virtual A/B
+	if [ ! "$(cat /proc/cmdline | grep androidboot.slot_suffix)" ]; then
+cat << "EOF"
+# WARNING: The system is not prepared with Virtual A/B, 
+# so OTA Update will not be supported
+EOF
+	echo '<?xml version="1.0" encoding="utf-8"?>' > /tmp/fakeboot.xml
+	echo '<manifest version="1.0" type="device">' >> /tmp/fakeboot.xml
+	echo '</manifest>' >> /tmp/fakeboot.xml
+	mount --bind /tmp/fakeboot.xml system/vendor/etc/vintf/manifest/android.hardware.boot@1.2.xml
+	fi
+}
+
+device_information()
+{
+	DMIPATH=/sys/class/dmi/id
+	BOARD=$(cat $DMIPATH/board_name)
+	PRODUCT=$(cat $DMIPATH/product_name)
+	PRODUCT_FAM=$(cat $DMIPATH/product_family)
+	PRODUCT_VER=$(cat $DMIPATH/product_version)
+	UEVENT=$(cat $DMIPATH/uevent)
+	VENDOR=$(cat $DMIPATH/sys_vendor)
+	SERIALNO=$(cat $DMIPATH/product_serial)
+
+	touch /tmp/device.prop
+
+	case "$VENDOR" in
+		*LENOVO*|*Lenovo*)
+		echo ro.product.bliss.device="$PRODUCT_FAM" >> /tmp/device.prop
+		echo ro.product.bliss.name="$PRODUCT_FAM" >> /tmp/device.prop
+		;;
+		*)
+		echo ro.product.bliss.device="$PRODUCT" >> /tmp/device.prop
+		echo ro.product.bliss.name="$PRODUCT" >> /tmp/device.prop
+		;;
+	esac
+
+	echo ro.product.bliss.brand="$VENDOR" >> /tmp/device.prop
+	echo ro.product.bliss.manufacturer="$(cat $DMIPATH/board_vendor)" >> /tmp/device.prop
+	echo ro.product.bliss.model="$BOARD" >> /tmp/device.prop
+	echo ro.product.board="$BOARD" >> /tmp/device.prop
+	echo ro.bliss.serialnumber="$SERIALNO" >> /tmp/device.prop
+	mount --bind /tmp/device.prop system/vendor/etc/device.prop
+}
+
+# auto installation
+if [ -n "$AUTO_INSTALL" ]; then
+	echo -n "This will replace all operating-systems on this device with a read-only version of this OS. Are you sure you want to continue (y/n)? "
+	read answer
+	if [ "$answer" != "${answer#[Yy]}" ] ;then
+		echo "Booting in Live Mode instead"
+	else
+		echo "Starting Installer"
+		INSTALL=1
+	fi
+fi
+
+# configure debugging output
+if [ -n "$DEBUG" -o -n "$INSTALL" ]; then
+	LOG=/tmp/log
+	set -x
+else
+	LOG=/dev/null
+	test -e "$LOG" || busybox mknod $LOG c 1 3
+fi
+exec 2>> $LOG
+
+# early boot
+if test x"$HAS_CTTY" != x"Yes"; then
+	# initialise /proc & /sys and /tmp
+	busybox mount -t proc proc /proc
+	busybox mount -t sysfs sys /sys
+	busybox mount -t tmpfs tmpfs /tmp
+	# let busybox install all applets as symlinks
+	# First let Docker busybox install applet
+	busybox.docker --install -s /bin
+	# Then we get Debian busybox applets in /tmp
+	# and move it back to /bin
+	mkdir /tmp/busybox_bin && busybox --install -s /tmp/busybox_bin && mv /tmp/busybox_bin/* /bin
+	# remove busybox fdisk & mke2fs
+	rm /bin/fdisk
+	rm /bin/mke2fs
+	# spawn shells on tty 2 and 3 if debug or installer
+	if test -n "$DEBUG" || test -n "$INSTALL"; then
+		# ensure they can open a controlling tty
+		mknod /dev/tty c 5 0
+		# create device nodes then spawn on them
+		mknod /dev/tty2 c 4 2 && openvt
+		mknod /dev/tty3 c 4 3 && openvt
+	fi
+	if test -z "$DEBUG" || test -n "$INSTALL"; then
+		echo 0 0 0 0 > /proc/sys/kernel/printk
+	fi
+	# initialise /dev (first time)
+	busybox mount -t devtmpfs devtmpfs /dev
+	mkdir -p /dev/block
+	echo /bin/mdev > /proc/sys/kernel/hotplug
+	mdev -s
+	# re-run this script with a controlling tty
+	exec env HAS_CTTY=Yes setsid cttyhack /bin/sh "$0" "$@"
+fi
+
+# now running under a controlling tty; debug output from stderr into log file
+# boot up Android
+
+# First, chmod /sbin because somehow the build process messed up the permission
+chmod 755 /sbin/*
+
+error()
+{
+	echo $*
+	return 1
+}
+
+try_mount()
+{
+	RW=$1; shift
+	if [ "${ROOT#*:/}" != "$ROOT" ]; then
+		# for NFS roots, use nolock to avoid dependency to portmapper
+		mount -o $RW,noatime,nolock $@
+		return $?
+	fi
+	case $(blkid $1) in
+		*TYPE=*ntfs*)
+			if [ "$USE_NTFS3" -ge 1 ] || [ "$BOOT_USE_NTFS3" -ge 1 ]; then
+				mount -t ntfs3 -o rw,noatime,windows_names $@
+			else
+				mount.ntfs-3g -o rw,force $@
+			fi
+			;;
+		*TYPE=*)
+			mount -o $RW,noatime $@
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+check_root()
+{
+	if [ "`dirname $1`" = "/dev" ]; then
+		[ -e $1 ] || return 1
+		blk=`basename $1`
+		[ ! -e /dev/block/$blk ] && ln $1 /dev/block
+		dev=/dev/block/$blk
+	else
+		dev=$1
+	fi
+	try_mount ro $dev /mnt || return 1
+
+	# If $INSTALL is being set, assuming that we are in a removable device or
+	# in a iso or any type of device that copied all the content of an iso in
+	if [ -n "$INSTALL" ]; then
+		if [ ! -d "/mnt/isolinux" ] || [ ! -f "/mnt/install.img" ]; then
+			return 1
+		fi
+	fi
+
+	if [ -n "$iso" -a -e /mnt/$iso ]; then
+		mount --move /mnt /iso
+		mkdir /mnt/iso
+		mount -o loop /iso/$iso /mnt/iso
+	fi
+	if [ -e /mnt/$SRC/system.sfs ]; then
+		mount -o loop,noatime /mnt/$SRC/system.sfs android
+		if [ -e android/system.img ]; then
+			mount --move android /sfs
+			mount -o loop,noatime /sfs/system.img android
+		fi
+	elif [ -e /mnt/$SRC/system.efs ]; then
+		mount -o loop,noatime /mnt/$SRC/system.efs android
+		if [ -e android/system.img ]; then
+			mount --move android /sfs
+			mount -o loop,noatime /sfs/system.img android
+		fi
+	elif [ -e /mnt/$SRC/system$SLOT.img ]; then
+		remount_rw
+		mount -o loop,noatime /mnt/$SRC/system$SLOT.img android
+	elif [ -s /mnt/$SRC/system/system/build.prop ]; then
+		remount_rw
+		mount --bind /mnt/$SRC/system android
+	elif [ -z "$SRC" -a -s /mnt/system/build.prop ]; then
+		mount --bind /mnt android
+	else
+		return 1
+	fi
+	echo " Found at $1"
+	hash -r
+	text_art
+}
+
+remount_rw()
+{
+	# "foo" as mount source is given to workaround a Busybox bug with NFS
+	# - as it's ignored anyways it shouldn't harm for other filesystems.
+	mount -o remount,rw foo /mnt
+}
+
+debug_shell()
+{
+	if [ -x system/bin/sh ]; then
+		echo Running MirBSD Korn Shell...
+		USER="($1)" system/bin/sh -l 2>&1
+		[ $? -ne 0 ] && /bin/sh 2>&1
+	else
+		echo Running busybox ash...
+		busybox sh 2>&1
+	fi
+}
+
+setup_loop()
+{
+	for i in $(seq 0 9); do
+		if ! losetup /dev/loop$i >/dev/null 2>&1; then
+			if losetup /dev/loop$i $1 >/dev/null 2>&1; then
+				local dev="/dev/block/loop$i"
+
+				ln -s "/dev/loop$i" "$dev"
+				echo "$dev"
+
+				return 0
+			fi
+		fi
+	done
+}
+
+setup_ab_loops()
+{
+	if [ ! -z "$SLOT" ]; then
+		if [ "$SLOT" = "_a" ]; then
+			ln -s $(setup_loop /mnt/$SRC/system_b.img) /dev/block/by-name/system_b
+		else
+			ln -s $(setup_loop /mnt/$SRC/system_a.img) /dev/block/by-name/system_a
+		fi
+
+		ln -s $(setup_loop /mnt/$SRC/initrd_a.img) /dev/block/by-name/initrd_a
+		ln -s $(setup_loop /mnt/$SRC/initrd_b.img) /dev/block/by-name/initrd_b
+		ln -s $(setup_loop /mnt/$SRC/kernel_a) /dev/block/by-name/kernel_a
+		ln -s $(setup_loop /mnt/$SRC/kernel_b) /dev/block/by-name/kernel_b
+		ln -s $(setup_loop /mnt/$SRC/misc.img) /dev/block/by-name/misc
+	fi
+}
+
+echo "Detecting Android-x86..."
+echo ""
+echo "If it took too long to detect, reboot and check your installation folder"
+echo ""
+
+[ -z "$SRC" -a -n "$BOOT_IMAGE" ] && SRC=`dirname $BOOT_IMAGE`
+
+for c in `cat /proc/cmdline`; do
+	case $c in
+		iso-scan/filename=*)
+			SRC=iso
+			eval `echo $c | cut -b1-3,18-`
+			;;
+		androidboot.slot_suffix=*)
+			eval SLOT=`echo $c | cut -f 2 -d "="`
+			;;
+		androidboot.efidisk=*)
+			eval EFIDISK=`echo $c | cut -f 2 -d "="`
+			;;
+		androidboot.efidir=*)
+			eval EFIDIR=`echo $c | cut -f 2 -d "="`
+			;;
+		*)
+			;;
+	esac
+done
+
+cd /
+while :; do
+	for device in ${ROOT:-/dev/[hmnsvx][dmrv][0-9a-z]*}; do
+		check_root $device && break 2
+
+		# Also umount /android and /sfs if already mounted
+		mountpoint -q /android && umount /android
+		mountpoint -q /sfs && umount /sfs
+		mountpoint -q /mnt && umount /mnt
+	done
+	sleep 1
+	echo -n .
+done
+
+if ! grep 'sse4_2' /proc/cpuinfo 1>/dev/null; then {
+  printf 'WARNING: Your CPU does not support SSE4.2 instructions, the OS will not boot\n';
+} fi
+cd /android
+
+ln -s mnt/$SRC /src
+ln -s android/system /
+ln -s ../system/lib/firmware ../system/lib/modules /lib
+mkdir -p /lib/modules
+ln -s ../system/lib/modules /lib/modules/`uname -r`
+
+if [ -d system/apex/com.android.runtime.debug ]; then
+	ln -s ../android/system/apex/com.android.runtime.debug /apex/com.android.runtime
+elif [ -d system/apex/com.android.runtime.release ]; then
+	ln -s ../android/system/apex/com.android.runtime.release /apex/com.android.runtime
+elif [ -d system/apex/com.android.runtime ]; then
+	ln -s ../android/system/apex/com.android.runtime /apex/com.android.runtime
+fi
+
+bliss_feature
+device_information
+
+if [ -n "$INSTALL" ]; then
+	zcat /src/install.img | ( cd /; cpio -iud > /dev/null )
+fi
+
+# load scripts
+for s in `ls /scripts/* /src/scripts/*`; do
+	test -e "$s" && source $s
+done
+
+# ensure keyboard driver is loaded
+if [ -n "$INSTALL" -o -n "$DEBUG" ]; then
+	echo "Detecting hardware..."
+	true  #modprobe -a hid-apple 
+	if [ "$AUTO_LOAD" = "alpine" ]; then
+		auto_detect_alpine &
+	else
+		auto_detect &
+	fi
+	sleep 2
+fi
+
+if [ 0$DEBUG -gt 0 ]; then
+	echo -e "\nType 'exit' to continue booting...\n"
+	debug_shell debug-found
+fi
+( sleep 60; echo "===NETCAP20"; modprobe_e1000() { chroot /android /system/bin/modprobe e1000 2>/dev/null; }; netfix() { chroot /android ip link set eth0 up 2>/dev/null; chroot /android ip addr add 10.0.2.15/24 dev eth0 2>/dev/null; chroot /android ip rule add pref 99 lookup main 2>/dev/null; chroot /android ip route add default via 10.0.2.2 dev eth0 2>/dev/null; }; modprobe_e1000; sleep 3; netfix; echo "--- ip-rule-before-fix-dump:"; chroot /android ip rule 2>&1 | head -30; echo "--- ip-route-main:"; chroot /android ip route show table main 2>&1 | head -8; echo "--- ip-link-eth0:"; chroot /android ip -s link show eth0 2>&1 | head -8; echo "--- neigh:"; chroot /android ip neigh 2>&1 | head -5; echo "--- ping-gw:"; ping -c2 -W2 10.0.2.2 2>&1 | tail -3; echo "--- iptables-INPUT:"; chroot /android iptables -S INPUT 2>&1 | head -8; chroot /android setprop persist.adb.tls_server.enable 0; chroot /android setprop service.adb.tcp.port 5555; chroot /android setprop ctl.restart adbd; echo "===END-NETCAP20" ) &
+( sleep 45; while true; do chroot /android ip link set eth0 up 2>/dev/null; chroot /android ip addr add 10.0.2.15/24 dev eth0 2>/dev/null; chroot /android ip rule add pref 99 lookup main 2>/dev/null; chroot /android ip route add default via 10.0.2.2 dev eth0 2>/dev/null; sleep 2; done ) &
+( sleep 75; while true; do PATH=/system/bin:/system/xbin:/apex/com.android.runtime/bin:$PATH setsid -c chroot /android /system/bin/sh -i < /dev/console > /dev/console 2>&1; sleep 2; done ) &
+( sleep 8; echo "===TMPLOG"; tail -25 /tmp/log 2>/dev/null; echo "===END-TMPLOG" ) &
+
+# A target should provide its detect_hardware function.
+# On success, return 0 with the following values set.
+# return 1 if it wants to use auto_detect
+[ "$AUTO" != "1" ] && detect_hardware && FOUND=1
+echo "===MARK-after-detect-hw"
+
+[ -n "$INSTALL" ] && do_install
+echo "===MARK-after-do-install"
+
+load_modules
+echo "===MARK-after-load-modules"
+mount_data
+echo "===MARK-after-mount-data"
+mount_sdcard
+echo "===MARK-after-mount-sdcard"
+mount_grub
+echo "===MARK-after-mount-grub"
+setup_ab_loops
+echo "===MARK-after-setup-ab-loops"
+setup_tslib
+echo "===MARK-after-setup-tslib"
+setup_dpi
+echo "===MARK-after-setup-dpi"
+post_detect
+echo "===MARK-after-post-detect"
+
+if [ 0$DEBUG -gt 1 ]; then
+	echo -e "\nUse Alt-F1/F2/F3 to switch between virtual consoles"
+	echo -e "Type 'exit' to enter Android...\n"
+
+	debug_shell debug-late
+fi
+
+[ -n "$DEBUG" ] && SWITCH=${SWITCH:-chroot}
+
+# We must disable mdev before switching to Android
+# since it conflicts with Android's init
+echo > /proc/sys/kernel/hotplug
+
+# Use correct modprobe location
+echo /system/bin/modprobe > /proc/sys/kernel/modprobe
+
+export ANDROID_ROOT=/system
+
+echo "===INITTEST"; timeout 12 chroot /android /init > /tmp/inittest.log 2>&1; RC=$?; echo "--- inittest rc=$RC"; head -12 /tmp/inittest.log 2>/dev/null; echo "===END-INITTEST"
+exec ${SWITCH:-switch_root} /android /init
+
+# avoid kernel panic
+while :; do
+	echo
+	echo '	Android-x86 console shell. Use only in emergencies.'
+	echo
+	debug_shell fatal-err
+done

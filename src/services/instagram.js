@@ -9,6 +9,7 @@ const { sendRepostedMessage, sendWorkingPlaceholder, updateWorkingPlaceholder, u
 const { runCommand, findYtDlpPath, cookiesFlagForYtDlp } = require('../utils/shell');
 const { getGuildFileLimit, compressVideoToFit } = require('../utils/mediaCompressor');
 const { downloadWithCobalt } = require('./cobaltService');
+const igVm = require('./igVmClient');
 const mediaQueue = require('../utils/mediaQueue');
 const { detectFileType, isImageFile } = require('../utils/fileTypeDetector');
 
@@ -1764,6 +1765,7 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
             let chosenFixerDomain = 'kkinstagram.com';
             let lastRespondingDomain = null;
             let fallbackAttachments = null;
+            let usedVm = false;
 
             const isFixer = /(?:dd|kk|ee|uu|rx)instagram\.com/.test(instagramUrl);
             const downloadUrl = isFixer ? instagramUrl.replace(/(www\.)?(dd|kk|ee|uu|rx)instagram\.com/, 'instagram.com') : instagramUrl;
@@ -1906,6 +1908,27 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                     }
                 }
 
+                // 5. Last resort, allow-listed guilds ONLY: ask the Android VM that runs
+                //    the real Instagram app (docs/android-vm-instagram.md). Tried when no
+                //    real download succeeded — a cover-only "restricted fallback" does not
+                //    count, so this is what replaces "Video is unavailable for embedding".
+                //    igVm.isAllowedGuild() is the hard gate: any other guild (or DM) never
+                //    reaches the VM.
+                if (!downloadSuccess && igVm.isAllowedGuild(message.guild && message.guild.id)) {
+                    try {
+                        await updatePlaceholderStage(placeholder, `working... <${instagramUrl}>\nstage: Android VM (Instagram app)`);
+                        const vmAttachments = await igVm.downloadViaVm(downloadUrl, message.guild.id, { namePrefix: 'instagram_media' });
+                        if (vmAttachments && vmAttachments.length > 0) {
+                            attachments = vmAttachments;
+                            downloadSuccess = true;
+                            usedVm = true;
+                            console.log(`[Instagram Interceptor] Android VM produced ${vmAttachments.vmKind || 'media'} for ${downloadUrl}`);
+                        }
+                    } catch (vmErr) {
+                        console.error('[Instagram Interceptor] Android VM fallback failed:', vmErr.message);
+                    }
+                }
+
                 if (!downloadSuccess && fallbackAttachments) {
                     attachments = fallbackAttachments;
                     downloadSuccess = true;
@@ -1993,7 +2016,10 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                 const fallbackContent = cleanedRemadeContent.replace(instagramUrl, `[${displayUrl}](${fallbackUrl})`);
 
                 if (downloadSuccess) {
-                    const successText = cleanedRemadeContent.replace(instagramUrl, `<${standardUrl}>`);
+                    let successText = cleanedRemadeContent.replace(instagramUrl, `<${standardUrl}>`);
+                    // Media that came out of the Android VM (last-resort fallback) is labelled so
+                    // readers know it was produced by the "dirty hack" path, not a normal download.
+                    if (usedVm) successText += `\n${igVm.VM_LABEL}`;
                     if (attachments.isRestrictedVideoFallback) {
                         // Every tier returned only (or nothing but) the reel's cover
                         // frame — Instagram hands the bot accounts no video bytes for

@@ -241,6 +241,18 @@ fi
 # Carries our PID; a run whose lock belongs to a dead process removes it and
 # proceeds, and a run whose lock is held by a live process preempts it (a
 # newer rebuild supersedes an older one).
+# Android-VM Instagram fallback (src/services/igVmClient.js, docs/android-vm-instagram.md).
+# Optional env file OUTSIDE the repo, mode 600, provides IG_VM_URL / IG_VM_TOKEN / IG_VM_GUILD_IDS.
+# Absent on every host without the VM => the feature stays off. IG_VM_ENV_FILE overrides the path.
+_igvm_env_user="${SUDO_USER:-sneakyjoe}"
+for _igvm_env in "${IG_VM_ENV_FILE:-}" "$HOME/android-vm/ig-vm-librarian.env" "/home/${_igvm_env_user}/android-vm/ig-vm-librarian.env"; do
+    if [ -n "$_igvm_env" ] && [ -f "$_igvm_env" ]; then
+        . "$_igvm_env"
+        echo "[deploy] Android-VM Instagram fallback: env from $_igvm_env (guilds: ${IG_VM_GUILD_IDS:-none})"
+        break
+    fi
+done
+
 LOCKFILE="rebuild.lock"
 acquire_lock() {
     while true; do
@@ -450,6 +462,9 @@ $SUDO docker run -d --name librarian-bot --restart unless-stopped $ollama_networ
     -e BROWSER_BOT_WS="${BROWSER_BOT_WS:-ws://browser-bot:3000}" \
     -e STREAMER_JOE_API_URL="${STREAMER_JOE_API_URL:-http://192.168.0.99:8777}" \
     -e DEEPSEEK_MODEL="${DEEPSEEK_MODEL:-deepseek-flash}" \
+    -e IG_VM_URL="${IG_VM_URL:-}" \
+    -e IG_VM_TOKEN="${IG_VM_TOKEN:-}" \
+    -e IG_VM_GUILD_IDS="${IG_VM_GUILD_IDS:-}" \
     $catchup_env \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "$(pwd)":/usr/src/app \
