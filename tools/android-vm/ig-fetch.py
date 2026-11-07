@@ -66,6 +66,30 @@ def ensure_root():
     return "uid=0" in adb("shell", "id").stdout
 
 
+def focus():
+    out = adb("shell", "dumpsys window | grep mCurrentFocus").stdout
+    return out.strip()
+
+
+def warm_up_app(limit=100):
+    """Cold start of the app under libhoudini crash-restarts for ~45 s (embedded 'Helium' webview) before it
+    stays up; a deep link sent during that window is lost. Start the app first and wait for a real screen.
+    Returns None when ready, or an error string (e.g. a Meta consent prompt that needs a human once)."""
+    if adb("shell", "pidof com.instagram.android").stdout.strip():
+        return None  # already running (warm): the deep link works directly
+    adb("shell", "monkey -p com.instagram.android -c android.intent.category.LAUNCHER 1")
+    t0 = time.time()
+    while time.time() - t0 < limit:
+        time.sleep(5)
+        f = focus()
+        if "ConsentFlowHostActivity" in f:
+            return "Meta consent prompt is open (cookies / ads choice) - click it through once via VNC"
+        if "com.instagram.android/" in f and "MainTabActivity" in f:
+            time.sleep(random.uniform(3, 8))
+            return None
+    return None  # not conclusive; let the deep link try anyway
+
+
 def list_spans(mid):
     r = adb("shell", f'find {CACHE} -name "{mid}_*" -type f')
     return [l.strip() for l in r.stdout.splitlines() if l.strip()]
@@ -210,6 +234,9 @@ def main():
         url = f"https://instagram.com/{kind_from(sys.argv[1])}/{code}/"
         adb("shell", "input keyevent 224")
         adb("shell", "wm dismiss-keyguard")   # after a VM reboot the lock screen hides the deep-linked app
+        why = warm_up_app()
+        if why:
+            print("ERROR:", why); sys.exit(4)
         adb("shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url, "-p", "com.instagram.android")
         pacing_record()
         # wait for cache spans to appear and stop growing (video + audio)

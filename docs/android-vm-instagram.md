@@ -103,5 +103,13 @@ Posts are edited in place. `--gap 370` keeps a large backlog under the 10/hour c
   "Video is unavailable for embedding" (run the re-process script later).
 - The VM has no autostart: after a host reboot run `vm-start.sh` and `adb root`; until then the
   service answers 503 `vm-down` and nothing changes for users.
+- Cold start is slow: under libhoudini the app crash-restarts for ~45 s before it stays up.
+  `ig-fetch.py` starts the app and waits for the feed before sending the deep link.
+- Meta shows consent prompts from time to time (EU cookie choice, "subscribe or use free with
+  ads"). While one is open nothing gets cached; `ig-fetch.py` reports it and you click it through
+  once over VNC. A stuck guest (clock frozen, adb offline) recovers with a QEMU monitor
+  `system_reset` (`echo system_reset | socat - UNIX-CONNECT:/tmp/mon.sock`), then `adb root` again.
+- Disable app-store/updater apps in the guest (`pm disable-user --user 0 <package>`): with 2 GB RAM
+  they starve the Instagram app.
 - Instagram can tell this is an emulator (QEMU board, x86 + ARM bridge). Identity is deliberately
   not spoofed; behaviour is kept human-paced. Use an account you can afford to lose.
