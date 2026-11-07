@@ -209,6 +209,7 @@ def main():
         time.sleep(random.uniform(2, 7))    # a person does not act the instant a link arrives
         url = f"https://instagram.com/{kind_from(sys.argv[1])}/{code}/"
         adb("shell", "input keyevent 224")
+        adb("shell", "wm dismiss-keyguard")   # after a VM reboot the lock screen hides the deep-linked app
         adb("shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url, "-p", "com.instagram.android")
         pacing_record()
         # wait for cache spans to appear and stop growing (video + audio)

@@ -58,6 +58,9 @@ caches every result for 7 days so a repeated link never touches the app.
 4. **Install and log in to Instagram** over VNC (`novnc-start.sh` gives a browser view):
    `adb install instagram.apk`, open it, log in, finish any verification, scroll a little.
 5. **Root adb** (needed to read the app's private cache): `adb root` — repeat after every VM reboot.
+   Disable the lock screen once (`adb shell locksettings set-disabled true`): with the keyguard up
+   the deep link opens behind it and the app never caches anything (`ig-fetch.py` also runs
+   `wm dismiss-keyguard` before every link).
 6. **Copy the tools** to the host, e.g. `~/android-vm/`: `ig-fetch.py`, `ig_state.py`,
    `ig-vm-service.py`. Test one link by hand:
    `python3 ig-fetch.py https://www.instagram.com/reel/<code>/ /tmp/out` → `/tmp/out/<code>.mp4`.
