@@ -14,8 +14,9 @@
 //   --limit N        how many of the newest matching posts to take (default 20)
 //   --days N         only look at posts newer than N days (default 60)
 //   --per-channel N  scan at most N messages per channel/thread (default 1000)
-//   --gap S          wait S seconds between posts (default 0). The VM service caps app
-//                    sessions at 10/hour, so a big backlog needs --gap 370.
+//   --gap S          wait S seconds after a post that needed the Android VM (default 0).
+//                    The VM service caps app sessions at 10/hour, so a big backlog needs
+//                    --gap 370. Posts the normal downloaders fix are not paced.
 //   --dry-run        list the matches, change nothing
 // Exit code: 0 when the pass completes, 1 on a fatal error.
 
@@ -136,7 +137,7 @@ async function reprocessOne(client, msg) {
         intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
         partials: [Partials.Channel, Partials.Message]
     });
-    const ready = new Promise((r) => client.once('ready', r));
+    const ready = new Promise((r) => client.once('clientReady', r));
     await client.login(token);
     await ready;
     console.log(`[reprocess] logged in as ${client.user.tag}`);
@@ -156,14 +157,18 @@ async function reprocessOne(client, msg) {
     let fixed = 0;
     for (let i = 0; i < targets.length; i++) {
         const m = targets[i];
+        let touchedVm = true; // unknown outcome (error) => assume the VM was asked
         try {
             const r = await reprocessOne(client, m);
             if (r.still === false) fixed++;
+            // the VM is only asked when the normal downloaders failed: a post they fixed cost no app session
+            touchedVm = r.vm || r.still !== false;
             console.log(`[reprocess] ${i + 1}/${targets.length} ${m.channel.id}/${m.id} ${r.url} -> ${r.still ? 'STILL UNAVAILABLE' : 'fixed'}${r.vm ? ' (Android VM)' : ''} files=${r.names}`);
         } catch (e) {
             console.error(`[reprocess] ${i + 1}/${targets.length} ${m.channel.id}/${m.id} failed: ${e.message}`);
         }
-        if (opts.gap > 0 && i < targets.length - 1) await sleep(opts.gap * 1000);
+        // --gap paces app sessions only (the VM service caps them at 10/hour)
+        if (opts.gap > 0 && touchedVm && i < targets.length - 1) await sleep(opts.gap * 1000);
     }
     console.log(`[reprocess] done: ${fixed}/${targets.length} fixed`);
     await client.destroy();
