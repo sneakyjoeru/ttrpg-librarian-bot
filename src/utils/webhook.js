@@ -31,7 +31,7 @@ function extractPlaceholderBaseContent(content) {
     // otherwise pollute the repost). `[PRIVATE VIDEO, ACCESS ONLY VIA LINK]`
     // is the pre-2026-09-30 wording; keep stripping it for old placeholders.
     text = text.replace(/\[PRIVATE VIDEO, ACCESS ONLY VIA LINK\]\s*/gi, '');
-    text = text.replace(/^Video is unavailable for embedding\.\s*$/gim, '');
+    text = text.replace(/^Video is unavailable for embedding\.[ \t]*(?:\r?\n|$)/gim, '');
     // ...and the Android-VM label (services/igVmClient.js VM_LABEL), re-added on success.
     text = text.replace(/^-# 🛠 processed using a dirty hack\s*$/gim, '');
     // Strip the `stage:` portion (and everything after it).
