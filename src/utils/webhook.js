@@ -495,7 +495,9 @@ async function buildRecoveredPlaceholder(client, existingMessage) {
         isWebhook: !!existingMessage.webhookId,
         webhookClient: null,
         originalMessage: existingMessage,
-        baseText
+        baseText,
+        // baseText drops this marker; a re-run that keeps the old media must put it back
+        wasUnavailable: /^Video is unavailable for embedding\./im.test(existingMessage.content || '')
     };
     if (placeholder.isWebhook) {
         try {

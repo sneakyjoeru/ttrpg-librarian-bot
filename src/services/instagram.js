@@ -2036,9 +2036,15 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                     // replace existing media with a bare link — keep the post as
                     // is and just clear the working indicator.
                     console.log('[Instagram Interceptor] Downloads failed but the existing message already has media — keeping it untouched.');
-                    const keepContent = placeholder.baseText || cleanedRemadeContent || '';
+                    let keepContent = placeholder.baseText || cleanedRemadeContent || '';
+                    if (placeholder.wasUnavailable) {
+                        // the kept media is still only the cover: keep saying so
+                        const marker = 'Video is unavailable for embedding.';
+                        keepContent = keepContent.includes(`<${standardUrl}>`)
+                            ? keepContent.replace(`<${standardUrl}>`, `${marker}\n<${standardUrl}>`)
+                            : `${marker}\n${keepContent || `<${standardUrl}>`}`;
+                    }
                     await finalizePlaceholderClean(placeholder, keepContent, true).catch(() => {});
-                    job.success({ stage: 'instagram_kept_existing_media', reason: 'all_downloads_failed' });
                 } else {
                     console.log(`[Instagram Interceptor] All downloads failed. Posting markdown hyperlink for Discord embed: [${displayUrl}](${fallbackUrl})`);
                     await updateWorkingPlaceholder(placeholder, fallbackContent, [], false, 0, fallbackContent);
