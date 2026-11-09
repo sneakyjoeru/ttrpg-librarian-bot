@@ -4,20 +4,23 @@
 # Why: the VM has no autostart and no health watchdog, so after an N150 reboot, a guest
 # freeze or a boot that stops at the logo the service answered 503 "vm-down" and the bots
 # silently fell back to the cover image ("Video is unavailable for embedding"). This runs
-# every 5 minutes (systemd timer) and:
-#   1. starts QEMU when it is not running (autostart after a host reboot),
-#   2. adb-root's the guest once it is up (needed to read the Instagram cache),
-#   3. resets a guest that has been at the boot logo / not answering for too long,
-#   4. restarts QEMU when a reset did not help,
-#   5. posts to the alert channel when reachability changes (up<->down).
+# every 5 minutes (android-vm-supervise.service, a long-running loop) and:
+#   1. starts QEMU when it is not running (autostart after a host reboot / crash / kill),
+#   2. continues a paused VM (QEMU 'stop', host I/O-error pause),
+#   3. adb-root's the guest once it is up (needed to read the Instagram cache),
+#   4. system_reset + cont when the guest stays unreachable for BOOT_GRACE,
+#   5. full QEMU restart when it is still dead BOOT_GRACE after that reset,
+#   6. posts to the alert channel when reachability changes (up<->down).
 # Safe by default: when the guest is up and adb answers, it only checks root and exits.
 set -u
 cd "$(dirname "$0")" || exit 1
 LOG="$PWD/vm-supervise.log"
 STATE="$PWD/vm-supervise.state"
 A="/usr/bin/adb -s 127.0.0.1:5555"
-BOOT_GRACE=900          # s a fresh/just-reset guest may take before it counts as stuck
-RESET_COOLDOWN=1200     # s between two resets
+BOOT_GRACE=${BOOT_GRACE:-900}   # s a guest may stay unreachable (after a start, a reset or its last healthy
+                                # check) before the next step: dead -> system_reset -> full QEMU restart.
+# Env-overridable so the recovery ladder can be tested without waiting 15 minutes:
+#   BOOT_GRACE=60 bash vm-supervise.sh
 
 log() { echo "$(date +%Y-%m-%dT%H:%M:%S%z) $*" >> "$LOG"; }
 alert() { local r; r=$(python3 -c 'import sys; sys.path.insert(0,"."); import ig_state; print(ig_state.discord(sys.argv[1]))' "$1" 2>&1); log "alert sent=$r :: $1"; }
@@ -39,15 +42,26 @@ set_state() { echo "$1" > "$STATE"; if [ "$prev" != "$1" ] && [ "$prev" != "unkn
         else alert "✅ Android-VM Instagram fallback is reachable again."; fi
     fi; }
 
+mon() { printf '%s\n' "$1" | timeout 5 socat - UNIX-CONNECT:/tmp/mon.sock 2>/dev/null | tr -d '\r'; }
+vm_status() { mon "info status" | grep -ao 'VM status: [a-z-]*' | head -1 | cut -d' ' -f3; }
+
+# Escalation is timed from the last thing WE did to the guest (QEMU start or reset), not from the QEMU
+# process age: a system_reset keeps the same process, so its age said nothing about the new boot.
+# .vm-guest-since = "<epoch> <start|reset>"
+mark() { echo "$(date +%s) $1" > "$PWD/.vm-guest-since"; }
+since_epoch() { local e; e=$(cut -d' ' -f1 "$PWD/.vm-guest-since" 2>/dev/null); [ -n "$e" ] && echo "$e" || echo $(( $(date +%s) - $(qemu_age) )); }
+last_action() { cut -d' ' -f2 "$PWD/.vm-guest-since" 2>/dev/null || echo start; }
+
 reset_guest() {
-    local last=0; [ -f "$PWD/.vm-last-reset" ] && last=$(cat "$PWD/.vm-last-reset" 2>/dev/null || echo 0)
-    local now; now=$(date +%s)
-    if [ $((now - last)) -lt $RESET_COOLDOWN ]; then log "reset skipped (cooldown $((now - last))s)"; return 1; fi
-    echo "$now" > "$PWD/.vm-last-reset"
-    log "guest looks stuck — QEMU system_reset"
-    echo system_reset | timeout 5 socat - UNIX-CONNECT:/tmp/mon.sock >/dev/null 2>&1 || log "WARN monitor reset failed"
+    log "guest stuck — QEMU system_reset + cont"
+    mon "system_reset" >/dev/null
+    # a paused VM (monitor 'stop', host I/O-error pause) stays 'paused (prelaunch)' after a reset
+    # until it is continued — measured 2026-11-09 in the self-recovery test
+    mon "cont" >/dev/null
+    local st; st=$(vm_status)
+    [ "$st" = "running" ] || log "WARN monitor not usable (VM status '${st:-unknown}') — the next step is a full restart"
+    mark reset
     sleep 20; timeout 10 adb disconnect 127.0.0.1:5555 >/dev/null 2>&1; timeout 10 adb connect 127.0.0.1:5555 >/dev/null 2>&1
-    return 0
 }
 
 start_vm() {
@@ -56,6 +70,18 @@ start_vm() {
     # and every later run logs "another run is active, skipping" (measured 2026-11-09).
     setsid ./vm-start.sh < /dev/null >/dev/null 2>&1 9>&- &
     sleep 15
+    mark start
+}
+
+restart_vm() {
+    log "reset did not bring the guest back — full QEMU restart"
+    # vm-stop.sh starts with `adb shell reboot -p`, which never returns on an unresponsive guest:
+    # bound it, then SIGKILL QEMU ourselves (measured 2026-11-09).
+    timeout 45 ./vm-stop.sh >/dev/null 2>&1 9>&-
+    pkill -f 'qemu[-]system-x86_64' 2>/dev/null; sleep 3
+    pgrep -f 'qemu[-]system-x86_64' >/dev/null && { pkill -9 -f 'qemu[-]system-x86_64'; sleep 3; }
+    rm -f /tmp/mon.sock /tmp/ser.sock
+    start_vm
 }
 
 # --- main --------------------------------------------------------------------
@@ -67,29 +93,29 @@ if [ -z "$PID" ]; then
     exit 0
 fi
 
+# a paused VM never comes back on its own: continue it first (cheap, harmless when running)
+VS=$(vm_status)
+if [ -n "$VS" ] && [ "$VS" != "running" ]; then
+    log "qemu reports VM status '$VS' — sending cont"
+    mon "cont" >/dev/null; sleep 5
+fi
+
 timeout 10 adb connect 127.0.0.1:5555 >/dev/null 2>&1
 ST=$(adb_state)
 AGE=$(qemu_age)
+GUEST_AGE=$(( $(date +%s) - $(since_epoch) ))
 
-if [ "$ST" != "device" ]; then
+if [ "$ST" != "device" ] || ! boot_done; then
     set_state down
-    if [ "$AGE" -gt "$BOOT_GRACE" ]; then
-        if reset_guest; then log "reset issued (age ${AGE}s, adb=$ST)"; else
-            # reset refused by cooldown and the guest is still dead: full QEMU restart
-            if [ "$AGE" -gt $((BOOT_GRACE * 3)) ]; then
-                log "reset did not help (age ${AGE}s) — restarting QEMU"
-                ./vm-stop.sh >/dev/null 2>&1; sleep 5; start_vm
-            fi
-        fi
+    why="adb=${ST:-none}"; [ "$ST" = "device" ] && why="boot not completed"
+    if [ "$GUEST_AGE" -le "$BOOT_GRACE" ]; then
+        log "guest coming up ($why, ${GUEST_AGE}s since $(last_action)) — waiting"
+    elif [ "$(last_action)" = "reset" ]; then
+        restart_vm
     else
-        log "guest booting (age ${AGE}s, adb=$ST) — waiting"
+        log "guest dead for ${GUEST_AGE}s since $(last_action) ($why)"
+        reset_guest
     fi
-    exit 0
-fi
-
-if ! boot_done; then
-    set_state down
-    if [ "$AGE" -gt "$BOOT_GRACE" ]; then reset_guest && log "reset issued (boot never completed, age ${AGE}s)"; else log "boot in progress (age ${AGE}s)"; fi
     exit 0
 fi
 
@@ -100,5 +126,6 @@ if ! has_root; then
 fi
 
 set_state ok
+mark ok   # a later failure is timed from the last healthy check and gets a reset before a full restart
 log "ok (qemu age ${AGE}s, root=$(has_root && echo yes || echo no))"
 exit 0
