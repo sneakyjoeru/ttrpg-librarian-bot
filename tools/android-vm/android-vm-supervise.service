@@ -1,0 +1,11 @@
+[Unit]
+Description=Android-VM Instagram fallback supervisor (starts/reheals the BlissOS VM)
+Documentation=file:/home/sneakyjoe/android-vm/vm-supervise.log
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sneakyjoe
+WorkingDirectory=/home/sneakyjoe/android-vm
+ExecStart=/bin/bash /home/sneakyjoe/android-vm/vm-supervise.sh

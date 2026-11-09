@@ -11,7 +11,7 @@ Behaviour designed to look like an ordinary person using the app, and to keep th
   * nothing is done to an account that is flagged blocked / logged out / under review (see ig_state.py)
   * the app is opened with a normal deep link (no scripted taps or swipes), watched for a human-ish random time, then left via HOME
 """
-import base64, fcntl, glob, json, os, random, re, shutil, subprocess, sys, tempfile, time
+import base64, fcntl, glob, json, os, random, re, shutil, struct, subprocess, sys, tempfile, time, urllib.request
 from PIL import Image, ImageChops
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -71,14 +71,16 @@ def focus():
     return out.strip()
 
 
-def warm_up_app(limit=100):
+def warm_up_app(limit=190):
     """Cold start of the app under libhoudini crash-restarts for ~45 s (embedded 'Helium' webview) before it
     stays up; a deep link sent during that window is lost. Start the app first and wait for a real screen.
+    A CPU-starved host stretches that to minutes (measured 2026-11-09: never converged while the N150 was
+    busy, converged ~50 s after the browsers were stopped), so wait up to 190 s and say so when it never did.
     Returns None when ready, or an error string (e.g. a Meta consent prompt that needs a human once)."""
     if adb("shell", "pidof com.instagram.android").stdout.strip():
         return None  # already running (warm): the deep link works directly
     adb("shell", "monkey -p com.instagram.android -c android.intent.category.LAUNCHER 1")
-    t0 = time.time()
+    t0, last_nudge = time.time(), 0.0
     while time.time() - t0 < limit:
         time.sleep(5)
         f = focus()
@@ -87,7 +89,11 @@ def warm_up_app(limit=100):
         if "com.instagram.android/" in f and "MainTabActivity" in f:
             time.sleep(random.uniform(3, 8))
             return None
-    return None  # not conclusive; let the deep link try anyway
+        # process died again (crash loop): nudge a new start, but not more often than every 20 s
+        if not adb("shell", "pidof com.instagram.android").stdout.strip() and time.time() - last_nudge > 20:
+            last_nudge = time.time()
+            adb("shell", "monkey -p com.instagram.android -c android.intent.category.LAUNCHER 1")
+    return "Instagram app did not stay up (crash loop) - check the N150 load: %s" % adb("shell", "uptime").stdout.strip()
 
 
 def list_spans(mid):
@@ -190,6 +196,81 @@ def cache_lookup(code):
         p = os.path.join(RESULT_CACHE, f"{code}.{ext}")
         if os.path.exists(p) and time.time() - os.path.getmtime(p) < RESULT_TTL:
             return p
+    return None
+
+
+def sidx_expected_size(data):
+    """Full byte size of a DASH fMP4 representation from the sidx box at its start (header + every
+    referenced segment). None when the cached prefix carries no sidx."""
+    i = 0
+    while i + 8 <= len(data):
+        size, typ = struct.unpack(">I4s", data[i:i + 8])
+        if size < 8:
+            return None
+        if typ == b"sidx":
+            b = data[i + 8:i + size]
+            if len(b) < 24:
+                return None
+            p = 12                                   # version/flags + reference_ID + timescale
+            if b[0] == 0:
+                first_offset = struct.unpack(">I", b[p + 4:p + 8])[0]; p += 8
+            else:
+                first_offset = struct.unpack(">Q", b[p + 8:p + 16])[0]; p += 16
+            p += 2
+            count = struct.unpack(">H", b[p:p + 2])[0]; p += 2
+            refs = sum(struct.unpack(">I", b[p + 12 * k:p + 12 * k + 4])[0] & 0x7fffffff for k in range(count))
+            return i + size + first_offset + refs
+        i += size
+    return None
+
+
+def app_pid():
+    """pid of the main Instagram process (largest RSS among processes named com.instagram.android)"""
+    best, best_rss = None, -1
+    for pid in adb("shell", "pidof com.instagram.android").stdout.split():
+        m = re.search(r"VmRSS:\s+(\d+)", adb("shell", f"cat /proc/{pid}/status").stdout)
+        rss = int(m.group(1)) if m else 0
+        if rss > best_rss:
+            best, best_rss = pid, rss
+    return best
+
+
+def urls_from_app_memory(keys):
+    """Signed CDN URL of each representation: it sits in the app's Java heap right after the ExoPlayer
+    cache key "null.<repId>.-1". Read-only /proc/<pid>/mem scan (~30 s), no network/UI activity on the
+    account. Returns {repId: [urls]}."""
+    found = {k: [] for k in keys}
+    pid = app_pid()
+    if not pid:
+        return found
+    for line in adb("shell", f"cat /proc/{pid}/maps").stdout.splitlines():
+        parts = line.split(None, 5)
+        name = parts[5].strip() if len(parts) > 5 else ""
+        if len(parts) < 2 or not parts[1].startswith("r") or not re.search(r"dalvik-main space|dalvik-large object", name):
+            continue
+        a, b = (int(x, 16) for x in parts[0].split("-"))
+        mem = subprocess.run(ADB + ["exec-out", f"dd if=/proc/{pid}/mem bs=4096 skip={a // 4096} count={(b - a) // 4096} 2>/dev/null"],
+                             capture_output=True).stdout
+        for k in keys:
+            for m in re.finditer(re.escape(f"null.{k}.-1".encode()), mem):
+                u = re.search(rb"https://[a-z0-9.\-]+\.(?:cdninstagram\.com|fbcdn\.net)/[\x21-\x7e]+", mem[m.end():m.end() + 4000])
+                if u and u.group(0).decode() not in found[k]:
+                    found[k].append(u.group(0).decode())
+    return found
+
+
+def complete_stream(rep, have, expected, urls):
+    """Download the full representation; accept it only when it is exactly `expected` bytes and starts
+    with the bytes the app cached (same file, same encode)."""
+    for url in urls:
+        try:
+            data = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"}), timeout=30).read()
+        except Exception as e:
+            print(f"{rep}: CDN fetch failed: {e}")
+            continue
+        if len(data) == expected and data[:len(have)] == have:
+            return data
+        print(f"{rep}: CDN body rejected ({len(data)} bytes, expected {expected})")
     return None
 
 
@@ -296,13 +377,36 @@ def main():
                 if os.path.exists(dst):
                     streams.setdefault((m.group(2), m.group(1)), []).append((int(m.group(3)), dst))
             files = {}
+            incomplete = {}          # repId -> (path, cached bytes, expected size)
             for (kind, key), lst in streams.items():
                 lst.sort()
                 p = os.path.join(work, f"{kind}_{key}.mp4")
+                data = b""
+                for off, fn in lst:
+                    if off != len(data):   # gap in the cached spans: keep only the contiguous prefix
+                        break
+                    data += open(fn, "rb").read()
                 with open(p, "wb") as o:
-                    for _, fn in lst:
-                        o.write(open(fn, "rb").read())
+                    o.write(data)
                 files.setdefault(kind, []).append(p)
+                expected = sidx_expected_size(data)
+                if expected and len(data) < expected:
+                    incomplete[key + kind] = (p, data, expected)
+            # 2026-11-07 (reel DfbxdBQsAZk: 4.9 s of 12.3 s delivered): the guest cannot render video, so
+            # the player only ever caches the first DASH segment. Complete each stream from the CDN using
+            # the signed URL the app holds in memory, verified against the cached prefix.
+            partial = False
+            if incomplete:
+                found = urls_from_app_memory(list(incomplete))
+                for rep, (p, have, expected) in incomplete.items():
+                    full = complete_stream(rep, have, expected, found.get(rep, []))
+                    if full:
+                        with open(p, "wb") as o:
+                            o.write(full)
+                        print(f"{code}: stream {rep} completed from CDN ({len(have)} -> {len(full)} bytes, {len(found.get(rep, []))} url(s) in app memory)")
+                    else:
+                        partial = True
+                        print(f"{code}: stream {rep} INCOMPLETE ({len(have)}/{expected} bytes, {len(found.get(rep, []))} url(s) in app memory)")
             if "v" not in files:
                 leave_app(); print("ERROR: no video stream cached"); sys.exit(5)
             vid = max(files["v"], key=os.path.getsize)
@@ -336,7 +440,11 @@ def main():
             if not os.path.exists(dest) or os.path.getsize(dest) < 10240:
                 # 2026-11-07: a 261-byte mp4 (only partial spans cached) was delivered and cached for 7 days
                 leave_app(); print("ERROR: output too small (incomplete cache)"); sys.exit(5)
-            shutil.copy(dest, os.path.join(RESULT_CACHE, os.path.basename(dest)))
+            if partial and dest.endswith(".mp4"):
+                # never put a truncated video in the 7-day result cache; tell the service so the bot can label it
+                print("PARTIAL", dest)
+            else:
+                shutil.copy(dest, os.path.join(RESULT_CACHE, os.path.basename(dest)))
             print("RESULT", dest, os.path.getsize(dest), "bytes")
         finally:
             shutil.rmtree(work, ignore_errors=True)

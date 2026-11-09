@@ -62,9 +62,21 @@ caches every result for 7 days so a repeated link never touches the app.
    the deep link opens behind it and the app never caches anything (`ig-fetch.py` also runs
    `wm dismiss-keyguard` before every link).
 6. **Copy the tools** to the host, e.g. `~/android-vm/`: `ig-fetch.py`, `ig_state.py`,
-   `ig-vm-service.py`. Test one link by hand:
+   `ig-vm-service.py`, `vm-start.sh`, `vm-stop.sh`, `vm-supervise.sh`. Test one link by hand:
    `python3 ig-fetch.py https://www.instagram.com/reel/<code>/ /tmp/out` → `/tmp/out/<code>.mp4`.
-7. **Start the service.** Create `~/android-vm/ig-vm-service.env` (mode 600):
+7. **Keep the VM alive** — the step that was missing on 2026-11-09, when a guest that had wedged at
+   the boot logo left the service answering `503 vm-down` for two days and every reel silently fell
+   back to its cover image. `vm-supervise.sh` is idempotent and safe to run often: it starts QEMU
+   when it is not running (host-reboot autostart), `adb root`s a freshly booted guest, resets a
+   guest that has been at the logo or unreachable for 15 min, restarts QEMU when a reset does not
+   help, and posts to the alert channel on every up↔down change. Install it with a timer:
+   ```
+   sudo cp android-vm-supervise.{service,timer} /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl enable --now android-vm-supervise.timer
+   systemctl list-timers android-vm-supervise.timer     # next run in 5 min
+   tail -f ~/android-vm/vm-supervise.log                # ok (qemu age …, root=yes)
+   ```
+8. **Start the service.** Create `~/android-vm/ig-vm-service.env` (mode 600):
    ```
    IG_VM_TOKEN=<random string, 24+ chars>
    IG_VM_ALLOWED_GUILDS=<guild id>,<guild id>
@@ -101,10 +113,14 @@ Posts are edited in place. `--gap 370` keeps a large backlog under the 10/hour c
 - Photo size is what the app cached (~720 px wide).
 - One extraction at a time, ~20-40 s each plus pacing; a busy queue answers 429 and the post keeps
   "Video is unavailable for embedding" (run the re-process script later).
-- The VM has no autostart: after a host reboot run `vm-start.sh` and `adb root`; until then the
+- The supervisor autostarts the VM and heals a wedged one within ~5-15 min; until it has, the
   service answers 503 `vm-down` and nothing changes for users.
 - Cold start is slow: under libhoudini the app crash-restarts for ~45 s before it stays up.
-  `ig-fetch.py` starts the app and waits for the feed before sending the deep link.
+  `ig-fetch.py` starts the app and waits for the feed before sending the deep link (up to 190 s).
+- **A busy host starves the guest.** Measured 2026-11-09: with a desktop browser and a remote-desktop
+  server running, the app never left its crash loop and every extraction returned "no cached media";
+  after stopping them it converged in ~50 s. Keep the N150 light while the VM works, and read the
+  load in the bot log (`INTERCEPTOR STAGE … Android VM`) when the VM suddenly stops producing.
 - Meta shows consent prompts from time to time (EU cookie choice, "subscribe or use free with
   ads"). While one is open nothing gets cached; `ig-fetch.py` reports it and you click it through
   once over VNC. A stuck guest (clock frozen, adb offline) recovers with a QEMU monitor
