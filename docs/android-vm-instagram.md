@@ -124,6 +124,10 @@ Posts are edited in place. `--gap 370` keeps a large backlog under the 10/hour c
   server running, the app never left its crash loop and every extraction returned "no cached media";
   after stopping them it converged in ~50 s. Keep the N150 light while the VM works, and read the
   load in the bot log (`INTERCEPTOR STAGE … Android VM`) when the VM suddenly stops producing.
+  `tools/android-vm/nightly-browser-cleanup.sh` (+ `/etc/cron.d/nightly-browser-cleanup`, 04:00
+  daily) kills vivaldi / google-chrome / chromium / the puppeteer chrome on the host so a desktop
+  session left open never starves the guest overnight; it logs every kill to
+  `~/nightly-browser-cleanup.log` and supports `--dry-run`.
 - Meta shows consent prompts from time to time (EU cookie choice, "subscribe or use free with
   ads"). While one is open nothing gets cached; `ig-fetch.py` reports it and you click it through
   once over VNC. A stuck guest (clock frozen, adb offline) recovers with a QEMU monitor
