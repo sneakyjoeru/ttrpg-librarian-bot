@@ -71,11 +71,14 @@ caches every result for 7 days so a repeated link never touches the app.
    guest that has been at the logo or unreachable for 15 min, restarts QEMU when a reset does not
    help, and posts to the alert channel on every up↔down change. Install it with a timer:
    ```
-   sudo cp android-vm-supervise.{service,timer} /etc/systemd/system/
-   sudo systemctl daemon-reload && sudo systemctl enable --now android-vm-supervise.timer
-   systemctl list-timers android-vm-supervise.timer     # next run in 5 min
-   tail -f ~/android-vm/vm-supervise.log                # ok (qemu age …, root=yes)
+   sudo cp android-vm-supervise.service /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl enable --now android-vm-supervise.service
+   systemctl status android-vm-supervise.service      # active (running), QEMU as its child
+   tail -f ~/android-vm/vm-supervise.log              # "ok (qemu age …, root=yes)"
    ```
+   Run it as a **long-running loop** unit, never as a `oneshot` + timer: a oneshot's cgroup teardown
+   kills the QEMU child it just started (measured 2026-11-09). Also keep QEMU out of the script's lock
+   fd (`9>&-` when spawning) or the lock is never released and every later cycle skips itself.
 8. **Start the service.** Create `~/android-vm/ig-vm-service.env` (mode 600):
    ```
    IG_VM_TOKEN=<random string, 24+ chars>

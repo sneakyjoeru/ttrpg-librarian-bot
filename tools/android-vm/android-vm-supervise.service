@@ -1,11 +1,20 @@
 [Unit]
 Description=Android-VM Instagram fallback supervisor (starts/reheals the BlissOS VM)
 Documentation=file:/home/sneakyjoe/android-vm/vm-supervise.log
-After=network-online.target docker.service
+After=network-online.target docker.service adb.service
 Wants=network-online.target
 
 [Service]
-Type=oneshot
+Type=simple
 User=sneakyjoe
 WorkingDirectory=/home/sneakyjoe/android-vm
-ExecStart=/bin/bash /home/sneakyjoe/android-vm/vm-supervise.sh
+# Long-running loop, NOT a oneshot: a oneshot's cgroup teardown kills the QEMU child it just
+# started (measured 2026-11-09: "qemu started (pid …)" then the guest was gone a minute later).
+ExecStart=/bin/bash -c 'while true; do bash /home/sneakyjoe/android-vm/vm-supervise.sh; sleep 300; done'
+Restart=always
+RestartSec=30
+KillMode=process
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

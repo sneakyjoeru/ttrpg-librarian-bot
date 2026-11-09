@@ -52,7 +52,9 @@ reset_guest() {
 
 start_vm() {
     log "qemu not running — ./vm-start.sh"
-    setsid ./vm-start.sh < /dev/null >/dev/null 2>&1 &
+    # 9>&- : the long-lived QEMU child must NOT inherit the lock fd, or the lock is held forever
+    # and every later run logs "another run is active, skipping" (measured 2026-11-09).
+    setsid ./vm-start.sh < /dev/null >/dev/null 2>&1 9>&- &
     sleep 15
 }
 
