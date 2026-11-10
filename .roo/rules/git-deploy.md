@@ -1,7 +1,7 @@
 # Git protocol (read before ANY git or deploy command)
 
 ## Where you are
-- This working copy under `/distr-fun/` is the ONLY place you edit and commit. It is bind-mounted from the .99 host
+- This working copy under `/distr-agentic/` (NAS `Distr/Agentic`, moved from `Distr/Fun` 2026-11-10) is the ONLY place you edit and commit. It is bind-mounted from the .99 host
   (`<host mirror of this working copy>`), and a 2-way rsync timer (`sync-distr-fun`, every ~5 min, last-writer-wins by mtime,
   excludes `.git/`) mirrors the working files to the NAS share. It can REVERT a file you just committed or RESURRECT a deleted
   file as a root-owned working-tree change. A dirty file that exactly reverses a recent commit is syncer damage: restore it
