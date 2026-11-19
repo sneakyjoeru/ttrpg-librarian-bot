@@ -63,6 +63,7 @@ const handleChannelDelete = require('./src/handlers/channelDelete');
 const { handleReactionAdd, handleReactionRemove } = require('./src/handlers/reactions');
 const { inFlightMessages } = require('./src/utils/inFlightTracker');
 const watchdog = require('./src/utils/watchdog');
+const newbieScanner = require('./src/services/newbieScanner');
 
 // Process boot timestamp: a message created AFTER this process started can
 // never be "abandoned"/"missed" from a previous session — the live handler
@@ -107,6 +108,12 @@ client.once(Events.ClientReady, async () => {
     } catch (err) {
         console.warn('[HeyrobotPlatform] poller failed to start:', err.message);
     }
+    // Newbie scanner (optional feature): records its go-live time on first
+    // start and picks up members who joined while the bot was offline.
+    newbieScanner.initNewbieScanner(client).catch(err => {
+        console.warn('[NewbieScanner] init failed:', err.message);
+    });
+
     // Per-guild language config: initial scan of channels + user messages
     // (skipped when a fresh config exists). Used to answer in the language of
     // language-specific channels.
@@ -646,6 +653,11 @@ CRITICAL REQUIREMENTS:
 });
 
 // --- DISCORD CLIENT EVENT LISTENERS ---
+// Newbie scanner (optional feature): start watching members who join.
+client.on('guildMemberAdd', (member) => {
+    try { newbieScanner.handleNewbieJoin(member); } catch (err) { console.error('[NewbieScanner] join hook failed:', err); }
+});
+
 client.on('channelUpdate', (oldChannel, newChannel) => {
     handleChannelUpdate(oldChannel, newChannel).catch(console.error);
 });

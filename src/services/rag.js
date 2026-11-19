@@ -255,10 +255,16 @@ ${formattedTargetMessages || 'None found in the last 100 messages.'}
         // Per-server language config: language-specific channels (and guilds
         // whose main language isn't English) get a reply-language override.
         // '' for unknown/unscanned channels — default English stays.
+        // Summaries / TL;DR / TL;DW of any media are English-only (owner rule
+        // 2026-11-19), so they never get the channel-language override.
+        const isSummaryRequest = /tl;?d[rw]|summar|recap|пересказ|перескаж|резюм|кратк|о\s+ч[её]м\s+(?:видео|статья|пост|ролик)/i.test(llmQuery);
+        if (isSummaryRequest) {
+            systemMessage += `\n- This is a summary request: write the summary in English, whatever the language of the source or of the question.`;
+        }
         try {
             const { getChannelLanguage, LANG_NAMES_EN } = require('./guildLanguages');
             const chLang = message.guild ? getChannelLanguage(message.guild.id, message.channel.id) : null;
-            if (chLang && chLang !== 'en') {
+            if (chLang && chLang !== 'en' && !isSummaryRequest) {
                 const langName = LANG_NAMES_EN[chLang] || chLang;
                 systemMessage += `\n- LANGUAGE OVERRIDE (top priority, replaces "Answer in English" above): this channel is a ${langName}-language channel. Answer ONLY in ${langName}.`;
             }

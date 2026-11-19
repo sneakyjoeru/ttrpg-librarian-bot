@@ -11,6 +11,7 @@ const { handleForumMessage, FORUM_URL_REGEX } = require('./forumHandler');
 const { handleRagQuery } = require('../services/rag');
 const { resolveYoutubeVideoId, handleYoutubeSummary, extractYoutubeVideoId } = require('../services/youtubeSummary');
 const { isDiscordFeatureEnabled } = require('../services/streamerJoe');
+const { handleNewbieMessage } = require('../services/newbieScanner');
 const { runCommandStream } = require('../utils/shell');
 const { parseRebuildProgressLine } = require('../utils/rebuildProgress');
 const { isMessageTiedToUser, removeTrackedMessage } = require('../utils/messageTracker');
@@ -51,6 +52,11 @@ async function _handleMessageCreateInner(client, message) {
     // Without the webhookId check, the bot re-intercepts its own webhook
     // reposts (which contain the Instagram URL in <...> format) → infinite loop.
     if (message.guild?.id !== SERVER_ID || message.author.bot || message.webhookId) return;
+
+    // --- Newbie scanner (optional feature, see src/services/newbieScanner.js) ---
+    // Runs first: a newbie banned for solicitation must not get any other
+    // processing (media reposts, LLM replies) for that message.
+    if (await handleNewbieMessage(client, message)) return;
 
     // --- /delete text command ---
     const deleteRegex = /^\/delete(?:\s+message)?(?:\s+(\d+))?$/i;

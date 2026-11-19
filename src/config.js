@@ -15,6 +15,20 @@ const SYSTEM_MESSAGE_ID = '1505941250732458166';      // Message ID of the bot's
 const GENERAL_CHANNEL_ID = '1294242036492406840';     // General chat channel ID (used for posting monthly free 3D printing schedules)
 const RULES_MESSAGE_ID = '1302931730411425852';       // Message ID of server rules, referenced in monthly printing posts
 const SNEAKYJOE_USER_ID = '221722372145676288';       // Discord User ID of the 3D printing host (sneakyjoe) tagged in print queues
+const MODLOG_CHANNEL_ID = '1294336728395550732';      // #modlog — moderation reports (newbie scanner bans), pings ADMIN_ROLE_ID
+
+// --- NEWBIE SCANNER (OPTIONAL FEATURE) ---
+// src/services/newbieScanner.js. Watches the first NEWBIE_SCANNER_MAX_MESSAGES
+// messages of members who joined after the feature went live; bans + purges a
+// newbie who solicits art commissions / money before saying anything that ties
+// them to Tallinn/Estonia. OPTIONAL: set env NEWBIE_SCANNER_ENABLED=0 to turn
+// it off, or NEWBIE_SCANNER_GUILD_IDS (comma list) to choose servers.
+// Enabled by default for ttrpg.ee (SERVER_ID) — owner request 2026-11-19.
+const NEWBIE_SCANNER_ENABLED = process.env.NEWBIE_SCANNER_ENABLED !== '0';
+const NEWBIE_SCANNER_GUILD_IDS = (process.env.NEWBIE_SCANNER_GUILD_IDS || SERVER_ID)
+    .split(',').map(s => s.trim()).filter(Boolean);
+const NEWBIE_SCANNER_MAX_MESSAGES = 15;               // first N messages of a newbie are checked
+const NEWBIE_SCANNER_STATE_PATH = './data/newbie-scanner.json';
 
 // SearXNG and Ollama run as Docker containers on the N150 host. The librarian
 // bot also runs in a container and is attached to the shared `ollama_default`
@@ -361,6 +375,11 @@ module.exports = {
     GENERAL_CHANNEL_ID,
     RULES_MESSAGE_ID,
     SNEAKYJOE_USER_ID,
+    MODLOG_CHANNEL_ID,
+    NEWBIE_SCANNER_ENABLED,
+    NEWBIE_SCANNER_GUILD_IDS,
+    NEWBIE_SCANNER_MAX_MESSAGES,
+    NEWBIE_SCANNER_STATE_PATH,
     SEARXNG_URL,
     OLLAMA_URL,
     OLLAMA_MODEL,

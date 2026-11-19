@@ -75,7 +75,7 @@ function buildSystemMessage(userQuestion) {
 You have been given the transcript of a YouTube video. Summarize it accurately based ONLY on the transcript content — do not invent details that are not present.
 Keep the summary concise and easy to scan (a short overview plus a few key points is enough). Avoid padding or filler.
 ${userQuestion ? `The user specifically asked: "${userQuestion}" — answer that using the transcript, in addition to (or instead of) a generic summary if it makes more sense.` : ''}
-Answer in English unless the transcript/user question is in another language, in which case answer in that language.`;
+Always write the summary in English, whatever the language of the transcript or of the user's question (owner rule: TL;DW / summaries are English-only).`;
 }
 
 function getQuotaDecision(message) {
