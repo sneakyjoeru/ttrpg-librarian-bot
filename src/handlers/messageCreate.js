@@ -10,7 +10,6 @@ const { handleArticleMessage } = require('./articleHandler');
 const { handleForumMessage, FORUM_URL_REGEX } = require('./forumHandler');
 const { handleRagQuery } = require('../services/rag');
 const { resolveYoutubeVideoId, handleYoutubeSummary, extractYoutubeVideoId } = require('../services/youtubeSummary');
-const { isDiscordFeatureEnabled } = require('../services/streamerJoe');
 const { handleNewbieMessage } = require('../services/newbieScanner');
 const { runCommandStream } = require('../utils/shell');
 const { parseRebuildProgressLine } = require('../utils/rebuildProgress');
@@ -399,7 +398,7 @@ async function _handleMessageCreateInner(client, message) {
     // --- Twitter/X Link Interceptor ---
     const twitterRegex = /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[a-zA-Z0-9_]+\/status\/\d+[^\s]*/i;
     const twitterMatch = message.content.match(twitterRegex);
-    if (twitterMatch && isDiscordFeatureEnabled('media_parsing')) {
+    if (twitterMatch) {
         let twitterUrl = twitterMatch[0];
         twitterUrl = twitterUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
         twitterUrl = twitterUrl.replace(/[.,:;!?]+$/, '');
@@ -413,7 +412,7 @@ async function _handleMessageCreateInner(client, message) {
     // caught too. Mirrors the robot-joe interceptor.
     const instagramRegex = /(?:https?:\/\/)?(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s]+/i;
     const instaMatch = message.content.match(instagramRegex);
-    if (instaMatch && isDiscordFeatureEnabled('media_parsing')) {
+    if (instaMatch) {
         const originalMatch = instaMatch[0];
         let instagramUrl = originalMatch;
         instagramUrl = instagramUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
@@ -435,7 +434,7 @@ async function _handleMessageCreateInner(client, message) {
     // --- Facebook Link Interceptor (facebook.com / fb.watch) ---
     const facebookRegex = /(?:https?:\/\/)?(?:www\.|m\.)?(?:facebook\.com|fb\.watch)\/[^\s]+/i;
     const fbMatch = message.content.match(facebookRegex);
-    if (fbMatch && isDiscordFeatureEnabled('media_parsing')) {
+    if (fbMatch) {
         const originalMatch = fbMatch[0];
         let facebookUrl = originalMatch;
         facebookUrl = facebookUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
@@ -453,7 +452,7 @@ async function _handleMessageCreateInner(client, message) {
     // profile mentions (tiktok.com/@user) are not intercepted.
     const tiktokRegex = /(?:https?:\/\/)?(?:(?:vm|vt)\.tiktok\.com\/[^\s)\]>]+|(?:www\.|m\.)?tiktok\.com\/(?:@[^\s\/]+\/(?:video|photo)\/|t\/|v\/|embed\/)[^\s)\]>]+)/i;
     const ttMatch = message.content.match(tiktokRegex);
-    if (ttMatch && isDiscordFeatureEnabled('media_parsing')) {
+    if (ttMatch) {
         const originalMatch = ttMatch[0];
         let tiktokUrl = originalMatch.replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, '');
         if (!/^https?:\/\//i.test(tiktokUrl)) {
@@ -467,7 +466,7 @@ async function _handleMessageCreateInner(client, message) {
     // --- Telegram Link Interceptor (t.me / telegram.me) ---
     const telegramRegex = /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/[a-zA-Z0-9_]+\/[a-zA-Z0-9_]+[^\s)]*/i;
     const tgMatch = message.content.match(telegramRegex);
-    if (tgMatch && isDiscordFeatureEnabled('media_parsing')) {
+    if (tgMatch) {
         const originalMatch = tgMatch[0];
         let telegramUrl = originalMatch.replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, '');
         if (!/^https?:\/\//i.test(telegramUrl)) {
@@ -482,7 +481,7 @@ async function _handleMessageCreateInner(client, message) {
     // Intercepts links to a popular aggregation platform (regex is built
     // at runtime in forumHandler.js to avoid literal domain names in source).
     const forumMatch = message.content.match(FORUM_URL_REGEX);
-    if (forumMatch && isDiscordFeatureEnabled('media_parsing')) {
+    if (forumMatch) {
         const originalMatch = forumMatch[0];
         let forumUrl = originalMatch.replace(/[:;=\-xX]*[\(\)]+$/, '').replace(/[.,:;!?]+$/, '');
         if (!/^https?:\/\//i.test(forumUrl)) {
@@ -512,7 +511,7 @@ async function _handleMessageCreateInner(client, message) {
     const articleDomainPattern = articleDomains.map(d => d.replace(/\./g, '\\.')).join('|');
     const articleRegex = new RegExp(`(?:https?:\\/\\/)?(?:[a-z0-9-]+\\.)*(${articleDomainPattern})(?:\\/[^\\s#]*)?`, 'i');
     const articleMatch = message.content.match(articleRegex);
-    if (articleMatch && isDiscordFeatureEnabled('news_parsing')) {
+    if (articleMatch) {
         let articleUrl = articleMatch[0];
         articleUrl = articleUrl.replace(/[:;=\-xX]*[\(\)]+$/, '');
         articleUrl = articleUrl.replace(/[.,:;!?]+$/, '');
@@ -699,10 +698,6 @@ async function _handleMessageCreateInner(client, message) {
             return;
         }
 
-        if (!isDiscordFeatureEnabled('llm_chat')) {
-            console.log('[HeyrobotPlatform] llm_chat disabled — skipping RAG reply');
-            return;
-        }
 
         const youtubeVideoId = await resolveYoutubeVideoId(message, query);
         if (youtubeVideoId) {
@@ -745,10 +740,6 @@ async function _handleMessageCreateInner(client, message) {
                 }
 
                 console.log(`[Mention] Role-mention fallback triggered by ${message.author.tag} (${message.author.id}) in ${message.channel.id}; matched role(s): ${matchedRoleIds.join(', ')}`);
-                if (!isDiscordFeatureEnabled('llm_chat')) {
-                    console.log('[HeyrobotPlatform] llm_chat disabled — skipping RAG reply');
-                    return;
-                }
 
                 const youtubeVideoId = await resolveYoutubeVideoId(message, query);
                 if (youtubeVideoId) {

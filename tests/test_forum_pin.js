@@ -1,82 +1,128 @@
-// Test: pin a message inside a Game Invitations forum thread using the same
-// logic the /pin slash command uses. Run inside the container:
-//   docker exec librarian-bot node /tmp/test_forum_pin.js
-const { Client, GatewayIntentBits, ChannelType } = require('discord.js');
+// Test: /pin and /unpin inside a Game Invitations forum thread.
+//
+// Remade 2026-11-19. The old version pinned one hard-coded real message
+// (1533442034525016075) in a real game thread; it broke as soon as that
+// thread auto-archived ("DiscordAPIError[50083]: Thread is archived") and it
+// mutated a player's thread every run. This version drives the REAL
+// src/handlers/interactions.js handler with mock interactions (no Discord
+// login, nothing in the server changes) and covers:
+//   - OP of the forum thread can pin / unpin (by id and "last message")
+//   - an Admin who is not the OP can pin
+//   - a non-OP non-admin is refused
+//   - a thread outside the forum (and outside campaign channels) is refused
+// Optional read-only live check (--live): the configured forum exists and is
+// a forum channel.
+//
+// Run: node tests/test_forum_pin.js [--live]
+//   or: docker exec librarian-bot node tests/test_forum_pin.js --live
+'use strict';
+const assert = require('assert');
 const path = require('path');
 
-// Load config the same way the bot does (from the app working dir).
-const config = require('../src/config');
+process.env.DISCORD_TOKEN = process.env.DISCORD_TOKEN || 'test_token';
+const { Collection, ChannelType, REST, Routes } = require('discord.js');
+const config = require(path.join(__dirname, '..', 'src', 'config'));
+const handleInteraction = require(path.join(__dirname, '..', 'src', 'handlers', 'interactions'));
 
 const FORUM_ID = config.GAME_INVITATIONS_FORUM_ID;
-const TARGET_MESSAGE_ID = '1533442034525016075';
-const SERVER_ID = config.SERVER_ID;
+const OP_ID = '100000000000000001';
+const OTHER_ID = '100000000000000002';
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+function makeInteraction({ commandName, userId, isAdmin = false, messageId = null, parentId = FORUM_ID, pinnedAlready = false }) {
+    const log = { pinned: [], unpinned: [], replies: [] };
+    const target = {
+        id: '200000000000000001',
+        url: 'https://discord.com/channels/g/t/200000000000000001',
+        pin: async () => { log.pinned.push(target.id); },
+        unpin: async () => { log.unpinned.push(target.id); },
+    };
+    const channel = {
+        id: '300000000000000001',
+        parentId,
+        isThread: () => true,
+        fetchStarterMessage: async () => ({ author: { id: OP_ID } }),
+        messages: {
+            fetch: async (arg) => {
+                if (typeof arg === 'string') return arg === target.id ? target : null;
+                return new Collection([[target.id, target]]);
+            },
+            fetchPinned: async () => new Collection(pinnedAlready ? [[target.id, target]] : []),
+        },
+    };
+    const interaction = {
+        isChatInputCommand: () => true,
+        guildId: config.SERVER_ID,
+        commandName,
+        options: { getString: (name) => (name === 'message_id' ? messageId : null) },
+        channel,
+        user: { id: userId, tag: `user-${userId}` },
+        member: {
+            roles: { cache: new Collection() },
+            permissions: { has: () => isAdmin },
+        },
+        reply: async (payload) => { log.replies.push(typeof payload === 'string' ? payload : payload.content); },
+    };
+    return { interaction, log, target };
+}
 
-client.once('ready', async () => {
-    console.log(`[Test] Logged in as ${client.user.tag}`);
-    let passed = true;
-    try {
-        const guild = await client.guilds.fetch(SERVER_ID);
-        const forum = await guild.channels.fetch(FORUM_ID);
-        console.log(`[Test] Forum channel: ${forum.name} (type=${forum.type})`);
-        const isForum = forum.type === ChannelType.GuildForum || forum.type === ChannelType.GuildMedia;
-        if (!isForum) {
-            console.error('[Test] FAIL: channel is not a forum');
-            passed = false;
-        }
+let passed = 0, failed = 0;
+async function test(name, fn) {
+    try { await fn(); console.log(`  \u2713 ${name}`); passed++; }
+    catch (e) { console.log(`  \u2717 ${name}: ${e.message}`); failed++; }
+}
 
-        // Enumerate the forum's threads to find the one containing the target message.
-        const activeThreads = await forum.threads.fetchActive();
-        const archivedThreads = await forum.threads.fetchArchived();
-        const allThreads = [...activeThreads.threads.values(), ...archivedThreads.threads.values()];
-        console.log(`[Test] Forum has ${allThreads.length} threads (active+archived)`);
+(async () => {
+    console.log('/pin and /unpin in a Game Invitations forum thread (real handler, mock Discord)');
 
-        let foundThread = null;
-        let targetMessage = null;
-        for (const thread of allThreads) {
-            const msg = await thread.messages.fetch(TARGET_MESSAGE_ID).catch(() => null);
-            if (msg) {
-                foundThread = thread;
-                targetMessage = msg;
-                break;
-            }
-        }
+    await test('OP pins a message by id', async () => {
+        const { interaction, log, target } = makeInteraction({ commandName: 'pin', userId: OP_ID, messageId: '200000000000000001' });
+        await handleInteraction({}, interaction);
+        assert.deepStrictEqual(log.pinned, [target.id]);
+        assert.ok(/Pinned/.test(log.replies[0]), log.replies[0]);
+    });
 
-        if (!foundThread || !targetMessage) {
-            console.error(`[Test] FAIL: could not find message ${TARGET_MESSAGE_ID} in any forum thread`);
-            passed = false;
-        } else {
-            console.log(`[Test] Found message ${TARGET_MESSAGE_ID} in thread "${foundThread.name}" (id=${foundThread.id})`);
-            console.log(`[Test] Thread parentId=${foundThread.parentId} (forum=${FORUM_ID}) match=${foundThread.parentId === FORUM_ID}`);
-            console.log(`[Test] Message author: ${targetMessage.author.tag}, content preview: ${targetMessage.content.substring(0, 80)}`);
+    await test('OP pins the last message (no id)', async () => {
+        const { interaction, log, target } = makeInteraction({ commandName: 'pin', userId: OP_ID });
+        await handleInteraction({}, interaction);
+        assert.deepStrictEqual(log.pinned, [target.id]);
+    });
 
-            // Verify the command-guard logic would allow: thread is a forum thread
-            const isForumThread = foundThread.isThread() && foundThread.parentId === FORUM_ID;
-            console.log(`[Test] isForumThread check = ${isForumThread}`);
-            if (!isForumThread) {
-                console.error('[Test] FAIL: guard logic would reject this thread');
-                passed = false;
-            }
+    await test('OP unpins the last pinned message', async () => {
+        const { interaction, log, target } = makeInteraction({ commandName: 'unpin', userId: OP_ID, pinnedAlready: true });
+        await handleInteraction({}, interaction);
+        assert.deepStrictEqual(log.unpinned, [target.id]);
+        assert.ok(/Unpinned/.test(log.replies[0]), log.replies[0]);
+    });
 
-            // Actually pin the message (the real test).
-            await targetMessage.pin();
-            console.log('[Test] Successfully pinned the message.');
+    await test('Admin (not OP) can pin', async () => {
+        const { interaction, log } = makeInteraction({ commandName: 'pin', userId: OTHER_ID, isAdmin: true });
+        await handleInteraction({}, interaction);
+        assert.strictEqual(log.pinned.length, 1);
+    });
 
-            // Verify it shows in pinned list.
-            const pinned = await foundThread.messages.fetchPinned();
-            const isPinned = pinned.has(TARGET_MESSAGE_ID);
-            console.log(`[Test] Message present in pinned list: ${isPinned}`);
-            if (!isPinned) passed = false;
-        }
-    } catch (err) {
-        console.error('[Test] ERROR:', err);
-        passed = false;
-    } finally {
-        await client.destroy();
-        console.log(passed ? '[Test] RESULT: PASS' : '[Test] RESULT: FAIL');
-        process.exit(passed ? 0 : 1);
+    await test('non-OP non-admin is refused, nothing pinned', async () => {
+        const { interaction, log } = makeInteraction({ commandName: 'pin', userId: OTHER_ID });
+        await handleInteraction({}, interaction);
+        assert.strictEqual(log.pinned.length, 0);
+        assert.ok(/Only the thread owner/.test(log.replies[0]), log.replies[0]);
+    });
+
+    await test('thread outside the forum / campaign channels is refused', async () => {
+        const { interaction, log } = makeInteraction({ commandName: 'pin', userId: OP_ID, parentId: '999999999999999999' });
+        await handleInteraction({}, interaction);
+        assert.strictEqual(log.pinned.length, 0);
+        assert.ok(/can only be used/.test(log.replies[0]), log.replies[0]);
+    });
+
+    if (process.argv.includes('--live')) {
+        await test('live (read-only): GAME_INVITATIONS_FORUM_ID is a forum channel', async () => {
+            const rest = new REST({ version: '10' }).setToken(config.token);
+            const ch = await rest.get(Routes.channel(FORUM_ID));
+            assert.ok(ch.type === ChannelType.GuildForum || ch.type === ChannelType.GuildMedia, `type=${ch.type}`);
+            console.log(`    forum: #${ch.name}`);
+        });
     }
-});
 
-client.login(config.token);
+    console.log(`\n=== ${passed}/${passed + failed} passed ===`);
+    process.exit(failed === 0 ? 0 : 1);
+})();

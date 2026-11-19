@@ -460,7 +460,6 @@ $SUDO docker run -d --name librarian-bot --restart unless-stopped $ollama_networ
     -e SHARE_PASS -e HOST_PATH="$(pwd)" \
     -e TRANSCODER_CONTAINER \
     -e BROWSER_BOT_WS="${BROWSER_BOT_WS:-ws://browser-bot:3000}" \
-    -e STREAMER_JOE_API_URL="${STREAMER_JOE_API_URL:-http://192.168.0.99:8777}" \
     -e DEEPSEEK_MODEL="${DEEPSEEK_MODEL:-deepseek-flash}" \
     -e IG_VM_URL="${IG_VM_URL:-}" \
     -e IG_VM_TOKEN="${IG_VM_TOKEN:-}" \

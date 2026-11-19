@@ -96,18 +96,6 @@ client.once(Events.ClientReady, async () => {
     // Start watchdog — detects event loop blockage and forces restart
     watchdog.start({ timeoutMs: 120000, client: client, channelId: SYSTEM_CHANNEL_ID });
 
-    // Heyrobot-Platform dashboard feature toggles (media_parsing/media_transcode/
-    // news_parsing/llm_chat/knowledge_population). Best-effort: when
-    // heyrobot-platform is unreachable the defaults keep every active feature ON
-    // and knowledge_population OFF. Ported from heyrobot-discord-bot.
-    try {
-        const streamerJoe = require('./src/services/streamerJoe');
-        streamerJoe.startDiscordFeaturesPoller().catch(err => {
-            console.warn('[HeyrobotPlatform] initial flag fetch failed (using defaults):', err.message);
-        });
-    } catch (err) {
-        console.warn('[HeyrobotPlatform] poller failed to start:', err.message);
-    }
     // Per-guild language config: initial scan of channels + user messages
     // (skipped when a fresh config exists). Used to answer in the language of
     // language-specific channels.
@@ -770,6 +758,25 @@ process.on('SIGUSR2', () => {
 // this many hours back, ignoring rebuild_time.txt and the default 6h cap.
 // Used by the one-time extended catch-up (CATCHUP_EXTENDED_HOURS env var) to
 // cover the full downtime window when the bot was offline for a long time.
+// Channels the startup scans (catch-up, placeholder cleanup) read messages
+// from: every text-based guild channel plus the active threads.
+// guild.channels.fetch() yields a NULL entry for channel types this
+// discord.js version does not know (the type-20 "server-hub" channel added to
+// ttrpg.ee in Nov 2026) — calling c.isTextBased() on it threw and killed all
+// three scans ("Cannot read properties of null (reading 'isTextBased')").
+async function fetchScannableChannels(guild) {
+    const channels = await guild.channels.fetch().catch(() => null);
+    if (!channels) return null;
+    const out = channels.filter(c => c && typeof c.isTextBased === 'function' && c.isTextBased() && c.messages);
+    const active = await guild.channels.fetchActiveThreads().catch(() => null);
+    if (active) {
+        for (const [id, thread] of active.threads) {
+            if (thread && thread.messages && !out.has(id)) out.set(id, thread);
+        }
+    }
+    return out;
+}
+
 async function catchUpMissedInstagramLinks(maxLookbackHours = null) {
     const delta = 5 * 60 * 1000;
     let startTimestamp = Date.now() - 15 * 60 * 1000; // default 15-min window
@@ -806,9 +813,8 @@ async function catchUpMissedInstagramLinks(maxLookbackHours = null) {
             console.log('[Catch-Up] Guild not found, skipping.');
             return;
         }
-        const channels = await guild.channels.fetch().catch(() => null);
-        if (!channels) return;
-        const textChannels = channels.filter(c => c.isTextBased());
+        const textChannels = await fetchScannableChannels(guild);
+        if (!textChannels) return;
         console.log(`[Catch-Up] Scanning ${textChannels.size} text channels for missed Instagram links...`);
 
         const instagramRegex = /(?:https?:\/\/)?(?:www\.)?(?:dd|kk|ee|uu|rx)?instagram\.com\/[^\s]+/i;
@@ -889,9 +895,8 @@ async function catchUpMissedForumLinks(maxLookbackHours = null) {
     try {
         const guild = client.guilds.cache.get(SERVER_ID);
         if (!guild) return;
-        const channels = await guild.channels.fetch().catch(() => null);
-        if (!channels) return;
-        const textChannels = channels.filter(c => c.isTextBased());
+        const textChannels = await fetchScannableChannels(guild);
+        if (!textChannels) return;
         console.log(`[Catch-Up Forum] Scanning ${textChannels.size} text channels for missed forum links...`);
 
         for (const [channelId, channel] of textChannels) {
@@ -950,9 +955,8 @@ async function cleanupAbandonedPlaceholders(clientInstance) {
         console.log('[Startup Cleanup] Scanning channels for abandoned placeholders...');
         console.log(`[Startup Cleanup] Current time: ${new Date().toISOString()}, looking for messages after: ${new Date(TWO_HOURS_AGO).toISOString()}`);
 
-        const channels = await guild.channels.fetch().catch(() => null);
-        if (!channels) return;
-        const textChannels = channels.filter(c => c.isTextBased());
+        const textChannels = await fetchScannableChannels(guild);
+        if (!textChannels) return;
         console.log(`[Startup Cleanup] Found ${textChannels.size} text channels`);
 
         let placeholderCount = 0;
