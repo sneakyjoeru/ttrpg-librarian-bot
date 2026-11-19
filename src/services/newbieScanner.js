@@ -165,8 +165,8 @@ const ART_WORD_RE = /(?<![\p{L}])(?:art|artist|artwork|draw|drawing|illustrat|pa
 
 /**
  * Keyword pre-filter. Returns { suspicious, strong, categories[] }.
- * suspicious: worth a DeepSeek check. strong: ≥2 signal categories — enough
- * to ban on keywords alone when DeepSeek is unreachable.
+ * suspicious: send the message to DeepSeek. strong: ≥2 signal categories —
+ * informational only (logged); a ban ALWAYS needs DeepSeek's confirmation.
  */
 function scoreSolicitation(text) {
     const t = (text || '');
@@ -432,12 +432,14 @@ async function _processMessage(client, message, key) {
     const score = scoreSolicitation(text);
     if (score.suspicious) {
         _save();
-        const llm = await confirmWithLLM(text);
+        // DeepSeek ALWAYS checks this exact message before any ban (owner rule
+        // 2026-11-19): keywords alone never ban. One retry on a transport error;
+        // if DeepSeek still fails, admins are pinged in #modlog instead.
+        let llm = await confirmWithLLM(text);
+        if (!llm.ok) llm = await confirmWithLLM(text);
         let banWhy = null;
         if (llm.ok && llm.solicitation) {
             banWhy = `art-commission / money solicitation before any Tallinn/Estonia link (keywords: ${score.categories.join(', ')}; DeepSeek: ${llm.reason || 'confirmed'})`;
-        } else if (!llm.ok && score.strong) {
-            banWhy = `art-commission / money solicitation before any Tallinn/Estonia link (keywords: ${score.categories.join(', ')}; DeepSeek unavailable: ${llm.error})`;
         }
         if (banWhy) {
             entry.status = 'banned';
@@ -448,11 +450,11 @@ async function _processMessage(client, message, key) {
             _save();
             return true;
         }
-        const note = llm.ok ? `DeepSeek says not solicitation: ${llm.reason}` : `DeepSeek unavailable (${llm.error}), keywords too weak to ban alone`;
+        const note = llm.ok ? `DeepSeek says not solicitation: ${llm.reason}` : `DeepSeek unavailable (${llm.error}) — needs a human decision`;
         console.log(`[NewbieScanner] ${tag} flagged but not banned — ${note}.`);
         await _postModlog(client,
             `🔎 Newbie scanner flagged ${message.author.tag} (<@${message.author.id}>) in <#${message.channel.id}> but did **not** ban — ${note} ` +
-            `(keywords: ${score.categories.join(', ')}). [Jump](${message.url})\n` + _quote(text), false);
+            `(keywords: ${score.categories.join(', ')}). [Jump](${message.url})\n` + _quote(text), !llm.ok);
     }
 
     // 3. Message limit reached without qualifying or soliciting → regular member.

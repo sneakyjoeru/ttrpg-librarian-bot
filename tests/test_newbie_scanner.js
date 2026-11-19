@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 process.env.DISCORD_TOKEN = process.env.DISCORD_TOKEN || 'test_token';
+process.env.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || 'test_key'; // so the (stubbed) DeepSeek path always runs
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'newbie-'));
 const cwd = process.cwd();
 const cfg = require(path.join(__dirname, '..', 'src', 'config'));
@@ -55,7 +56,14 @@ function makeWorld() {
 }
 let llmAnswer = { solicitation: true, reason: 'asks for commissions' };
 let llmCalls = 0;
-axios.post = async () => { llmCalls++; return { data: { choices: [{ message: { content: JSON.stringify(llmAnswer) } }] } }; };
+let llmDown = false;
+const llmSeen = []; // the user message text DeepSeek was asked about, in order
+axios.post = async (url, body) => {
+    llmCalls++;
+    llmSeen.push(body.messages[1].content);
+    if (llmDown) throw new Error('connect ECONNREFUSED');
+    return { data: { choices: [{ message: { content: JSON.stringify(llmAnswer) } }] } };
+};
 
 (async () => {
     console.log('keyword matching');
@@ -89,10 +97,17 @@ axios.post = async () => { llmCalls++; return { data: { choices: [{ message: { c
     });
 
     scanner.handleNewbieJoin({ guild: { id: G }, id: 'spam', user: { bot: false, tag: 'spam' }, joinedTimestamp: Date.now() });
-    await test('newbie spammer: 2 chat messages then commission spam → banned, all 3 deleted, modlog pings admins', async () => {
+    await test('newbie spammer: 2 chat messages then commission spam → DeepSeek checks THAT message, then ban', async () => {
         assert.strictEqual(await scanner.handleNewbieMessage(w.client, w.msg('spam', 'hi all')), false);
         assert.strictEqual(await scanner.handleNewbieMessage(w.client, w.msg('spam', 'I like dragons')), false);
+        assert.strictEqual(llmCalls, 0, 'plain chat never reaches DeepSeek');
+        const origBan = w.guild.members.ban;
+        let llmCallsAtBan = -1;
+        w.guild.members.ban = async (uid, opts) => { llmCallsAtBan = llmCalls; return origBan(uid, opts); };
         assert.strictEqual(await scanner.handleNewbieMessage(w.client, w.msg('spam', BAD)), true);
+        w.guild.members.ban = origBan;
+        assert.strictEqual(llmCallsAtBan, 1, 'DeepSeek was called before the ban');
+        assert.ok(llmSeen[0].includes(BAD), 'DeepSeek judged the last (banned) message itself');
         assert.strictEqual(w.bans.length, 1);
         assert.strictEqual(w.bans[0].uid, 'spam');
         assert.strictEqual(w.bans[0].opts.deleteMessageSeconds, 604800);
@@ -125,6 +140,18 @@ axios.post = async () => { llmCalls++; return { data: { choices: [{ message: { c
         assert.strictEqual(w.bans.length, 1);
         assert.strictEqual(w.modlog.length, n + 1);
         assert.deepStrictEqual(w.modlog[n].allowedMentions.roles, []);
+    });
+
+    scanner.handleNewbieJoin({ guild: { id: G }, id: 'outage', user: { bot: false, tag: 'outage' }, joinedTimestamp: Date.now() });
+    await test('DeepSeek down (after 1 retry) → strong keywords still do NOT ban; admins pinged', async () => {
+        llmDown = true;
+        const calls = llmCalls, n = w.modlog.length;
+        assert.ok(scanner.scoreSolicitation(BAD).strong);
+        assert.strictEqual(await scanner.handleNewbieMessage(w.client, w.msg('outage', BAD)), false);
+        llmDown = false;
+        assert.strictEqual(llmCalls, calls + 2, 'one call + one retry');
+        assert.strictEqual(w.bans.length, 1);
+        assert.deepStrictEqual(w.modlog[n].allowedMentions.roles, [cfg.ADMIN_ROLE_ID]);
     });
 
     await test('state persisted to data/newbie-scanner.json', () => {
