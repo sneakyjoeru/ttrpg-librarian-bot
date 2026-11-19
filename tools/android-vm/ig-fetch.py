@@ -192,7 +192,8 @@ def pacing_record():
 
 
 def cache_lookup(code):
-    for ext in ("png", "mp4"):
+    # jpg = photo post: without it every photo post re-opened the app (and burned an app session)
+    for ext in ("png", "mp4", "jpg"):
         p = os.path.join(RESULT_CACHE, f"{code}.{ext}")
         if os.path.exists(p) and time.time() - os.path.getmtime(p) < RESULT_TTL:
             return p
@@ -318,13 +319,18 @@ def main():
         why = warm_up_app()
         if why:
             print("ERROR:", why); sys.exit(4)
-        adb("shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url, "-p", "com.instagram.android")
+        def open_post():
+            adb("shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url, "-p", "com.instagram.android")
+
+        open_post()
         pacing_record()
         # wait for cache spans to appear and stop growing (video + audio)
         stable, last, t0, looked = 0, None, time.time(), False
         img_stable, last_imgs = 0, None
+        got_anything, nudged = False, False
         while time.time() - t0 < 120:
             time.sleep(3)
+            elapsed = time.time() - t0
             sizes = span_sizes(mid)
             if sizes and sizes == last:
                 stable += 1
@@ -333,13 +339,25 @@ def main():
             else:
                 stable = 0
             last = sizes
-            if not sizes and time.time() - t0 >= 15:      # no video after 15 s: maybe a photo post - watch the image cache
+            if sizes:
+                got_anything = True
+            if not sizes and elapsed >= 15:      # no video after 15 s: maybe a photo post - watch the image cache
                 imgs = image_candidates(mid)
+                if imgs:
+                    got_anything = True
                 img_stable = img_stable + 1 if (imgs and imgs == last_imgs) else 0
                 last_imgs = imgs
                 if img_stable >= 2:
                     break
-            if not sizes and not looked and time.time() - t0 > 20:
+            # 2026-11-20 (photo post DffLsL4t_6C): while the app is coming back up after a crash-restart the
+            # process exists but no activity is ready, so warm_up_app() calls it warm and the deep link lands in
+            # a half-started app - nothing gets cached and the post was reported unreachable. Send the link once
+            # more after the app has settled, before giving up.
+            if not got_anything and not nudged and elapsed >= 25:
+                nudged = True
+                print(f"{code}: nothing cached after {elapsed:.0f}s - re-sending the deep link once")
+                open_post()
+            if not sizes and not looked and elapsed > 45:
                 looked = True               # nothing cached yet: is the account the problem?
                 focus, texts, png = ig_state.read_screen()
                 state, detail = ig_state.classify(focus, texts)

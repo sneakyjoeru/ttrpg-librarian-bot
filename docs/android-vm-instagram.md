@@ -116,6 +116,11 @@ Posts are edited in place. `--gap 370` keeps a large backlog under the 10/hour c
 - Photo size is what the app cached (~720 px wide).
 - One extraction at a time, ~20-40 s each plus pacing; a busy queue answers 429 and the post keeps
   "Video is unavailable for embedding" (run the re-process script later).
+- One extraction is one attempt: if nothing is cached after 25 s the deep link is re-sent once (a
+  request that arrives while the app is still coming back up from a crash-restart caches nothing —
+  measured 2026-11-20 on `p/DffLsL4t_6C`, which succeeded on a manual retry 20 minutes later), then
+  the post keeps "Video is unavailable for embedding". A removed or genuinely unreachable post still
+  fails after that second try.
 - The supervisor autostarts the VM and heals a wedged one within ~5-15 min; until it has, the
   service answers 503 `vm-down` and nothing changes for users.
 - Cold start is slow: under libhoudini the app crash-restarts for ~45 s before it stays up.
