@@ -8,9 +8,6 @@ const {
     SEARXNG_URL,
     OLLAMA_URL,
     OLLAMA_MODEL,
-    LOCAL_QWEN_URL,
-    LOCAL_QWEN_MODEL,
-    LOCAL_QWEN_TIMEOUT,
     RAG_SEARCH_LIMIT,
     RAG_HISTORY_LIMIT,
     RAG_SEARCH_TIMEOUT,
@@ -409,39 +406,11 @@ Answer:`;
         }
 
         if (!deepseekSuccess) {
-            // --- FREE LOCAL QWEN FIRST (owner 2026-11-19), then Ollama ---
-            // The HomePCs llm-router serves the abliterated Qwen3.6-35B-A3B (Avalon on SneakyStreamer). It is free and
-            // far stronger than the 7B, so it is tried before Ollama when DeepSeek is out of quota or failed. A 503
-            // "phone-home" (owner's phone in the home network, engines unloaded by design) or any network error is a
-            // plain miss: fall through to the always-on Ollama path below.
-            try {
-                console.log(`[Librarian Bot] Attempting free local Qwen (${LOCAL_QWEN_MODEL})...`);
-                const qwenResponse = await axios.post(LOCAL_QWEN_URL, {
-                    model: LOCAL_QWEN_MODEL,
-                    messages: [
-                        { role: 'system', content: systemMessage },
-                        { role: 'user', content: userPrompt }
-                    ],
-                    max_tokens: 1200,
-                    temperature: 0.85,
-                    stream: false
-                }, { timeout: LOCAL_QWEN_TIMEOUT });
-                const qwenAnswer = qwenResponse.data?.choices?.[0]?.message?.content;
-                if (qwenAnswer && qwenAnswer.trim()) {
-                    answer = qwenAnswer;
-                    console.log('[Librarian Bot] Free local Qwen response retrieved successfully.');
-                } else {
-                    console.warn('[Librarian Bot] Free local Qwen returned an empty answer, falling back to Ollama.');
-                }
-            } catch (qwenErr) {
-                const status = qwenErr.response?.status;
-                console.warn(`[Librarian Bot] Free local Qwen unavailable (${status || qwenErr.message}); using Ollama.`);
-            }
-        }
-
-        if (!deepseekSuccess && !answer) {
             // --- LOCAL OLLAMA PATH (single direct attempt, no quality check) ---
-            // Last resort: the always-on 7B on the N150, no LAN dependency.
+            // Used when quota is exhausted OR the DeepSeek quota-path call failed.
+            // No quality estimation, no DeepSeek-from-Ollama fallback — the local
+            // Ollama answer is accepted directly. If Ollama itself fails, show the
+            // help-text graceful-failure message.
             try {
                 console.log(`[Librarian Bot] Attempting local Ollama query...`);
                 const ollamaResponse = await axios.post(OLLAMA_URL, {

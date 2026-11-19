@@ -30,15 +30,6 @@ const NEWBIE_SCANNER_GUILD_IDS = (process.env.NEWBIE_SCANNER_GUILD_IDS || SERVER
 const NEWBIE_SCANNER_MAX_MESSAGES = 15;               // first N messages of a newbie are checked
 const NEWBIE_SCANNER_STATE_PATH = './data/newbie-scanner.json';
 
-// Free local fallback ahead of the tiny Ollama model (owner 2026-11-19): the abliterated Qwen3.6-35B-A3B served by
-// Avalon on SneakyStreamer, reached through the HomePCs llm-router on the NAS. Free and much stronger than the 7B, so
-// it is tried first when DeepSeek is out of quota or fails; Ollama stays the last resort (always on, no LAN
-// dependency). The router answers 503 "phone-home" while the owner's phone is in the home network - a normal miss
-// here, not an error: the code falls straight through to Ollama.
-const LOCAL_QWEN_URL = process.env.LOCAL_QWEN_URL || 'http://192.168.0.100:8071/v1/chat/completions';
-const LOCAL_QWEN_MODEL = process.env.LOCAL_QWEN_MODEL || 'streamer-avalon';
-const LOCAL_QWEN_TIMEOUT = Number(process.env.LOCAL_QWEN_TIMEOUT || 180000);   // includes the engine load
-
 // SearXNG and Ollama run as Docker containers on the N150 host. The librarian
 // bot also runs in a container and is attached to the shared `ollama_default`
 // network (see rebuild-run.sh), so it reaches them by container name, NOT
@@ -392,9 +383,6 @@ module.exports = {
     SEARXNG_URL,
     OLLAMA_URL,
     OLLAMA_MODEL,
-    LOCAL_QWEN_URL,
-    LOCAL_QWEN_MODEL,
-    LOCAL_QWEN_TIMEOUT,
     TIMEZONE,
     CRON_SCHEDULE_MONTHLY_MINI,
     EMOJI_ROBOT,
