@@ -57,6 +57,43 @@ const category = { id: 'cat', isTextBased: () => false };
         assert.strictEqual(await fetchScannableChannels(guild), null);
     });
 
+    // --- catch-up window (last heartbeat → rebuild_time → 15 min default) ---
+    const w = src.match(/function catchUpWindowStart\(tag\) \{[\s\S]*?\n\}\n/);
+    const r = src.match(/function readTimestampFile\(file\) \{[\s\S]*?\n\}\n/);
+    const os = require('os');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'catchup-'));
+    const makeWindow = (prevHeartbeat) => new Function('fs', 'PREV_HEARTBEAT_TS',
+        `const CATCHUP_DEFAULT_WINDOW_MS = 15 * 60 * 1000, CATCHUP_DELTA_MS = 5 * 60 * 1000, CATCHUP_MAX_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+         ${r[0]}\n${w[0]}\nreturn catchUpWindowStart;`)(fs, prevHeartbeat);
+    const cwd = process.cwd();
+    process.chdir(tmp);
+    const near = (a, b) => Math.abs(a - b) < 5000;
+    const MIN = 60 * 1000;
+
+    await test('window starts 5 min before the previous heartbeat (crash/restart)', () => {
+        const hb = Date.now() - 40 * MIN;
+        assert.ok(near(makeWindow(hb)('t'), hb - 5 * MIN));
+    });
+    await test('heartbeat wins over an older rebuild_time (old bot served during the build)', () => {
+        fs.writeFileSync('rebuild_time.txt', new Date(Date.now() - 3 * 60 * MIN).toISOString());
+        const hb = Date.now() - 10 * MIN;
+        assert.ok(near(makeWindow(hb)('t'), hb - 5 * MIN));
+    });
+    await test('no heartbeat → rebuild_time is used', () => {
+        const rt = Date.now() - 30 * MIN;
+        fs.writeFileSync('rebuild_time.txt', new Date(rt).toISOString());
+        assert.ok(near(makeWindow(null)('t'), rt - 5 * MIN));
+    });
+    await test('lookback capped at 6 hours', () => {
+        assert.ok(near(makeWindow(Date.now() - 48 * 60 * MIN)('t'), Date.now() - 6 * 60 * MIN));
+    });
+    await test('no markers → last 15 minutes', () => {
+        fs.unlinkSync('rebuild_time.txt');
+        assert.ok(near(makeWindow(null)('t'), Date.now() - 15 * MIN));
+    });
+    process.chdir(cwd);
+    fs.rmSync(tmp, { recursive: true, force: true });
+
     console.log(`\n=== ${passed}/${passed + failed} passed ===`);
     process.exit(failed === 0 ? 0 : 1);
 })();

@@ -750,14 +750,50 @@ process.on('SIGUSR2', () => {
     }, 2000);
 });
 
-// --- CATCH-UP FOR MISSED INSTAGRAM LINKS DURING RESTART ---
-// After the bot comes back online, scan channels for Instagram links posted
-// during the downtime window (between rebuild_time.txt and now) that were
-// never processed. This mirrors robot-joe's catchUpMissedRequests.
-// maxLookbackHours (optional): when set, forces the scan window to exactly
-// this many hours back, ignoring rebuild_time.txt and the default 6h cap.
-// Used by the one-time extended catch-up (CATCHUP_EXTENDED_HOURS env var) to
-// cover the full downtime window when the bot was offline for a long time.
+// --- CATCH-UP WINDOW ---
+// When did the previous process stop serving?
+//   1. the previous process's last watchdog heartbeat (last_heartbeat.txt,
+//      written every 30 s, read when this file loads — before this process
+//      overwrites it). Covers deploys, crashes and plain restarts; during a
+//      rebuild the old bot keeps serving until the build is done, so this is
+//      the real start of the outage.
+//   2. fallback: rebuild_time.txt (written by rebuild-run.sh at deploy start).
+// Until 2026-11-19 the .99 smb-watcher (rsync --delete) wiped both files
+// within 30 s, so every catch-up silently fell back to the last 15 minutes;
+// the watcher now excludes them.
+const CATCHUP_DEFAULT_WINDOW_MS = 15 * 60 * 1000;
+const CATCHUP_DELTA_MS = 5 * 60 * 1000;
+const CATCHUP_MAX_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+function readTimestampFile(file) {
+    try {
+        const t = new Date(fs.readFileSync(file, 'utf8').trim()).getTime();
+        return !isNaN(t) && t > 0 ? t : null;
+    } catch (_) {
+        return null;
+    }
+}
+const PREV_HEARTBEAT_TS = readTimestampFile('./last_heartbeat.txt');
+
+function catchUpWindowStart(tag) {
+    let mark = null;
+    if (PREV_HEARTBEAT_TS) mark = ['last heartbeat', PREV_HEARTBEAT_TS];
+    else {
+        const rebuildTs = readTimestampFile('./rebuild_time.txt');
+        if (rebuildTs) mark = ['rebuild_time', rebuildTs];
+    }
+    if (!mark) {
+        console.log(`[${tag}] No last_heartbeat.txt / rebuild_time.txt — default window (last 15 minutes).`);
+        return Date.now() - CATCHUP_DEFAULT_WINDOW_MS;
+    }
+    let start = mark[1] - CATCHUP_DELTA_MS;
+    if (Date.now() - start > CATCHUP_MAX_LOOKBACK_MS) {
+        console.log(`[${tag}] Capping lookback to 6 hours (${mark[0]} was older).`);
+        start = Date.now() - CATCHUP_MAX_LOOKBACK_MS;
+    }
+    console.log(`[${tag}] Down since ${new Date(mark[1]).toISOString()} (${mark[0]}). Scanning since ${new Date(start).toISOString()}`);
+    return start;
+}
+
 // Channels the startup scans (catch-up, placeholder cleanup) read messages
 // from: every text-based guild channel plus the active threads.
 // guild.channels.fetch() yields a NULL entry for channel types this
@@ -777,34 +813,21 @@ async function fetchScannableChannels(guild) {
     return out;
 }
 
+// --- CATCH-UP FOR MISSED INSTAGRAM LINKS DURING RESTART ---
+// After the bot comes back online, scan channels for Instagram links posted
+// during the downtime window (catchUpWindowStart() → now) that were never
+// processed. This mirrors robot-joe's catchUpMissedRequests.
+// maxLookbackHours (optional): when set, forces the scan window to exactly
+// this many hours back, ignoring the markers and the default 6h cap.
+// Used by the one-time extended catch-up (CATCHUP_EXTENDED_HOURS env var) to
+// cover the full downtime window when the bot was offline for a long time.
 async function catchUpMissedInstagramLinks(maxLookbackHours = null) {
-    const delta = 5 * 60 * 1000;
-    let startTimestamp = Date.now() - 15 * 60 * 1000; // default 15-min window
-
+    let startTimestamp;
     if (maxLookbackHours !== null) {
-        // One-time extended catch-up: force the window to maxLookbackHours,
-        // ignoring rebuild_time.txt (which was just created by this rebuild
-        // and would only cover the last few minutes).
         startTimestamp = Date.now() - maxLookbackHours * 60 * 60 * 1000;
         console.log(`[Catch-Up] Extended catch-up: scanning last ${maxLookbackHours}h (since ${new Date(startTimestamp).toISOString()}).`);
-    } else if (fs.existsSync('./rebuild_time.txt')) {
-        try {
-            const timeStr = fs.readFileSync('./rebuild_time.txt', 'utf8').trim();
-            const parsed = new Date(timeStr).getTime();
-            if (!isNaN(parsed) && parsed > 0) {
-                startTimestamp = parsed - delta;
-                const maxLookback = 6 * 60 * 60 * 1000;
-                if (Date.now() - startTimestamp > maxLookback) {
-                    console.log('[Catch-Up] Capping lookback time to 6 hours ago (rebuild_time was too old).');
-                    startTimestamp = Date.now() - maxLookback;
-                }
-                console.log(`[Catch-Up] Loaded rebuild timestamp: ${timeStr}. Scanning since ${new Date(startTimestamp).toISOString()}`);
-            }
-        } catch (e) {
-            console.error('[Catch-Up] Failed to read rebuild_time.txt:', e.message);
-        }
     } else {
-        console.log('[Catch-Up] No rebuild_time.txt found. Using default fallback window (last 15 minutes).');
+        startTimestamp = catchUpWindowStart('Catch-Up');
     }
 
     try {
@@ -869,27 +892,12 @@ async function catchUpMissedInstagramLinks(maxLookbackHours = null) {
 // (regex comes from forumHandler.js). Reuses the same time window logic.
 async function catchUpMissedForumLinks(maxLookbackHours = null) {
     const { FORUM_URL_REGEX } = require('./src/handlers/forumHandler');
-    const delta = 5 * 60 * 1000;
-    let startTimestamp = Date.now() - 15 * 60 * 1000;
-
+    let startTimestamp;
     if (maxLookbackHours !== null) {
         startTimestamp = Date.now() - maxLookbackHours * 60 * 60 * 1000;
         console.log(`[Catch-Up Forum] Extended catch-up: scanning last ${maxLookbackHours}h.`);
-    } else if (fs.existsSync('./rebuild_time.txt')) {
-        try {
-            const timeStr = fs.readFileSync('./rebuild_time.txt', 'utf8').trim();
-            const parsed = new Date(timeStr).getTime();
-            if (!isNaN(parsed) && parsed > 0) {
-                startTimestamp = parsed - delta;
-                const maxLookback = 6 * 60 * 60 * 1000;
-                if (Date.now() - startTimestamp > maxLookback) {
-                    startTimestamp = Date.now() - maxLookback;
-                }
-                console.log(`[Catch-Up Forum] Scanning since ${new Date(startTimestamp).toISOString()}`);
-            }
-        } catch (e) {
-            console.error('[Catch-Up Forum] Failed to read rebuild_time.txt:', e.message);
-        }
+    } else {
+        startTimestamp = catchUpWindowStart('Catch-Up Forum');
     }
 
     try {
