@@ -107,7 +107,8 @@ axios.post = async (url, body) => {
         assert.strictEqual(await scanner.handleNewbieMessage(w.client, w.msg('spam', BAD)), true);
         w.guild.members.ban = origBan;
         assert.strictEqual(llmCallsAtBan, 1, 'DeepSeek was called before the ban');
-        assert.ok(llmSeen[0].includes(BAD), 'DeepSeek judged the last (banned) message itself');
+        assert.ok(llmSeen[0].includes('[1] hi all') && llmSeen[0].includes('[2] I like dragons'), 'DeepSeek saw every earlier message');
+        assert.ok(llmSeen[0].includes('[3] (LAST MESSAGE, under review) ' + BAD), 'DeepSeek judged the last (banned) message');
         assert.strictEqual(w.bans.length, 1);
         assert.strictEqual(w.bans[0].uid, 'spam');
         assert.strictEqual(w.bans[0].opts.deleteMessageSeconds, 604800);
@@ -142,6 +143,16 @@ axios.post = async (url, body) => {
         assert.deepStrictEqual(w.modlog[n].allowedMentions.roles, []);
     });
 
+    scanner.handleNewbieJoin({ guild: { id: G }, id: 'taltech', user: { bot: false, tag: 'taltech' }, joinedTimestamp: Date.now() });
+    await test('keywords miss the Estonia link but DeepSeek finds it in an earlier message → qualified, no ban', async () => {
+        assert.strictEqual(await scanner.handleNewbieMessage(w.client, w.msg('taltech', 'my partner grew up near Lake Peipus')), false);
+        llmAnswer = { estonia_connection: true, estonia_evidence: 'study at TalTech', solicitation: true, reason: 'commissions' };
+        assert.strictEqual(await scanner.handleNewbieMessage(w.client, w.msg('taltech', BAD)), false);
+        assert.ok(llmSeen[llmSeen.length - 1].includes('[1] my partner grew up near Lake Peipus'));
+        assert.strictEqual(w.bans.length, 1);
+        llmAnswer = { solicitation: true, reason: 'asks for commissions' };
+    });
+
     scanner.handleNewbieJoin({ guild: { id: G }, id: 'outage', user: { bot: false, tag: 'outage' }, joinedTimestamp: Date.now() });
     await test('DeepSeek down (after 1 retry) → strong keywords still do NOT ban; admins pinged', async () => {
         llmDown = true;
@@ -160,6 +171,9 @@ axios.post = async (url, body) => {
         assert.strictEqual(st.users[`${G}:yumi`].status, 'qualified');
         assert.strictEqual(st.users[`${G}:quiet`].status, 'done');
         assert.strictEqual(st.users[`${G}:maybe`].status, 'watching');
+        assert.strictEqual(st.users[`${G}:maybe`].texts.length, 1, 'texts kept while watching');
+        assert.strictEqual(st.users[`${G}:taltech`].status, 'qualified');
+        assert.deepStrictEqual(st.users[`${G}:spam`].texts, [], 'texts cleared after ban');
     });
 
     await test('TL;DW prompt is English-only', () => {

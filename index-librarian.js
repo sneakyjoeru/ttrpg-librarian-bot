@@ -108,12 +108,6 @@ client.once(Events.ClientReady, async () => {
     } catch (err) {
         console.warn('[HeyrobotPlatform] poller failed to start:', err.message);
     }
-    // Newbie scanner (optional feature): records its go-live time on first
-    // start and picks up members who joined while the bot was offline.
-    newbieScanner.initNewbieScanner(client).catch(err => {
-        console.warn('[NewbieScanner] init failed:', err.message);
-    });
-
     // Per-guild language config: initial scan of channels + user messages
     // (skipped when a fresh config exists). Used to answer in the language of
     // language-specific channels.
@@ -232,6 +226,14 @@ client.once(Events.ClientReady, async () => {
     } catch (fetchErr) {
         console.error('[Startup] Failed to fetch guild members on startup:', fetchErr);
     }
+
+    // Newbie scanner (optional feature): records its go-live time on first
+    // start and picks up members who joined while the bot was offline. Runs
+    // AFTER the member fetch above and reads its cache — a second concurrent
+    // members.fetch() hits Discord's opcode-8 gateway rate limit.
+    newbieScanner.initNewbieScanner(client).catch(err => {
+        console.warn('[NewbieScanner] init failed:', err.message);
+    });
 
     // Catch up on missed Instagram links posted during the downtime window.
     catchUpMissedInstagramLinks().catch(err => {

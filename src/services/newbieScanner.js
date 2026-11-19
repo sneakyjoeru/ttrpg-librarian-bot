@@ -11,16 +11,19 @@
 //        member is treated as a regular member: monitoring stops, no action.
 //   2. BAN: while not yet qualified, a message that advertises the author's
 //      art / asks for commissions or money is a ban: keyword pre-filter, then
-//      one DeepSeek call confirms (fewer false bans). The member is banned,
-//      every tracked message of theirs is deleted, and the ban is reported in
-//      #modlog with an @admin ping.
+//      DeepSeek reviews ALL of the member's monitored messages (Estonia
+//      connection anywhere in them → qualified, no ban) and must confirm the
+//      last one is solicitation. Keywords alone never ban. The member is
+//      banned, every tracked message of theirs is deleted, and the ban is
+//      reported in #modlog with an @admin ping.
 //
 // Enable/disable: config.js NEWBIE_SCANNER_ENABLED (env NEWBIE_SCANNER_ENABLED=0
 // turns it off) and NEWBIE_SCANNER_GUILD_IDS (ttrpg.ee by default).
 //
 // State: ./data/newbie-scanner.json
 //   { activeSince, users: { "<guildId>:<userId>": { status, joinedAt, count,
-//     messages: [[channelId, messageId], ...], updatedAt } } }
+//     messages: [[channelId, messageId], ...], texts: [<message text>, ...],
+//     updatedAt } } }  (messages/texts are cleared once monitoring ends)
 //   status: watching | qualified | done | exempt | banned
 
 const fs = require('fs');
@@ -89,6 +92,7 @@ const ESTONIA_STEMS = [
     // Tallinn districts / landmarks
     'kalamaja', 'kristiine', 'mustamae', 'lasnamae', 'haabersti', 'kesklinn', 'pirita', 'kopli',
     'telliskivi', 'ulemiste', 'rotermann', 'vanalinn', 'kadriorg', 'oismae', 'kakumae', 'paljassaare',
+    'taltech', 'tallinna ulikool',
     // counties / regions / islands
     'harjumaa', 'harju maakond', 'ida-viru', 'idaviru', 'laane-viru', 'laanemaa', 'saaremaa', 'hiiumaa',
     'vorumaa', 'valgamaa', 'jarvamaa', 'lahemaa', 'soomaa', 'vormsi', 'kihnu', 'peipsi', 'naissaar',
@@ -186,18 +190,26 @@ function scoreSolicitation(text) {
 // ---------------------------------------------------------------------------
 
 const CLASSIFIER_PROMPT = `You are a moderation classifier for a tabletop-RPG Discord community based in Tallinn, Estonia.
-You get a message written by a member who JUST joined. Decide whether it is SOLICITATION: the author advertises their own art or creative services and wants commissions / paid work / clients, or asks people for money, donations or financial support.
-NOT solicitation: mentioning art, drawing or cosplay as a hobby; sharing artwork; talking about games; someone wanting to BUY or commission something from others; normal self-introductions.
-Reply with JSON only: {"solicitation": true or false, "reason": "<max 15 words>"}`;
+You get ALL messages a member who JUST joined has posted so far (oldest first), the LAST one is the message under review. Answer two questions:
+1. estonia_connection: across ALL their messages, is the person connected to Estonia in any way? Yes if they live/study/work in Tallinn or anywhere in Estonia, visited recently or plan to visit, are Estonian or have Estonian family/partner, use the Estonian language, name an Estonian place, institution or event (e.g. TalTech, Tartu Ülikool, Telliskivi, Ülemiste), or otherwise clearly tie themselves to Estonia. Being generically "from Europe" or only mentioning the server name does not count.
+2. solicitation: is the LAST message SOLICITATION — the author advertises their own art or creative services and wants commissions / paid work / clients, or asks people for money, donations or financial support? NOT solicitation: art, drawing or cosplay as a hobby; sharing artwork; talking about games; someone wanting to BUY or commission something from others; normal self-introductions.
+Reply with JSON only: {"estonia_connection": true or false, "estonia_evidence": "<quote or empty>", "solicitation": true or false, "reason": "<max 15 words>"}`;
 
-async function confirmWithLLM(text) {
+/**
+ * DeepSeek review of a newbie's full monitored history.
+ * @param {string[]} earlier  texts of the earlier monitored messages, oldest first
+ * @param {string}   last     the message under review
+ */
+async function confirmWithLLM(earlier, last) {
     if (!deepseekApiKey) return { ok: false, error: 'no DeepSeek key' };
+    const parts = (earlier || []).map((t, i) => `[${i + 1}] ${String(t || '(no text)').slice(0, 1500)}`);
+    parts.push(`[${parts.length + 1}] (LAST MESSAGE, under review) ${String(last || '').slice(0, 4000)}`);
     try {
         const resp = await axios.post(DEEPSEEK_API_URL, {
             model: DEEPSEEK_MODEL,
             messages: [
                 { role: 'system', content: CLASSIFIER_PROMPT },
-                { role: 'user', content: `Message:\n"""\n${text.slice(0, 4000)}\n"""` },
+                { role: 'user', content: `Messages by this member so far:\n"""\n${parts.join('\n\n')}\n"""` },
             ],
             temperature: 0,
             max_tokens: 400,
@@ -211,7 +223,13 @@ async function confirmWithLLM(text) {
         const m = content.match(/\{[\s\S]*\}/);
         if (!m) return { ok: false, error: `unparseable reply: ${content.slice(0, 120)}` };
         const parsed = JSON.parse(m[0]);
-        return { ok: true, solicitation: parsed.solicitation === true, reason: String(parsed.reason || '').slice(0, 200) };
+        return {
+            ok: true,
+            estoniaConnection: parsed.estonia_connection === true,
+            estoniaEvidence: String(parsed.estonia_evidence || '').slice(0, 200),
+            solicitation: parsed.solicitation === true,
+            reason: String(parsed.reason || '').slice(0, 200),
+        };
     } catch (err) {
         return { ok: false, error: err.message };
     }
@@ -291,7 +309,8 @@ async function initNewbieScanner(client) {
         if (!guild) continue;
         let added = 0;
         try {
-            const members = await guild.members.fetch();
+            // Cache filled by the startup members.fetch() in index-librarian.js.
+            const members = guild.members.cache;
             for (const member of members.values()) {
                 if (member.user.bot) continue;
                 if ((member.joinedTimestamp || 0) < st.activeSince) continue;
@@ -411,35 +430,48 @@ async function _processMessage(client, message, key) {
         return false;
     }
 
-    entry.count += 1;
-    entry.messages.push([message.channel.id, message.id]);
-    entry.updatedAt = Date.now();
     const text = message.content || '';
     const tag = `${message.author.tag} (${message.author.id})`;
+    if (!Array.isArray(entry.texts)) entry.texts = [];
+    const earlierTexts = entry.texts.slice(); // every earlier monitored message, oldest first
+    entry.count += 1;
+    entry.messages.push([message.channel.id, message.id]);
+    entry.texts.push(text.slice(0, 1500));
+    entry.updatedAt = Date.now();
+    const qualify = (by) => {
+        entry.status = 'qualified';
+        entry.qualifiedBy = by;
+        entry.messages = [];
+        entry.texts = [];
+        _save();
+        console.log(`[NewbieScanner] ${tag} qualified on message ${entry.count} (${by}).`);
+    };
 
-    // 1. Estonia / Tallinn connection → vetted for good.
+    // 1. Estonia / Tallinn connection (keyword list) → vetted for good.
     const link = findEstoniaConnection(text);
     if (link) {
-        entry.status = 'qualified';
-        entry.qualifiedBy = link;
-        entry.messages = [];
-        _save();
-        console.log(`[NewbieScanner] ${tag} qualified on message ${entry.count} (matched "${link}").`);
+        qualify(`matched "${link}"`);
         return false;
     }
 
-    // 2. Solicitation while unqualified → ban.
+    // 2. Possible solicitation while unqualified → DeepSeek decides.
     const score = scoreSolicitation(text);
     if (score.suspicious) {
         _save();
-        // DeepSeek ALWAYS checks this exact message before any ban (owner rule
-        // 2026-11-19): keywords alone never ban. One retry on a transport error;
-        // if DeepSeek still fails, admins are pinged in #modlog instead.
-        let llm = await confirmWithLLM(text);
-        if (!llm.ok) llm = await confirmWithLLM(text);
+        // DeepSeek ALWAYS reviews ALL of the newbie's monitored messages before
+        // any ban (owner rule 2026-11-19): it judges the Estonia connection over
+        // the whole history and whether the LAST message is solicitation.
+        // Keywords alone never ban. One retry on a transport error; if DeepSeek
+        // still fails, admins are pinged in #modlog instead.
+        let llm = await confirmWithLLM(earlierTexts, text);
+        if (!llm.ok) llm = await confirmWithLLM(earlierTexts, text);
+        if (llm.ok && llm.estoniaConnection) {
+            qualify(`DeepSeek: Estonia connection — ${llm.estoniaEvidence || 'confirmed'}`);
+            return false;
+        }
         let banWhy = null;
         if (llm.ok && llm.solicitation) {
-            banWhy = `art-commission / money solicitation before any Tallinn/Estonia link (keywords: ${score.categories.join(', ')}; DeepSeek: ${llm.reason || 'confirmed'})`;
+            banWhy = `art-commission / money solicitation, no Tallinn/Estonia link in ${entry.count} message(s) (keywords: ${score.categories.join(', ')}; DeepSeek reviewed all ${entry.count}: ${llm.reason || 'confirmed'})`;
         }
         if (banWhy) {
             entry.status = 'banned';
@@ -447,6 +479,7 @@ async function _processMessage(client, message, key) {
             _save();
             await _banAndPurge(client, message, entry, banWhy);
             entry.messages = [];
+            entry.texts = [];
             _save();
             return true;
         }
@@ -461,6 +494,7 @@ async function _processMessage(client, message, key) {
     if (entry.count >= NEWBIE_SCANNER_MAX_MESSAGES) {
         entry.status = 'done';
         entry.messages = [];
+        entry.texts = [];
         console.log(`[NewbieScanner] ${tag} reached ${NEWBIE_SCANNER_MAX_MESSAGES} messages — monitoring stopped, no action.`);
     }
     _save();
