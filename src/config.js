@@ -236,7 +236,7 @@ const helpText = `**Librarian Bot Functions:**
 \`/restart\` - Rebuild and restart bot (Admin only)
 
 **Media Commands:**
-\`/delete\` - Delete your last bot-reposted message (admin: \`/delete [count]\` for bulk)
+\`/delete\` - Delete your last bot-reposted message or a poll you created (admin: \`/delete [count]\` for bulk)
 \`/edit-last [text]\` - Edit the last bot-replaced message with new text
 \`/process\` - Re-process the link in the current thread (author or admin)
 
@@ -276,7 +276,7 @@ const botFeaturesGuide = `How Librarian Bot's features actually work (use this t
 
 **Media/pin/misc:**
 - /pin, /unpin work on a given message ID or default to the most recent message/pinned message.
-- /delete removes the user's own last bot-reposted message (Admins can bulk-delete with a count); /edit-last replaces the text of the last bot-replaced message; /process re-runs link processing on the current thread.`;
+- /delete removes the user's own last bot-reposted message or a poll they created (Admins can bulk-delete with a count); /edit-last replaces the text of the last bot-replaced message; /process re-runs link processing on the current thread.`;
 
 // --- SLASH COMMAND BUILDERS ---
 const commands = [
@@ -348,7 +348,7 @@ const commands = [
         .addStringOption(opt => opt.setName('message_id').setDescription('Message ID to unpin (leave empty for last pinned)').setRequired(false)),
     new SlashCommandBuilder()
         .setName('delete')
-        .setDescription('Delete your last bot-reposted message (or bulk delete for admin)')
+        .setDescription('Delete your last bot-reposted message or a poll you created (or bulk delete for admin)')
         .addIntegerOption(opt => opt.setName('count').setDescription('Number of messages to bulk delete (admin only, 1-100)').setRequired(false).setMinValue(1).setMaxValue(100)),
     new SlashCommandBuilder()
         .setName('edit-last')

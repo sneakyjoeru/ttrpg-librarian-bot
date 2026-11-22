@@ -21,9 +21,10 @@ const {
     EMOJI_HAND,
     SNEAKYJOE_USER_ID
 } = require('../config');
-const { refreshPoll } = require('./polls');
+const { refreshPoll, pollCreatedByUser } = require('./polls');
 const { createSchedulePoll } = require('./scheduling');
-const { isMessageTiedToUser, removeTrackedMessage } = require('../utils/messageTracker');
+const { isMessageTiedToUser, removeTrackedMessage, trackMessage } = require('../utils/messageTracker');
+const { deleteSchedule } = require('../utils/scheduling');
 const { buildRecoveredPlaceholder } = require('../utils/webhook');
 const { handleInstagramMessage } = require('../services/instagram');
 const { handleTwitterMessage } = require('./twitterHandler');
@@ -225,6 +226,11 @@ async function handleInteraction(client, interaction) {
         // Send Embed and store the message object so the bot can react to it
         await interaction.reply({ embeds: [pollEmbed], fetchReply: true });
         const pollMessage = await interaction.fetchReply();
+
+        // Track the poll as created by this user so /delete can remove it —
+        // the poll message is authored by the bot, so the generic "tied to
+        // user" heuristics do not match it (see pollCreatedByUser in polls.js).
+        trackMessage(pollMessage.id, interaction.user.id, interaction.channelId);
 
         // Bot automatically adds reactions for voting
         try {
@@ -999,9 +1005,13 @@ async function handleInteraction(client, interaction) {
                         const username = interaction.user.username;
                         const displayName = interaction.member ? interaction.member.displayName : interaction.user.username;
                         const isTied = await isMessageTiedToUser(msg, interaction.user.id, username, displayName, client);
-                        if (isUserMessage || isTied) {
+                        // A poll's creator may delete their own poll even though
+                        // the poll message itself is authored by the bot.
+                        const isOwnPoll = pollCreatedByUser(msg, interaction.user.id, client.user.id);
+                        if (isUserMessage || isTied || isOwnPoll) {
                             await msg.delete().catch(() => {});
-                            console.log(`[Slash Delete] Deleted message ${msg.id} in channel ${interaction.channel.id} triggered by ${interaction.user.tag} (${interaction.user.id})`);
+                            if (isOwnPoll) deleteSchedule(msg.id);
+                            console.log(`[Slash Delete] Deleted message ${msg.id} in channel ${interaction.channel.id} triggered by ${interaction.user.tag} (${interaction.user.id})${isOwnPoll ? ' [own poll]' : ''}`);
                             removeTrackedMessage(msg.id);
                             deletedTarget = true;
                             break;

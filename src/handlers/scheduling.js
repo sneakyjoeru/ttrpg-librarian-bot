@@ -17,6 +17,7 @@ const {
     updateSchedule
 } = require('../utils/scheduling');
 const { refreshPoll } = require('./polls');
+const { trackMessage } = require('../utils/messageTracker');
 
 // In-flight lock: prevents concurrent handleSchedulingVoteChange calls for the
 // same poll from racing past the lastEmittedConfirmed check and posting
@@ -172,6 +173,12 @@ async function createSchedulePoll(interaction) {
 
     await interaction.reply({ embeds: [pollEmbed], fetchReply: true });
     const pollMessage = await interaction.fetchReply();
+
+    // Track the poll as created by this user so /delete can remove it (the
+    // message is authored by the bot — see pollCreatedByUser in polls.js).
+    // The schedule state below also carries creatorId, which survives
+    // restarts; this covers the current session immediately.
+    trackMessage(pollMessage.id, interaction.user.id, interaction.channelId);
 
     // React with the chosen emojis so members can vote.
     try {

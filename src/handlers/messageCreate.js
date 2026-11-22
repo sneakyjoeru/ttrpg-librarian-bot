@@ -14,6 +14,8 @@ const { handleNewbieMessage } = require('../services/newbieScanner');
 const { runCommandStream } = require('../utils/shell');
 const { parseRebuildProgressLine } = require('../utils/rebuildProgress');
 const { isMessageTiedToUser, removeTrackedMessage } = require('../utils/messageTracker');
+const { pollCreatedByUser } = require('./polls');
+const { deleteSchedule } = require('../utils/scheduling');
 const { buildRecoveredPlaceholder } = require('../utils/webhook');
 const { inFlightMessages } = require('../utils/inFlightTracker');
 const {
@@ -75,9 +77,13 @@ async function _handleMessageCreateInner(client, message) {
                         const username = message.author.username;
                         const displayName = message.member ? message.member.displayName : message.author.username;
                         const isTied = await isMessageTiedToUser(msg, message.author.id, username, displayName, client);
-                        if (isUserMessage || isTied) {
+                        // A poll's creator may delete their own poll even though
+                        // the poll message itself is authored by the bot.
+                        const isOwnPoll = pollCreatedByUser(msg, message.author.id, client.user.id);
+                        if (isUserMessage || isTied || isOwnPoll) {
                             await msg.delete().catch(() => { });
-                            console.log(`[Delete Command] Deleted message ${msg.id} in channel ${message.channel.id} triggered by ${message.author.tag} (${message.author.id})`);
+                            if (isOwnPoll) deleteSchedule(msg.id);
+                            console.log(`[Delete Command] Deleted message ${msg.id} in channel ${message.channel.id} triggered by ${message.author.tag} (${message.author.id})${isOwnPoll ? ' [own poll]' : ''}`);
                             removeTrackedMessage(msg.id);
                             deletedTarget = true;
                             break;

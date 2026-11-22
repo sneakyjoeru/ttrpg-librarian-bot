@@ -8,6 +8,7 @@ const {
     EMBED_COLOR
 } = require('../config');
 const { getSchedule } = require('../utils/scheduling');
+const { isTrackedMessage } = require('../utils/messageTracker');
 
 // A message is one of our polls if it was authored by the bot and its embed
 // title starts with a poll marker and footer carries the creator marker.
@@ -47,6 +48,23 @@ function extractOptions(embed) {
         }
     }
     return options;
+}
+
+// Whether this message is one of our polls created by the given user. Used by
+// /delete so a poll's creator can remove their own poll: the poll message is
+// authored by the bot, so the generic "tied to user" heuristics never match
+// it (an interaction reply carries no reference back to the caller). Two
+// sources of truth:
+//   1. in-memory tracking set at creation time (same store the webhook
+//      reposts use) — covers polls created in this bot session;
+//   2. persisted scheduling state (schedules.json) — survives restarts, so
+//      /schedule-poll polls stay deletable by their creator.
+function pollCreatedByUser(message, userId, clientUserId) {
+    if (!message || !userId) return false;
+    if (!parsePollEmbed(message, clientUserId)) return false;
+    if (isTrackedMessage(message.id, userId)) return true;
+    const state = getSchedule(message.id);
+    return !!(state && state.creatorId === userId);
 }
 
 // In a game (active campaign) channel, only the channel's DM and members of
@@ -203,6 +221,7 @@ async function handlePollReactionRemove(reaction, user, clientUserId) {
 module.exports = {
     parsePollEmbed,
     extractOptions,
+    pollCreatedByUser,
     refreshPoll,
     handlePollReactionAdd,
     handlePollReactionRemove
