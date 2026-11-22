@@ -177,10 +177,17 @@ class H(BaseHTTPRequestHandler):
             self.send_header("X-Kind", kind)
             self.send_header("X-Filename", fn)
             self.send_header("Content-Length", str(len(data)))
+            partial = any(l.startswith("PARTIAL ") for l in lines)          # video truncated to its beginning
+            partial_audio = any(l.startswith("PARTIAL_AUDIO") for l in lines)  # full video, audio ends early
+            if partial:   # ig-fetch could not complete the DASH video stream: only the first segment(s)
+                self.send_header("X-Partial", "1")
+            if partial_audio:
+                self.send_header("X-Partial-Audio", "1")
             self.end_headers()
             self.wfile.write(data)
             self.wfile.flush()
-            log("OK guild=%s %s kind=%s bytes=%d %.1fs" % (guild, fn, kind, size, time.time() - t0))
+            log("OK guild=%s %s kind=%s bytes=%d %.1fs%s" % (guild, fn, kind, size, time.time() - t0,
+                " PARTIAL" if partial else (" PARTIAL_AUDIO" if partial_audio else "")))
             try:  # keep the UI lock until the extractor has left the app
                 proc.wait(timeout=90)
             except subprocess.TimeoutExpired:

@@ -68,10 +68,16 @@ async function downloadViaVm(instagramUrl, guildId, opts = {}) {
         // extension comes from the service's filename (png = still-image video, jpg = photo post, mp4 = video); whitelist only
         const fnExt = (String(res.headers['x-filename'] || '').split('.').pop() || '').toLowerCase();
         const ext = kind === 'video' ? 'mp4' : (fnExt === 'jpg' || fnExt === 'png' ? fnExt : 'png');
-        console.log(`[IG-VM] got ${kind} ${buf.length} bytes from the Android VM`);
+        // X-Partial: the VM could not complete the DASH video stream (only the first segment(s)).
+        // X-Partial-Audio: the video is full-length, only the audio stream was left incomplete (it ends early).
+        const partial = String(res.headers['x-partial'] || '') === '1';
+        const partialAudio = String(res.headers['x-partial-audio'] || '') === '1';
+        console.log(`[IG-VM] got ${kind} ${buf.length} bytes from the Android VM${partial ? ' (PARTIAL — first segment(s) only)' : partialAudio ? ' (PARTIAL AUDIO — audio ends early)' : ''}`);
         const att = new AttachmentBuilder(buf, { name: `${prefix}_0.${ext}` });
         const out = [att];
         out.vmKind = kind;
+        out.vmPartial = partial;
+        out.vmPartialAudio = partialAudio;
         return out;
     } catch (err) {
         const status = err.response && err.response.status;

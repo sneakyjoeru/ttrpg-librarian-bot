@@ -113,6 +113,11 @@ Posts are edited in place. `--gap 370` keeps a large backlog under the 10/hour c
 ## Known limits
 
 - Carousels: only the first slide.
+- DASH completion: the app only ever caches the first segment(s); ig-fetch completes the stream from the
+  signed URL it holds in memory. When the VIDEO stays incomplete the post says "Видео скачано не полностью —
+  только начало ролика" (X-Partial, not cached). When only the AUDIO could not be completed the video keeps
+  its full length and the sound ends early: the post says "Звук скачан не полностью — обрывается на середине
+  ролика" (X-Partial-Audio, 2026-11-22, measured on reel DgAH3rrsQFz).
 - Photo size is what the app cached (~720 px wide).
 - One extraction at a time, ~20-40 s each plus pacing; a busy queue answers 429 and the post keeps
   "Video is unavailable for embedding" (run the re-process script later).

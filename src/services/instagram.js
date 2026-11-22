@@ -1942,6 +1942,10 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
             // --- Post-download: compress oversized videos with ffmpeg ---
             const effectiveFileLimit = Math.floor(fileLimit * FILE_SIZE_SAFETY_FACTOR);
             if (downloadSuccess && attachments.length > 0) {
+                // VM partial flags live on the array the VM returned; the compression pass rebuilds the
+                // array — carry them over so the post keeps its "only the beginning" / "audio ends early" note.
+                const vmPartialFlag = attachments.vmPartial;
+                const vmPartialAudioFlag = attachments.vmPartialAudio;
                 const needsCompression = attachments.some(att => {
                     const buf = att.attachment;
                     return buf && buf.length > effectiveFileLimit;
@@ -1989,6 +1993,8 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                         }
                     }
                     attachments = compressedAttachments;
+                    attachments.vmPartial = vmPartialFlag;
+                    attachments.vmPartialAudio = vmPartialAudioFlag;
                     if (attachments.length === 0) {
                         downloadSuccess = false;
                         console.log('[Instagram Interceptor] All attachments were too large even after compression.');
@@ -2019,7 +2025,16 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                     let successText = cleanedRemadeContent.replace(instagramUrl, `<${standardUrl}>`);
                     // Media that came out of the Android VM (last-resort fallback) is labelled so
                     // readers know it was produced by the "dirty hack" path, not a normal download.
-                    if (usedVm) successText += `\n${igVm.VM_LABEL}`;
+                    if (usedVm) {
+                        successText += `\n${igVm.VM_LABEL}`;
+                        if (attachments && attachments.vmPartial) {
+                            successText += '\n-# ⚠️ Видео скачано не полностью — только начало ролика.';
+                        } else if (attachments && attachments.vmPartialAudio) {
+                            // 2026-11-22: the video keeps its full length even when only the audio stream
+                            // could not be completed — say that the sound ends early, not the video.
+                            successText += '\n-# ⚠️ Звук скачан не полностью — обрывается на середине ролика.';
+                        }
+                    }
                     if (attachments.isRestrictedVideoFallback) {
                         // Every tier returned only (or nothing but) the reel's cover
                         // frame — Instagram hands the bot accounts no video bytes for

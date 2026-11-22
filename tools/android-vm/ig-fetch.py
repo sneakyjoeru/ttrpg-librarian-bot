@@ -254,9 +254,15 @@ def urls_from_app_memory(keys):
                              capture_output=True).stdout
         for k in keys:
             for m in re.finditer(re.escape(f"null.{k}.-1".encode()), mem):
-                u = re.search(rb"https://[a-z0-9.\-]+\.(?:cdninstagram\.com|fbcdn\.net)/[\x21-\x7e]+", mem[m.end():m.end() + 4000])
-                if u and u.group(0).decode() not in found[k]:
-                    found[k].append(u.group(0).decode())
+                # 2026-11-22 (reel DgAH3rrsQFz): the full representation URL of the audio rep sat further from
+                # the cache key than this 4000-byte window reached, so only a segment URL was found and
+                # complete_stream rejected its short body. Collect every CDN URL in a wide window after each
+                # key occurrence; complete_stream tries them all until one matches the cached prefix + sidx size.
+                for u in re.finditer(rb"https://[a-z0-9.\-]+\.(?:cdninstagram\.com|fbcdn\.net)/[\x21-\x7e]+",
+                                     mem[m.end():m.end() + 16000]):
+                    url = u.group(0).decode()
+                    if url not in found[k]:
+                        found[k].append(url)
     return found
 
 
@@ -413,7 +419,7 @@ def main():
             # 2026-11-07 (reel DfbxdBQsAZk: 4.9 s of 12.3 s delivered): the guest cannot render video, so
             # the player only ever caches the first DASH segment. Complete each stream from the CDN using
             # the signed URL the app holds in memory, verified against the cached prefix.
-            partial = False
+            failed = set()
             if incomplete:
                 found = urls_from_app_memory(list(incomplete))
                 for rep, (p, have, expected) in incomplete.items():
@@ -423,8 +429,15 @@ def main():
                             o.write(full)
                         print(f"{code}: stream {rep} completed from CDN ({len(have)} -> {len(full)} bytes, {len(found.get(rep, []))} url(s) in app memory)")
                     else:
-                        partial = True
+                        failed.add(rep)
                         print(f"{code}: stream {rep} INCOMPLETE ({len(have)}/{expected} bytes, {len(found.get(rep, []))} url(s) in app memory)")
+            # 2026-11-22 (reel DgAH3rrsQFz): the audio rep often holds only a segment URL in memory, so the
+            # audio stays incomplete while the video completes. -shortest then cut the completed video to the
+            # few seconds of cached audio (4.9 s of ~22 s delivered) — the post read "only the beginning of
+            # the reel". When only the audio is missing, mux WITHOUT -shortest: the video keeps its full
+            # length and the audio simply ends early.
+            video_partial = any(rep.endswith("v") for rep in failed)
+            audio_partial = any(rep.endswith("a") for rep in failed)
             if "v" not in files:
                 leave_app(); print("ERROR: no video stream cached"); sys.exit(5)
             vid = max(files["v"], key=os.path.getsize)
@@ -451,16 +464,21 @@ def main():
                 dest = os.path.join(outdir, f"{code}.mp4")
                 cmd = ["ffmpeg", "-v", "error", "-y", "-i", vid]
                 if aud:
-                    cmd += ["-i", aud, "-map", "0:v", "-map", "1:a", "-c", "copy", "-shortest"]
+                    cmd += ["-i", aud, "-map", "0:v", "-map", "1:a", "-c", "copy"]
+                    if not (audio_partial and not video_partial):
+                        cmd += ["-shortest"]
                 else:
                     cmd += ["-c", "copy"]
                 sh(*cmd, dest)
             if not os.path.exists(dest) or os.path.getsize(dest) < 10240:
                 # 2026-11-07: a 261-byte mp4 (only partial spans cached) was delivered and cached for 7 days
                 leave_app(); print("ERROR: output too small (incomplete cache)"); sys.exit(5)
-            if partial and dest.endswith(".mp4"):
+            if dest.endswith(".mp4") and video_partial:
                 # never put a truncated video in the 7-day result cache; tell the service so the bot can label it
                 print("PARTIAL", dest)
+            elif dest.endswith(".mp4") and audio_partial:
+                # full-length video, only the audio stream ends early: label it for the bot, keep it out of the cache
+                print("PARTIAL_AUDIO", dest)
             else:
                 shutil.copy(dest, os.path.join(RESULT_CACHE, os.path.basename(dest)))
             print("RESULT", dest, os.path.getsize(dest), "bytes")

@@ -103,6 +103,22 @@ function stubPost(impl) { calls = []; axios.post = async (...a) => { calls.push(
         assert.strictEqual(r[0].name, 'ig_0.mp4');
     });
 
+    await t('X-Partial / X-Partial-Audio headers become vmPartial / vmPartialAudio flags', async () => {
+        setEnv(full);
+        stubPost(() => ({ data: Buffer.alloc(5000, 2), headers: { 'x-kind': 'video', 'x-partial': '1' } }));
+        let r = await client.downloadViaVm('https://instagram.com/reel/abcde/', MAIN);
+        assert.strictEqual(r.vmPartial, true);
+        assert.strictEqual(r.vmPartialAudio, false);
+        stubPost(() => ({ data: Buffer.alloc(5000, 2), headers: { 'x-kind': 'video', 'x-partial-audio': '1' } }));
+        r = await client.downloadViaVm('https://instagram.com/reel/abcde/', MAIN);
+        assert.strictEqual(r.vmPartial, false);
+        assert.strictEqual(r.vmPartialAudio, true);
+        stubPost(() => ({ data: Buffer.alloc(5000, 2), headers: { 'x-kind': 'video' } }));
+        r = await client.downloadViaVm('https://instagram.com/reel/abcde/', MAIN);
+        assert.strictEqual(r.vmPartial, false);
+        assert.strictEqual(r.vmPartialAudio, false);
+    });
+
     await t('VM-produced posts get the "dirty hack" label, other methods do not', () => {
         assert.strictEqual(client.VM_LABEL, '-# 🛠 processed using a dirty hack');
         assert.ok(client.VM_LABEL.includes('processed using a dirty hack'));
