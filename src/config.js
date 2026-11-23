@@ -227,10 +227,8 @@ const helpText = `**Librarian Bot Functions:**
 \`/update-players [count]\` - Change player count and role name
 \`/campaign-rename [new_name]\` - Rename this campaign channel
 \`/campaign-members list\` - Show campaign players
-\`/campaign-members add [user]\` - Add a player to this campaign
-\`/campaign-members remove [user]\` - Remove a player from this campaign
-\`/player-add [@user]\` - Add a player (mention) to this campaign channel (DM or Admin)
-\`/player-remove [@user]\` - Remove a player (mention) from this campaign channel (DM or Admin)
+\`/player-add [@user]\` = \`/campaign-members add [user]\` - Add a player — same effect, different input (mention vs ID/nickname)
+\`/player-remove [@user]\` = \`/campaign-members remove [user]\` - Remove a player — same effect, different input (mention vs ID/nickname)
 \`/pin [message_id]\` - Pin a message (or last message if empty)
 \`/unpin [message_id]\` - Unpin a message (or last pinned if empty)
 \`/archive [confirmation]\` - Archive campaign channel
@@ -255,7 +253,7 @@ const botFeaturesGuide = `How Librarian Bot's features actually work (use this t
 - Once the OP is posted, players join by reacting ✋ on the OP message. That reaction auto-assigns them the campaign's player role — there is no separate "join" command.
 - The channel name format is campaignName-creatorName-playerCount. The trailing number is NOT typed manually day-to-day — it auto-syncs to the campaign role's member count whenever someone joins/leaves (via the ✋ reaction or /campaign-members add/remove).
 - Discord only allows a channel to be renamed 2 times per 10 minutes. If several players join/leave in a burst and that limit is hit, the rename doesn't fail silently anymore — it's queued and completes automatically once the 10-minute window frees up, and the bot posts a heads-up saying the name will update shortly.
-- /campaign-members list/add/remove (DM or Admin only) manages the roster directly — same effect as the ✋ reaction, useful when a player can't react themselves. /player-add and /player-remove are the mention-only shortcuts: run them in the campaign channel and they add/remove the linked campaign role and re-sync the trailing player count in the channel + role name.
+- /campaign-members list/add/remove (DM or Admin only) manages the roster directly — same effect as the ✋ reaction, useful when a player can't react themselves. /player-add [@user] and /player-remove [@user] are the SAME operations as /campaign-members add/remove — one shared implementation, no behavioural difference: both add/remove the linked campaign role and re-sync the trailing player count in the channel + role name. The only difference is the input: /player-add|remove take a mention (user picker), while /campaign-members add|remove also accept a user ID, an exact nickname, or an exact username.
 - /update-players [count] force-overwrites the displayed count and role name directly — only needed if the count ever looks wrong and doesn't self-correct.
 - /campaign-rename [new_name] renames just the campaign-name part of the channel, keeping the creator name and player count suffix intact.
 - /archive [confirmation] moves a campaign channel to the archived category once a game has ended.
@@ -318,17 +316,17 @@ const commands = [
             .setDescription('List the players (campaign role members) of this campaign'))
         .addSubcommand(sub => sub
             .setName('add')
-            .setDescription('Add a player to this campaign')
+            .setDescription('Add a player (same as /player-add; DM or Admin)')
             .addStringOption(opt => opt.setName('user').setDescription('User ID, mention, or nickname').setRequired(true)))
         .addSubcommand(sub => sub
             .setName('remove')
-            .setDescription('Remove a player from this campaign')
+            .setDescription('Remove a player (same as /player-remove; DM or Admin)')
             .addStringOption(opt => opt.setName('user').setDescription('User ID, mention, or nickname').setRequired(true))),
     new SlashCommandBuilder().setName('player-add')
-        .setDescription('Add a player to this campaign channel (DM or Admin)')
+        .setDescription('Add a player to this campaign channel (same as /campaign-members add)')
         .addUserOption(opt => opt.setName('player').setDescription('The player to add (mention)').setRequired(true)),
     new SlashCommandBuilder().setName('player-remove')
-        .setDescription('Remove a player from this campaign channel (DM or Admin)')
+        .setDescription('Remove a player from this campaign channel (same as /campaign-members remove)')
         .addUserOption(opt => opt.setName('player').setDescription('The player to remove (mention)').setRequired(true)),
     new SlashCommandBuilder().setName('poll-librarian')
         .setDescription('Create a custom poll (up to 10 options)')
