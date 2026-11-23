@@ -41,6 +41,15 @@ const ROLE_ID = '600000000000000001';
 
 let channelSeq = 0;
 
+// discord.js's members.cache is a Collection (Map + .filter()/.first()).
+// Mirrors the subset resolveGuildMember relies on for nickname lookups.
+function makeCollection(entries) {
+    const map = new Map(entries);
+    map.filter = (predicate) => makeCollection([...entries].filter(([id, m]) => predicate(m)));
+    map.first = () => (entries.length ? entries[0][1] : undefined);
+    return map;
+}
+
 // Mock campaign channel + interaction. `topic` drives metadata resolution;
 // `name` carries the trailing player count the rename logic rewrites.
 function makeWorld({ topic = '', name = 'curse-of-strahd-alice-2', parentId = ACTIVE_CATEGORY_ID, roleInCache = true } = {}) {
@@ -62,7 +71,14 @@ function makeWorld({ topic = '', name = 'curse-of-strahd-alice-2', parentId = AC
     };
     const guild = {
         roles: { cache: new Map(roleInCache ? [[ROLE_ID, role]] : []) },
-        members: { cache: new Map(), fetch: async () => { throw new Error('Unknown User'); } }
+        members: {
+            cache: makeCollection([]),
+            // Only the known player resolves; anything else is "Unknown User".
+            fetch: async (id) => {
+                if (id === OTHER_ID) return player;
+                throw new Error('Unknown User');
+            }
+        }
     };
     channel.guild = guild;
 
@@ -174,11 +190,13 @@ async function flushRename() {
     it = w.makeInteraction(DM_ID);
     out = await applyPlayerChange(it, 'add', res.member, await resolveCampaignRoster(it));
     check('duplicate add refused', out.ok, false);
-    checkContains('duplicate add message', it.replies[0].content, 'is already a player in this campaign.');
+    checkContains('duplicate add message', it.replies[it.replies.length - 1].content, 'is already a player in this campaign.');
 
     // --- remove: role membership cleared + name resync ---
     w = makeWorld({ topic: metaTopic, name: 'curse-of-strahd-alice-2' });
-    w.role.members.set(OTHER_ID, w.player); // player is in the roster
+    // Two players in the roster (channel name says 2); Bob leaves.
+    w.role.members.set('500000000000000009', { id: '500000000000000009', displayName: 'Cara', user: { username: 'cara' } });
+    w.role.members.set(OTHER_ID, w.player);
     it = w.makeInteraction(DM_ID);
     out = await applyPlayerChange(it, 'remove', w.player, await resolveCampaignRoster(it));
     await flushRename();

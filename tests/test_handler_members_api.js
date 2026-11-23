@@ -1,5 +1,5 @@
-// Test: campaign-members handler must use the discord.js v14 Role#members
-// Collection correctly. Regression for the 2026-09-07 incident:
+// Test: campaign-members roster handler must use the discord.js v14
+// Role#members Collection correctly. Regression for the 2026-09-07 incident:
 //   Campaign-members add error: TypeError: Cannot read properties of
 //   undefined (reading 'has')  (interactions.js:618)
 //
@@ -10,8 +10,10 @@
 // (smb-watcher rewrote the file 86s after container boot) let that broken
 // version run in production even though the fix was already in git.
 //
-// This test scans the committed handler source for the crash pattern so it
-// can never ship again. It is a pure static check — no Discord login.
+// The roster core lives in src/handlers/campaignPlayers.js (shared by
+// /campaign-members and /player-add|remove); interactions.js still wires the
+// commands. This test scans both files for the crash pattern so it can never
+// ship again. It is a pure static check — no Discord login.
 //
 // Run inside the container:
 //   docker exec librarian-bot node tests/test_handler_members_api.js
@@ -20,8 +22,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const handlerPath = path.join(__dirname, '..', 'src', 'handlers', 'interactions.js');
-const src = fs.readFileSync(handlerPath, 'utf8');
+const handlersDir = path.join(__dirname, '..', 'src', 'handlers');
+const src = [
+    'interactions.js',
+    'campaignPlayers.js'
+].map((f) => fs.readFileSync(path.join(handlersDir, f), 'utf8')).join('\n');
 
 let passed = true;
 const failures = [];
