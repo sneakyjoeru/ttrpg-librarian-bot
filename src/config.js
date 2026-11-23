@@ -229,6 +229,8 @@ const helpText = `**Librarian Bot Functions:**
 \`/campaign-members list\` - Show campaign players
 \`/campaign-members add [user]\` - Add a player to this campaign
 \`/campaign-members remove [user]\` - Remove a player from this campaign
+\`/player-add [@user]\` - Add a player (mention) to this campaign channel (DM or Admin)
+\`/player-remove [@user]\` - Remove a player (mention) from this campaign channel (DM or Admin)
 \`/pin [message_id]\` - Pin a message (or last message if empty)
 \`/unpin [message_id]\` - Unpin a message (or last pinned if empty)
 \`/archive [confirmation]\` - Archive campaign channel
@@ -253,7 +255,7 @@ const botFeaturesGuide = `How Librarian Bot's features actually work (use this t
 - Once the OP is posted, players join by reacting ✋ on the OP message. That reaction auto-assigns them the campaign's player role — there is no separate "join" command.
 - The channel name format is campaignName-creatorName-playerCount. The trailing number is NOT typed manually day-to-day — it auto-syncs to the campaign role's member count whenever someone joins/leaves (via the ✋ reaction or /campaign-members add/remove).
 - Discord only allows a channel to be renamed 2 times per 10 minutes. If several players join/leave in a burst and that limit is hit, the rename doesn't fail silently anymore — it's queued and completes automatically once the 10-minute window frees up, and the bot posts a heads-up saying the name will update shortly.
-- /campaign-members list/add/remove (DM or Admin only) manages the roster directly — same effect as the ✋ reaction, useful when a player can't react themselves.
+- /campaign-members list/add/remove (DM or Admin only) manages the roster directly — same effect as the ✋ reaction, useful when a player can't react themselves. /player-add and /player-remove are the mention-only shortcuts: run them in the campaign channel and they add/remove the linked campaign role and re-sync the trailing player count in the channel + role name.
 - /update-players [count] force-overwrites the displayed count and role name directly — only needed if the count ever looks wrong and doesn't self-correct.
 - /campaign-rename [new_name] renames just the campaign-name part of the channel, keeping the creator name and player count suffix intact.
 - /archive [confirmation] moves a campaign channel to the archived category once a game has ended.
@@ -322,6 +324,12 @@ const commands = [
             .setName('remove')
             .setDescription('Remove a player from this campaign')
             .addStringOption(opt => opt.setName('user').setDescription('User ID, mention, or nickname').setRequired(true))),
+    new SlashCommandBuilder().setName('player-add')
+        .setDescription('Add a player to this campaign channel (DM or Admin)')
+        .addUserOption(opt => opt.setName('player').setDescription('The player to add (mention)').setRequired(true)),
+    new SlashCommandBuilder().setName('player-remove')
+        .setDescription('Remove a player from this campaign channel (DM or Admin)')
+        .addUserOption(opt => opt.setName('player').setDescription('The player to remove (mention)').setRequired(true)),
     new SlashCommandBuilder().setName('poll-librarian')
         .setDescription('Create a custom poll (up to 10 options)')
         .addStringOption(opt => opt.setName('question').setDescription('The question for the poll').setRequired(true))
