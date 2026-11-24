@@ -1,7 +1,9 @@
 // YouTube transcript fetch via yt-dlp subtitle/caption extraction. Ported
-// verbatim from heyrobot-discord-bot's src/services/ytTranscript.js so the librarian
+// from heyrobot-discord-bot's src/services/ytTranscript.js so the librarian
 // bot's TL;DW feature behaves the same way (no YouTube Data API, no
 // third-party transcript scraper — just yt-dlp's own subtitle download).
+// Kept in sync with the heyrobot copy, including the 2026-11-24 fix that stops
+// `live_chat` (stream chat replay JSON) being picked as a subtitle language.
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -55,6 +57,45 @@ function cleanVtt(vttContent) {
     return cleanLines.join(' ');
 }
 
+// YouTube also lists non-caption entries under `metadata.subtitles`:
+// `live_chat` is the stream chat replay, downloaded as JSON. Treating it as a
+// subtitle language made streamed videos fail with "no .vtt file found"
+// (2026-11-24, video O8yWDJDyu70: live_chat was the only manual entry, while
+// ru-orig/en-orig auto captions were available).
+const NON_CAPTION_SUB_LANGS = new Set(['live_chat', 'live_chat_replay']);
+const CAPTION_EXTS = new Set(['vtt', 'srt', 'ttml', 'json3', 'srv1', 'srv2', 'srv3']);
+
+function isCaptionLanguage(lang, tracks) {
+    if (!lang || NON_CAPTION_SUB_LANGS.has(lang)) return false;
+    if (!Array.isArray(tracks) || tracks.length === 0) return false;
+    return tracks.some(t => t && CAPTION_EXTS.has(t.ext));
+}
+
+// Pick a real subtitle track from yt-dlp metadata.
+// Manual subs win; then auto captions whose URL has no `tlang=` (translated
+// auto tracks are the ones YouTube rate-limits with 429).
+function chooseSubtitleLanguage(metadata) {
+    const manualSubs = (metadata && metadata.subtitles) || {};
+    const autoSubs = (metadata && metadata.automatic_captions) || {};
+
+    const manualLangs = Object.keys(manualSubs).filter(l => isCaptionLanguage(l, manualSubs[l]));
+    if (manualLangs.includes('ru')) return { lang: 'ru', isAuto: false };
+    if (manualLangs.includes('en')) return { lang: 'en', isAuto: false };
+    if (manualLangs.length > 0) return { lang: manualLangs[0], isAuto: false };
+
+    const originalAutoLangs = Object.keys(autoSubs).filter(l => {
+        if (!isCaptionLanguage(l, autoSubs[l])) return false;
+        return autoSubs[l].every(t => !((t && t.url) || '').includes('tlang='));
+    });
+
+    const ruOrig = originalAutoLangs.find(l => l.startsWith('ru'));
+    const enOrig = originalAutoLangs.find(l => l.startsWith('en'));
+    if (ruOrig) return { lang: ruOrig, isAuto: true };
+    if (enOrig) return { lang: enOrig, isAuto: true };
+    if (originalAutoLangs.length > 0) return { lang: originalAutoLangs[0], isAuto: true };
+    return { lang: null, isAuto: false };
+}
+
 function findYtDlpPath() {
     const paths = [
         '/opt/homebrew/bin/yt-dlp',
@@ -80,50 +121,7 @@ async function getYoutubeTranscript(videoId) {
     const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
     try { fs.unlinkSync(metadataPath); } catch (e) { }
 
-    let chosenLang = null;
-    let isAuto = false;
-
-    const manualSubs = metadata.subtitles || {};
-    const autoSubs = metadata.automatic_captions || {};
-
-    // 1. Prioritize manual subtitles
-    if (manualSubs.ru) {
-        chosenLang = 'ru';
-    } else if (manualSubs.en) {
-        chosenLang = 'en';
-    } else {
-        const manualKeys = Object.keys(manualSubs);
-        if (manualKeys.length > 0) {
-            chosenLang = manualKeys[0];
-        }
-    }
-
-    // 2. Check original auto-generated subtitles (no tlang parameter in URL to avoid 429)
-    if (!chosenLang) {
-        let originalAutoLangs = [];
-        for (const [lang, tracks] of Object.entries(autoSubs)) {
-            if (Array.isArray(tracks) && tracks.length > 0) {
-                const url = tracks[0].url || '';
-                if (!url.includes('tlang=')) {
-                    originalAutoLangs.push(lang);
-                }
-            }
-        }
-
-        const ruOrig = originalAutoLangs.find(l => l.startsWith('ru'));
-        const enOrig = originalAutoLangs.find(l => l.startsWith('en'));
-        if (ruOrig) {
-            chosenLang = ruOrig;
-            isAuto = true;
-        } else if (enOrig) {
-            chosenLang = enOrig;
-            isAuto = true;
-        } else if (originalAutoLangs.length > 0) {
-            chosenLang = originalAutoLangs[0];
-            isAuto = true;
-        }
-    }
-
+    const { lang: chosenLang, isAuto } = chooseSubtitleLanguage(metadata);
     if (!chosenLang) {
         throw new Error('No safe (non-translated) subtitles found for this video');
     }
@@ -131,7 +129,8 @@ async function getYoutubeTranscript(videoId) {
     console.log(`[YouTube Transcript] Selected language: ${chosenLang} (Auto-generated: ${isAuto})`);
 
     const outputPattern = path.join(tempDir, `sub_${videoId}_${Date.now()}`);
-    const ytDlpCmd = `"${ytDlp}" --write-subs --write-auto-sub --sub-lang "${chosenLang}" --skip-download --output "${outputPattern}.%(ext)s" "https://www.youtube.com/watch?v=${videoId}"`;
+    const subsFlag = isAuto ? '--write-auto-sub' : '--write-subs';
+    const ytDlpCmd = `"${ytDlp}" ${subsFlag} --sub-langs "${chosenLang}" --skip-download --output "${outputPattern}.%(ext)s" "https://www.youtube.com/watch?v=${videoId}"`;
 
     await runCommand(ytDlpCmd);
 
@@ -151,5 +150,6 @@ async function getYoutubeTranscript(videoId) {
 module.exports = {
     cleanVtt,
     findYtDlpPath,
-    getYoutubeTranscript
+    getYoutubeTranscript,
+    chooseSubtitleLanguage
 };
