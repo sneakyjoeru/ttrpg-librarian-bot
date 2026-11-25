@@ -2,10 +2,10 @@ const axios = require('axios');
 const { PermissionFlagsBits } = require('discord.js');
 const { estimateTokens, isHistoryOrAnalysisQuery } = require('../utils/helpers');
 const { consumeQuota, formatDuration } = require('../utils/quota');
+const { searchResults } = require('./brave');
 const {
     helpText,
     botFeaturesGuide,
-    SEARXNG_URL,
     OLLAMA_URL,
     OLLAMA_MODEL,
     RAG_SEARCH_LIMIT,
@@ -57,15 +57,7 @@ async function handleRagQuery(client, message, query) {
         let searchContext = 'No external internet context available.';
 
         try {
-            const searchResponse = await axios.get(SEARXNG_URL, {
-                params: {
-                    q: cleanedQuery,
-                    format: 'json',
-                    engines: 'duckduckgo,google,wikipedia',
-                    language: 'en'
-                },
-                timeout: RAG_SEARCH_TIMEOUT
-            });
+            const searchResponse = await searchResults(cleanedQuery);
 
             if (searchResponse.data && searchResponse.data.results) {
                 searchContext = searchResponse.data.results.slice(0, RAG_SEARCH_LIMIT).map(res =>
@@ -73,7 +65,7 @@ async function handleRagQuery(client, message, query) {
                 ).join('\n\n');
             }
         } catch (searchErr) {
-            console.error('SearXNG search failed, proceeding with LLM only:', searchErr.message);
+            console.error('Brave search failed, proceeding with LLM only:', searchErr.message);
         }
 
         // --- TARGET USER RESOLUTION ---

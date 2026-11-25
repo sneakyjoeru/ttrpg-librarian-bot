@@ -30,12 +30,13 @@ const NEWBIE_SCANNER_GUILD_IDS = (process.env.NEWBIE_SCANNER_GUILD_IDS || SERVER
 const NEWBIE_SCANNER_MAX_MESSAGES = 15;               // first N messages of a newbie are checked
 const NEWBIE_SCANNER_STATE_PATH = './data/newbie-scanner.json';
 
-// SearXNG and Ollama run as Docker containers on the N150 host. The librarian
-// bot also runs in a container and is attached to the shared `ollama_default`
-// network (see rebuild-run.sh), so it reaches them by container name, NOT
-// localhost (localhost inside a container = the container itself). DeepSeek is
-// the PRIMARY model for responses; local Ollama is the quota-exhausted fallback.
-const SEARXNG_URL = process.env.SEARXNG_URL || 'http://searxng:8080/search';           // API endpoint of SearXNG meta-search instance for RAG queries
+// Ollama runs as a Docker container on the N150 host. The librarian bot also
+// runs in a container and is attached to the shared `ollama_default` network
+// (see rebuild-run.sh), so it reaches it by container name, NOT localhost
+// (localhost inside a container = the container itself). DeepSeek is the
+// PRIMARY model for responses; local Ollama is the quota-exhausted fallback.
+// Web search is Brave-only since 2026-11-26 (see src/services/brave.js); the
+// SearXNG container was removed.
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434/api/generate';     // API endpoint of local Ollama server (fallback / vision / translation)
 const OLLAMA_MODEL = 'qwen2.5:7b';                                  // Local LLM fallback model (shared Ollama daemon with robot joe; 7B fits in 12GB RAM alongside Whisper + OS)
 
@@ -164,6 +165,7 @@ const FALLBACK_ROASTS = [
 let token = '';
 let deepseekApiKey = '';
 let openrouterApiKey = '';
+let braveSearchApiKey = '';
 if (fs.existsSync(SECRETS_PATH)) {
     const phpCode = fs.readFileSync(SECRETS_PATH, 'utf8');
     const tokenMatch = phpCode.match(/\$token\s*=\s*['"]([^'"]+)['"]/);
@@ -177,6 +179,10 @@ if (fs.existsSync(SECRETS_PATH)) {
     const openrouterMatch = phpCode.match(/\$openrouter_api_key\s*=\s*['"]([^'"]+)['"]/);
     if (openrouterMatch) {
         openrouterApiKey = openrouterMatch[1];
+    }
+    const braveMatch = phpCode.match(/\$brave_search_api_key\s*=\s*['"]([^'"]+)['"]/);
+    if (braveMatch) {
+        braveSearchApiKey = braveMatch[1];
     }
 }
 if (!token && process.env.DISCORD_TOKEN) {
@@ -386,7 +392,6 @@ module.exports = {
     NEWBIE_SCANNER_GUILD_IDS,
     NEWBIE_SCANNER_MAX_MESSAGES,
     NEWBIE_SCANNER_STATE_PATH,
-    SEARXNG_URL,
     OLLAMA_URL,
     OLLAMA_MODEL,
     TIMEZONE,
@@ -437,6 +442,7 @@ module.exports = {
     DEEPSEEK_API_URL,
     DEEPSEEK_MODEL,
     openrouterApiKey,
+    braveSearchApiKey,
     OPENROUTER_API_URL,
     OPENROUTER_MODEL,
     OPENROUTER_MAX_TOKENS,
