@@ -436,12 +436,27 @@ def main():
             # few seconds of cached audio (4.9 s of ~22 s delivered) — the post read "only the beginning of
             # the reel". When only the audio is missing, mux WITHOUT -shortest: the video keeps its full
             # length and the audio simply ends early.
-            video_partial = any(rep.endswith("v") for rep in failed)
-            audio_partial = any(rep.endswith("a") for rep in failed)
+            # 2026-11-27 (reel DfYhDG_AwNP): the app caches several representations of one reel (that run had
+            # 2 video + 4 audio reps). A rep that failed to complete says nothing about the delivery when a
+            # COMPLETE rep of the same kind is muxed instead — the old "any failed rep" test labelled a
+            # complete 720p video with full audio as PARTIAL_AUDIO. Pick the best complete rep of each kind
+            # and derive the partial flags from the files actually muxed.
+            def rep_of(path):
+                """DASH rep id + kind ('<id>v' / '<id>a') from a cache file name '<kind>_<id>.mp4'"""
+                m = re.match(r".+_(\d+)([av])\.mp4$", os.path.basename(path))
+                return m.group(1) + m.group(2) if m else None
+
+            def pick(kind):
+                lst = files.get(kind) or []
+                complete = [p for p in lst if rep_of(p) not in failed]
+                return max(complete or lst, key=os.path.getsize) if lst else None
+
             if "v" not in files:
                 leave_app(); print("ERROR: no video stream cached"); sys.exit(5)
-            vid = max(files["v"], key=os.path.getsize)
-            aud = max(files.get("a", []), key=os.path.getsize) if files.get("a") else None
+            vid = pick("v")
+            aud = pick("a")
+            video_partial = rep_of(vid) in failed
+            audio_partial = bool(aud) and rep_of(aud) in failed
             fr = os.path.join(work, "f_%03d.png")
             sh("ffmpeg", "-v", "error", "-y", "-i", vid, "-vf", "fps=4", fr)
             frames = sorted(glob.glob(os.path.join(work, "f_*.png")))

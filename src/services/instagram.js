@@ -2028,11 +2028,12 @@ async function handleInstagramMessage(client, message, instagramUrl, remadeConte
                     if (usedVm) {
                         successText += `\n${igVm.VM_LABEL}`;
                         if (attachments && attachments.vmPartial) {
-                            successText += '\n-# ⚠️ Видео скачано не полностью — только начало ролика.';
+                            successText += '\n-# ⚠️ Video downloaded only partially — the reel starts but cuts off.';
                         } else if (attachments && attachments.vmPartialAudio) {
                             // 2026-11-22: the video keeps its full length even when only the audio stream
                             // could not be completed — say that the sound ends early, not the video.
-                            successText += '\n-# ⚠️ Звук скачан не полностью — обрывается на середине ролика.';
+                            // 2026-11-27: user-facing text is English only (owner rule) — this line used to be Russian.
+                            successText += '\n-# ⚠️ Audio downloaded only partially — the sound cuts off mid-reel.';
                         }
                     }
                     if (attachments.isRestrictedVideoFallback) {
