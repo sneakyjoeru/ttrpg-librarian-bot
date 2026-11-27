@@ -128,6 +128,11 @@ Posts are edited in place. `--gap 370` keeps a large backlog under the 10/hour c
   fails after that second try.
 - The supervisor autostarts the VM and heals a wedged one within ~5-15 min; until it has, the
   service answers 503 `vm-down` and nothing changes for users.
+- If the guest wedges **mid-job** the service cannot interrupt the job: the deadline is only checked
+  between output lines, so a blocked `readline()` runs far past `JOB_TIMEOUT` (2026-11-26, `reel/DfjAamsOohF`:
+  the guest went down at 13:32, the job answered `504` ~12 min in, by which time the bot had given up at 330 s
+  and the post kept the notice). After the supervisor restored the guest the same reel extracted in ~30 s and
+  a re-process run (`scripts/reprocess-instagram.js <channelId>/<messageId>`) replaced the cover in place.
 - Cold start is slow: under libhoudini the app crash-restarts for ~45 s before it stays up.
   `ig-fetch.py` starts the app and waits for the feed before sending the deep link (up to 190 s).
 - **A busy host starves the guest.** Measured 2026-11-09: with a desktop browser and a remote-desktop
