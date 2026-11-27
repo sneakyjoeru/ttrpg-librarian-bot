@@ -119,6 +119,10 @@ Posts are edited in place. `--gap 370` keeps a large backlog under the 10/hour c
   completed the video keeps its full length and the sound ends early: the post says "Audio downloaded only
   partially — the sound cuts off mid-reel." (X-Partial-Audio, 2026-11-22, measured on reel DgAH3rrsQFz).
   All user-facing bot text is English only (owner rule 2026-11-27; these two lines used to be Russian).
+  A rep that fails to complete no longer marks the delivery partial: one reel is cached as several
+  representations (reel DfYhDG_AwNP, 2026-11-27: 2 video + 4 audio), so ig-fetch keeps the best COMPLETE rep
+  of each kind and sets the flags from the files it actually muxed — the old "any failed rep" test labelled a
+  complete 720p video with full audio as PARTIAL_AUDIO, and the post carried a false warning.
 - Photo size is what the app cached (~720 px wide).
 - One extraction at a time, ~20-40 s each plus pacing; a busy queue answers 429 and the post keeps
   "Video is unavailable for embedding" (run the re-process script later).
